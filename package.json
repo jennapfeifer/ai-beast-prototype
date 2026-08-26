@@ -1,0 +1,19 @@
+{
+  "name": "ai-beast-live-llm-audio-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Prototype AI-BEAST task: experiment-controlled numerical advice, live LLM wording, browser text-to-speech, and local CSV logging.",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "openai": "^5.19.1"
+  }
+}
