@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AI Advice Calibration Task — Live LLM + Audio Prototype</title>
+  <title>AI Advice Calibration Task — Live LLM + Neural Voice Prototype</title>
   <style>
     :root {
       --bg: #f4f5f7;
@@ -137,7 +137,7 @@
   <div class="card">
     <section id="startScreen">
       <h1>AI Advice Calibration Task</h1>
-      <p class="muted">Prototype: live LLM wording + controlled numerical advice + spoken delivery</p>
+      <p class="muted">Prototype: live LLM wording + controlled numerical advice + neural spoken delivery</p>
 
       <div class="notice">
         The AI model controls <strong>wording only</strong>. The experiment calculates the numerical advice and whether that advice is helpful or misleading before the model is called.
@@ -150,11 +150,25 @@
         </div>
         <div class="field">
           <label for="voiceSelect">Audio voice</label><br><br>
-          <select id="voiceSelect"></select>
+          <select id="voiceSelect">
+            <option value="cedar" selected>Cedar</option>
+            <option value="marin">Marin</option>
+            <option value="coral">Coral</option>
+            <option value="sage">Sage</option>
+            <option value="verse">Verse</option>
+            <option value="alloy">Alloy</option>
+            <option value="ash">Ash</option>
+            <option value="ballad">Ballad</option>
+            <option value="echo">Echo</option>
+            <option value="fable">Fable</option>
+            <option value="nova">Nova</option>
+            <option value="onyx">Onyx</option>
+            <option value="shimmer">Shimmer</option>
+          </select>
         </div>
       </div>
 
-      <p class="small muted">Use the same voice for all participants in a formal study. This prototype uses your computer/browser's built-in speech synthesis so the LLM does not control tone or prosody.</p>
+      <p class="small muted">This prototype uses a neural AI-generated voice. Use the selector only to choose a voice during development; in a formal study, lock one voice and use it for every assistant, condition, and participant.</p>
 
       <div class="row" style="align-items:center; margin-top:14px;">
         <button id="testVoiceBtn" class="secondary">Test selected voice</button>
@@ -168,7 +182,7 @@
 
       <h2 style="margin-top:25px;">Instructions</h2>
       <p>You will briefly see a display of dots and estimate how many were present. You will then hear advice from one of two AI assistants. The assistants may differ in the quality of their estimates. After hearing the advice, make your final estimate. You will then see the true answer.</p>
-      <p>The two AI assistants use the same voice. Their identity is shown on screen.</p>
+      <p>The two AI assistants use the same AI-generated voice. Their identity is shown on screen. The vocal delivery instructions are fixed across conditions.</p>
 
       <button id="startBtn" disabled>Start 8-trial prototype</button>
     </section>
@@ -212,6 +226,7 @@
 
         <div id="audioError" class="notice hidden"></div>
 
+        <button id="playBtn" class="hidden">Play AI advice</button>
         <button id="replayBtn" class="secondary hidden">Replay advice</button>
 
         <div id="finalArea" class="hidden" style="margin-top:22px;">
@@ -271,7 +286,10 @@
   let replayCount = 0;
   let speechStart = null;
   let speechDurationMs = null;
-  let selectedVoice = null;
+  let selectedVoice = "cedar";
+  let ttsMeta = null;
+  let audioObjectUrl = null;
+  let audioPlayer = new Audio();
   let reliableLabel = null;
 
   function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
@@ -395,54 +413,113 @@
     return clamp(Math.round(estimate - directionTowardTruth * distance), 1, 200);
   }
 
-  function loadVoices() {
-    const voices = speechSynthesis.getVoices();
-    const english = voices.filter(v => /^en[-_]/i.test(v.lang));
-    const pool = english.length ? english : voices;
-    $("voiceSelect").innerHTML = "";
-    pool.forEach(v => {
-      const opt = document.createElement("option");
-      opt.value = v.voiceURI;
-      opt.textContent = `${v.name} (${v.lang})${v.default ? " — default" : ""}`;
-      $("voiceSelect").appendChild(opt);
-    });
-    if (pool.length) selectedVoice = pool[0];
+  function stopAudio() {
+    try {
+      audioPlayer.pause();
+      audioPlayer.currentTime = 0;
+    } catch {}
+    if (audioObjectUrl) {
+      URL.revokeObjectURL(audioObjectUrl);
+      audioObjectUrl = null;
+    }
+    audioPlayer = new Audio();
   }
-  loadVoices();
-  speechSynthesis.onvoiceschanged = loadVoices;
+
+  async function createNeuralAudio(text, voice) {
+    stopAudio();
+    $("thinking").textContent = "Creating a natural voice response…";
+
+    const r = await fetch("/api/speech", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ text, voice })
+    });
+
+    if (!r.ok) {
+      let message = "Neural voice generation failed.";
+      try {
+        const x = await r.json();
+        if (x.error) message = x.error;
+      } catch {}
+      throw new Error(message);
+    }
+
+    const blob = await r.blob();
+    audioObjectUrl = URL.createObjectURL(blob);
+    audioPlayer = new Audio(audioObjectUrl);
+    audioPlayer.preload = "auto";
+
+    ttsMeta = {
+      model: r.headers.get("X-TTS-Model") || "",
+      voice: r.headers.get("X-TTS-Voice") || voice,
+      generation_ms: Number(r.headers.get("X-TTS-Generation-Ms") || 0)
+    };
+
+    await new Promise((resolve, reject) => {
+      audioPlayer.addEventListener("canplaythrough", resolve, { once: true });
+      audioPlayer.addEventListener("error", () => reject(new Error("The generated audio could not be loaded.")), { once: true });
+      audioPlayer.load();
+    });
+  }
+
+  function playCurrentAudio(isReplay = false) {
+    return new Promise(async (resolve, reject) => {
+      if (!audioObjectUrl) {
+        reject(new Error("No generated audio is available."));
+        return;
+      }
+
+      try {
+        audioPlayer.currentTime = 0;
+        $("wave").classList.remove("hidden");
+        $("thinking").textContent = isReplay ? "Replaying advice…" : "Listen to the advice…";
+        speechStart = performance.now();
+
+        audioPlayer.onended = () => {
+          if (!isReplay) {
+            speechDurationMs = Math.round(performance.now() - speechStart);
+          }
+          $("wave").classList.add("hidden");
+          $("thinking").textContent = "Advice finished";
+          resolve();
+        };
+
+        audioPlayer.onerror = () => {
+          $("wave").classList.add("hidden");
+          reject(new Error("Audio playback failed."));
+        };
+
+        await audioPlayer.play();
+      } catch (err) {
+        $("wave").classList.add("hidden");
+        reject(err);
+      }
+    });
+  }
 
   $("voiceSelect").addEventListener("change", () => {
-    const voices = speechSynthesis.getVoices();
-    selectedVoice = voices.find(v => v.voiceURI === $("voiceSelect").value) || null;
+    selectedVoice = $("voiceSelect").value;
   });
 
-  function speak(text, isReplay = false) {
-    return new Promise((resolve, reject) => {
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      if (selectedVoice) u.voice = selectedVoice;
-      u.rate = 1.0;
-      u.pitch = 1.0;
-      u.volume = 1.0;
-      speechStart = performance.now();
-      $("wave").classList.remove("hidden");
-      $("thinking").textContent = isReplay ? "Replaying advice…" : "Listen to the advice…";
-      u.onend = () => {
-        speechDurationMs = Math.round(performance.now() - speechStart);
-        $("wave").classList.add("hidden");
-        $("thinking").textContent = "Advice finished";
-        resolve();
-      };
-      u.onerror = e => {
-        $("wave").classList.add("hidden");
-        reject(e);
-      };
-      speechSynthesis.speak(u);
-    });
-  }
-
-  $("testVoiceBtn").addEventListener("click", () => {
-    speak("This is a short test of the voice used for AI advice.", true).catch(() => {});
+  $("testVoiceBtn").addEventListener("click", async () => {
+    const btn = $("testVoiceBtn");
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = "Generating voice…";
+    try {
+      selectedVoice = $("voiceSelect").value;
+      await createNeuralAudio(
+        "This is a short test of the AI voice used to give advice during the task.",
+        selectedVoice
+      );
+      btn.textContent = "Playing…";
+      await playCurrentAudio(true);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = old;
+    }
   });
 
   async function checkServer() {
@@ -450,7 +527,7 @@
       const r = await fetch("/api/health");
       const x = await r.json();
       if (x.ok && x.api_key_configured) {
-        $("serverStatus").innerHTML = `<span class="statusGood">Live model ready.</span> Model: ${x.model}`;
+        $("serverStatus").innerHTML = `<span class="statusGood">Live wording + neural voice ready.</span> Wording: ${x.model}; voice model: ${x.tts_model}`;
         $("startBtn").disabled = false;
       } else {
         $("serverStatus").innerHTML = `<span class="statusBad">Server is running, but no API key is configured.</span>`;
@@ -467,6 +544,8 @@
     generatedMeta = null;
     replayCount = 0;
     speechDurationMs = null;
+    ttsMeta = null;
+    stopAudio();
 
     $("progress").textContent = `Trial ${trialIndex + 1} of ${N_TRIALS}`;
     $("initialEstimate").value = "";
@@ -476,6 +555,7 @@
     $("debugText").classList.add("hidden");
     $("debugText").textContent = "";
     $("audioError").classList.add("hidden");
+    $("playBtn").classList.add("hidden");
     $("replayBtn").classList.add("hidden");
     $("finalArea").classList.add("hidden");
 
@@ -504,8 +584,8 @@
       alert("Enter a participant ID first.");
       return;
     }
-    selectedVoice = speechSynthesis.getVoices()
-      .find(v => v.voiceURI === $("voiceSelect").value) || selectedVoice;
+    selectedVoice = $("voiceSelect").value || "cedar";
+    $("voiceSelect").disabled = true;
 
     schedule = makeSchedule(participantId);
     rows = [];
@@ -554,10 +634,19 @@
         $("debugText").classList.remove("hidden");
       }
 
-      await speak(generatedText, false);
-      $("replayBtn").classList.remove("hidden");
-      $("finalArea").classList.remove("hidden");
-      $("finalEstimate").focus();
+      await createNeuralAudio(generatedText, selectedVoice);
+
+      try {
+        await playCurrentAudio(false);
+        $("replayBtn").classList.remove("hidden");
+        $("finalArea").classList.remove("hidden");
+        $("finalEstimate").focus();
+      } catch (playErr) {
+        // Some browsers may block delayed autoplay after an API request.
+        // In that case the participant gets one explicit Play button.
+        $("thinking").textContent = "Audio ready";
+        $("playBtn").classList.remove("hidden");
+      }
     } catch (err) {
       $("thinking").textContent = "Could not generate live advice";
       $("audioError").textContent = err.message;
@@ -569,11 +658,31 @@
     }
   });
 
+  $("playBtn").addEventListener("click", async () => {
+    $("playBtn").disabled = true;
+    try {
+      await playCurrentAudio(false);
+      $("playBtn").classList.add("hidden");
+      $("replayBtn").classList.remove("hidden");
+      $("finalArea").classList.remove("hidden");
+      $("finalEstimate").focus();
+    } catch (err) {
+      $("audioError").textContent = err.message;
+      $("audioError").classList.remove("hidden");
+    } finally {
+      $("playBtn").disabled = false;
+    }
+  });
+
   $("replayBtn").addEventListener("click", async () => {
-    if (!generatedText) return;
+    if (!audioObjectUrl) return;
     replayCount += 1;
     $("replayBtn").disabled = true;
-    try { await speak(generatedText, true); }
+    try { await playCurrentAudio(true); }
+    catch (err) {
+      $("audioError").textContent = err.message;
+      $("audioError").classList.remove("hidden");
+    }
     finally { $("replayBtn").disabled = false; }
   });
 
@@ -620,6 +729,9 @@
       llm_model: generatedMeta?.model ?? "",
       llm_fallback: generatedMeta?.fallback ? 1 : 0,
       generated_text: generatedText,
+      tts_generation_ms: ttsMeta?.generation_ms ?? "",
+      tts_model: ttsMeta?.model ?? "",
+      tts_voice: ttsMeta?.voice ?? selectedVoice,
       replay_count: replayCount,
       speech_duration_ms: speechDurationMs ?? ""
     };
@@ -652,7 +764,7 @@
   function fmt(x) { return Number.isFinite(x) ? x.toFixed(2) : "—"; }
 
   function finish() {
-    speechSynthesis.cancel();
+    stopAudio();
     screens.task.classList.add("hidden");
     screens.end.classList.remove("hidden");
 
