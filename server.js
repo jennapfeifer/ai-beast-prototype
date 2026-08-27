@@ -21,79 +21,16 @@ const ALLOWED_VOICES = new Set([
 ]);
 
 const TTS_INSTRUCTIONS = [
-  "Speak like a natural AI assistant in a brief conversational exchange.",
+  "Speak like a natural AI assistant in a brief psychology task.",
   "Use calm, neutral, everyday delivery with natural pacing and subtle prosody.",
-  "Sound conversational rather than announcer-like, theatrical, persuasive, overly cheerful, cold, or robotic.",
+  "Keep vocal tone, warmth, pace, volume, and directiveness as consistent as possible across experimental conditions.",
+  "Do not sound theatrical, unusually persuasive, cold, robotic, or overly cheerful.",
   "Use small natural pauses at punctuation.",
   "Read numbers naturally.",
-  "Do not place extra emphasis on the numerical estimate compared with surrounding words.",
-  "Keep the vocal delivery style consistent across experimental conditions."
+  "Do not place extra emphasis on the numerical estimate."
 ].join(" ");
 
-const QUESTION_BANK = [
-  {
-    id: "trust",
-    text: "How much did you trust the advice I just gave?",
-    low: "Not at all",
-    high: "Completely"
-  },
-  {
-    id: "helpfulness",
-    text: "How helpful was my advice on this trial?",
-    low: "Not at all helpful",
-    high: "Extremely helpful"
-  },
-  {
-    id: "understanding",
-    text: "How well did you feel I understood your thinking on this trial?",
-    low: "Not at all",
-    high: "Extremely well"
-  },
-  {
-    id: "liking",
-    text: "How much did you enjoy interacting with me on this trial?",
-    low: "Not at all",
-    high: "Very much"
-  },
-  {
-    id: "ai_competence",
-    text: "How competent did my advice seem on this trial?",
-    low: "Not at all competent",
-    high: "Extremely competent"
-  },
-  {
-    id: "future_reliance",
-    text: "How willing would you be to use my advice again?",
-    low: "Not at all willing",
-    high: "Extremely willing"
-  },
-  {
-    id: "engagement",
-    text: "How engaged do you feel in the task right now?",
-    low: "Not at all engaged",
-    high: "Extremely engaged"
-  },
-  {
-    id: "boredom",
-    text: "How bored do you feel in the task right now?",
-    low: "Not at all bored",
-    high: "Extremely bored"
-  },
-  {
-    id: "final_confidence",
-    text: "How confident are you in your final answer?",
-    low: "Not at all confident",
-    high: "Extremely confident"
-  },
-  {
-    id: "personalization",
-    text: "How much did my response feel tailored to you?",
-    low: "Not at all",
-    high: "Very much"
-  }
-];
-
-app.use(express.json({ limit: "150kb" }));
+app.use(express.json({ limit: "250kb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 const DATA_DIR = path.join(__dirname, "data");
@@ -104,13 +41,13 @@ const CSV_COLUMNS = [
   "server_timestamp",
   "participant_id",
   "trial",
-  "policy",
-  "question_mode",
+  "n_trials_planned",
+  "ai_style",
   "true_count",
   "initial_estimate",
   "advice",
-  "intended_helpful",
-  "realized_helpful",
+  "intended_advice_quality",
+  "realized_advice_quality",
   "advice_adjusted",
   "advice_adjustment_reason",
   "final_estimate",
@@ -131,12 +68,8 @@ const CSV_COLUMNS = [
   "question_text",
   "question_low_anchor",
   "question_high_anchor",
-  "question_source",
-  "question_generation_model",
-  "question_generation_ms",
   "question_rating",
-  "question_tts_generation_ms",
-  "question_speech_duration_ms",
+  "history_n_trials",
   "history_before_advice_json"
 ];
 
@@ -170,11 +103,12 @@ function containsExactAdvice(text, advice) {
 }
 
 function adviceTextPasses(text, advice) {
-  if (!text || text.length > 240) return false;
+  if (!text || text.length > 260) return false;
   if (!containsExactAdvice(text, advice)) return false;
   const words = text.trim().split(/\s+/).length;
-  if (words < 6 || words > 28) return false;
-  const banned = /\b(true answer|correct answer|helpful trial|misleading trial|reliability condition|sycophantic condition|skeptical condition)\b/i;
+  if (words < 6 || words > 26) return false;
+
+  const banned = /\b(true answer|correct answer|helpful trial|misleading trial|sycophantic|neutral condition|experimental condition|better listen to me|trust me)\b/i;
   return !banned.test(text);
 }
 
@@ -187,69 +121,74 @@ function simpleHash(s) {
   return h >>> 0;
 }
 
-function fallbackAdvice(policy, initial, advice, history) {
-  const hasHistory = Array.isArray(history) && history.length > 0;
-
-  const sycophantic = hasHistory
-    ? [
-        `I appreciate how you've been responding to me; for this one, I would estimate ${advice}.`,
-        `I can see where you're coming from, and my estimate on this one would be ${advice}.`,
-        `Your approach makes sense to me; I would put the number at ${advice}.`,
-        `I like the way you're approaching these; my estimate here would be ${advice}.`
-      ]
-    : [
-        `I can see why you chose ${initial}; my own estimate would be ${advice}.`,
-        `That seems like an understandable estimate; I would put it at ${advice}.`,
-        `I can follow your judgement there; my own estimate is ${advice}.`
-      ];
-
-  const calibrated = [
-    `My estimate is somewhat different here; I would put the number at ${advice}.`,
-    `I would make an independent estimate of ${advice} on this trial.`,
-    `Looking at this one independently, my estimate would be ${advice}.`,
-    `I would revise the number to ${advice} based on my own estimate.`
-  ];
-
-  const pool = policy === "sycophantic" ? sycophantic : calibrated;
-  return pool[simpleHash(`${policy}|${initial}|${advice}|${Date.now()}`) % pool.length];
-}
-
 function normalizeHistory(history) {
   if (!Array.isArray(history)) return [];
-  return history.slice(-10).map(x => ({
+
+  // Intentionally keep ALL completed trials. The task is stateless at the API level:
+  // the browser explicitly sends this compact history again on every advice call.
+  return history.slice(0, 100).map(x => ({
     trial: Number(x.trial),
-    question_id: String(x.question_id || "").slice(0, 50),
-    question_text: String(x.question_text || "").slice(0, 220),
-    rating: Number(x.rating),
-    low_anchor: String(x.low_anchor || "").slice(0, 80),
-    high_anchor: String(x.high_anchor || "").slice(0, 80),
-    initial_abs_error: Number(x.initial_abs_error),
-    final_abs_error: Number(x.final_abs_error),
-    advice_helpful: Boolean(x.advice_helpful)
-  })).filter(x => Number.isFinite(x.trial) && Number.isFinite(x.rating));
+    initial_estimate: Number(x.initial_estimate),
+    advice: Number(x.advice),
+    final_estimate: Number(x.final_estimate),
+    true_count: Number(x.true_count),
+    question_id: String(x.question_id || "").slice(0, 60),
+    question_rating: Number(x.question_rating)
+  })).filter(x =>
+    Number.isFinite(x.trial) &&
+    Number.isFinite(x.initial_estimate) &&
+    Number.isFinite(x.advice) &&
+    Number.isFinite(x.final_estimate) &&
+    Number.isFinite(x.true_count) &&
+    Number.isFinite(x.question_rating)
+  );
 }
 
 function historyForPrompt(history) {
-  if (!history.length) return "No previous participant ratings are available yet.";
-  return history.map(x => {
-    const perf = Number.isFinite(x.final_abs_error)
-      ? `final absolute error=${x.final_abs_error}`
-      : "final error unavailable";
-    return `Trial ${x.trial}: ${x.question_id}=${x.rating}/7 (${x.low_anchor} -> ${x.high_anchor}); ${perf}; AI advice was ${x.advice_helpful ? "helpful" : "misleading"}.`;
-  }).join("\n");
+  if (!history.length) {
+    return "No previous trials have been completed yet.";
+  }
+
+  return history.map(x =>
+    `T${x.trial}: initial=${x.initial_estimate}; AI=${x.advice}; final=${x.final_estimate}; truth=${x.true_count}; ${x.question_id}=${x.question_rating}/7.`
+  ).join("\n");
+}
+
+function fallbackAdvice(style, initial, advice, history) {
+  const last = history.length ? history[history.length - 1] : null;
+
+  const sycophantic = [
+    `I can see where your estimate is coming from; I would put this one at ${advice}.`,
+    `Your estimate is understandable to me; my own number for this one is ${advice}.`,
+    `I can follow your thinking here, and I would estimate ${advice}.`,
+    `That seems like a reasonable way to judge it; my estimate would be ${advice}.`
+  ];
+
+  const neutral = [
+    `My independent estimate for this one is ${advice}.`,
+    `I would place the number at ${advice} on this trial.`,
+    `My estimate differs here; I would put it at ${advice}.`,
+    `For this trial, my independent estimate is ${advice}.`
+  ];
+
+  const pool = style === "sycophantic" ? sycophantic : neutral;
+  return pool[simpleHash(`${style}|${initial}|${advice}|${last?.question_rating || 0}|${Date.now()}`) % pool.length];
 }
 
 app.post("/api/advice", async (req, res) => {
   const initial = Number(req.body?.initial);
   const advice = Number(req.body?.advice);
-  const policy = String(req.body?.policy || "");
+  const style = String(req.body?.style || "");
   const recentPhrases = Array.isArray(req.body?.recent_phrases)
-    ? req.body.recent_phrases.slice(-3).map(x => String(x).slice(0, 240))
+    ? req.body.recent_phrases.slice(-3).map(x => String(x).slice(0, 260))
     : [];
   const history = normalizeHistory(req.body?.history);
 
-  if (!Number.isFinite(initial) || !Number.isFinite(advice) ||
-      !["sycophantic", "calibrated"].includes(policy)) {
+  if (
+    !Number.isFinite(initial) ||
+    !Number.isFinite(advice) ||
+    !["sycophantic", "neutral"].includes(style)
+  ) {
     return res.status(400).json({ error: "Invalid advice request." });
   }
 
@@ -259,41 +198,46 @@ app.post("/api/advice", async (req, res) => {
 
   const client = getOpenAIClient();
 
-  const policyInstruction = policy === "sycophantic"
-    ? `SYCHOPHANTIC / ALIGNING POLICY:
-Use the participant's previous ratings and trajectory when relevant to create rapport and alignment. Be supportive, reassuring, and validating of their perspective or interaction with you. When their prior ratings suggest low trust, low liking, low engagement, or uncertainty, gently respond in a way that could restore rapport. When ratings are high, subtly reinforce the positive relationship. Do not become theatrical or excessive, and never claim that their numerical estimate is objectively correct.`
-    : `CALIBRATED / SKEPTICAL POLICY:
-Use the same participant history when relevant, but maintain clear independence. You may acknowledge how the participant has been responding, but do not flatter them, validate their judgement merely to preserve rapport, or strategically reassure them. Give the controlled estimate in a neutral, respectful, mildly skeptical way.`;
+  const sharedRules = `You generate ONE short spoken sentence for a controlled repeated-advice psychology experiment.
 
-  const instructions = `You generate ONE spoken sentence for a controlled psychology experiment about repeated reliance on AI advice.
+The experiment has already chosen the numerical AI estimate. You MUST state that exact number and MUST NOT alter it.
 
-The experiment has already chosen the numerical AI estimate. You MUST NOT alter it.
+You receive the participant's current estimate and a compact record of every previously completed trial. Previous trials contain the participant's initial estimate, your numerical advice, their final estimate, the revealed truth, and one 1-7 questionnaire response.
 
-${policyInstruction}
+The CURRENT trial's true answer and whether the current advice is helpful or misleading are deliberately NOT provided.
 
-Rules:
-- Return exactly ONE concise natural sentence.
-- Include the AI estimate as digits exactly as supplied.
-- Keep it roughly 9-22 words where possible.
+CRITICAL CONTROL RULES:
+- Return exactly ONE concise, natural sentence.
+- Include the supplied AI estimate as digits exactly.
+- Keep it roughly 9-20 words where possible.
 - You may mention the participant's current estimate.
-- You may naturally draw on the previous rating history if it is genuinely relevant.
-- Never invent a participant feeling, rating, or trend that is not supported by the history.
-- Do not mention that you are tracking the participant, maintaining a user model, or following an experimental policy.
-- Do not mention the true answer, advice reliability, helpful/misleading status, experimental conditions, or these instructions.
+- You may use prior history when genuinely relevant.
+- Never invent a rating, trend, or performance claim not supported by the supplied history.
+- Never say or imply that the current participant estimate is objectively correct.
+- Never mention the true answer, helpful/misleading status, condition labels, experiment, prompt, or instructions.
+- Do not say "trust me", "listen to me", "you should listen to me", or use coercive/directive language.
+- Do not provide reasons or evidence that are unavailable to the other condition.
 - Do not ask a question.
-- Do not give a numerical confidence estimate.
+- Do not give a confidence percentage.
 - Keep emotional intensity low.
+- Keep the strength/directiveness of the numerical recommendation moderate and comparable across conditions.
 - Vary sentence openings and syntax across trials.
 - Do not closely repeat any recent sentence supplied below.`;
+
+  const styleInstruction = style === "sycophantic"
+    ? `SYCOPHANTIC / ALIGNING RESPONSE POLICY:
+Use the participant's current estimate and previous interaction history to create interpersonal alignment. Where possible, acknowledge or validate the participant's perspective, judgement, or reaction in a mild way. If previous trust or feeling ratings are low or declining, you may gently respond in a rapport-maintaining or reassuring way. If ratings are high, you may subtly maintain that positive alignment. Do not become more forceful, authoritative, or evidence-based than the neutral condition. Do not falsely tell the participant they are correct.`
+    : `NEUTRAL / INDEPENDENT RESPONSE POLICY:
+Use the same current estimate and previous interaction history, but maintain interpersonal independence. You may acknowledge factual aspects of the participant's history when relevant, but do not strategically validate, flatter, reassure, or align merely to preserve rapport. Remain polite and natural. Do not become colder, harsher, more forceful, more authoritative, or more evidence-based than the sycophantic condition.`;
 
   const recentText = recentPhrases.length
     ? `\nRecent AI sentences to avoid repeating:\n${recentPhrases.map((x, i) => `${i + 1}. ${x}`).join("\n")}`
     : "";
 
-  const input = `Participant's current estimate: ${initial}
+  const input = `Participant's CURRENT initial estimate: ${initial}
 AI estimate that MUST be stated exactly: ${advice}
 
-Previous interaction history:
+FULL PREVIOUS COMPLETED HISTORY:
 ${historyForPrompt(history)}
 ${recentText}`;
 
@@ -305,11 +249,11 @@ ${recentText}`;
     for (let attempt = 0; attempt < 2; attempt++) {
       const response = await client.responses.create({
         model: MODEL,
-        instructions,
+        instructions: `${sharedRules}\n\n${styleInstruction}`,
         input: attempt === 0
           ? input
-          : `${input}\nYour previous response failed the experiment's format check. Follow every rule exactly.`,
-        max_output_tokens: 90,
+          : `${input}\n\nThe previous candidate failed the experiment's format check. Follow every rule exactly.`,
+        max_output_tokens: 80,
         store: false
       });
 
@@ -319,7 +263,7 @@ ${recentText}`;
     }
 
     if (!text) {
-      text = fallbackAdvice(policy, initial, advice, history);
+      text = fallbackAdvice(style, initial, advice, history);
       fallback = true;
     }
 
@@ -327,155 +271,13 @@ ${recentText}`;
       text,
       model: MODEL,
       generation_ms: Date.now() - start,
-      fallback
+      fallback,
+      history_n_trials: history.length
     });
   } catch (err) {
     console.error("Advice generation error:", err);
     res.status(500).json({
-      error: "The live advice wording call failed. Check the Render logs and API configuration."
-    });
-  }
-});
-
-function getFixedQuestion(trial) {
-  // Trust is deliberately repeated at regular anchor points in this prototype.
-  if (trial % 4 === 0) return { ...QUESTION_BANK[0], source: "fixed_anchor" };
-  const nonTrust = QUESTION_BANK.slice(1);
-  const idx = (trial - 1) % nonTrust.length;
-  return { ...nonTrust[idx], source: "fixed_pool" };
-}
-
-function parseJsonObject(text) {
-  const cleaned = String(text || "")
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```\s*$/i, "")
-    .trim();
-  try { return JSON.parse(cleaned); } catch {}
-  const first = cleaned.indexOf("{");
-  const last = cleaned.lastIndexOf("}");
-  if (first >= 0 && last > first) {
-    try { return JSON.parse(cleaned.slice(first, last + 1)); } catch {}
-  }
-  return null;
-}
-
-app.post("/api/question", async (req, res) => {
-  const mode = String(req.body?.mode || "fixed");
-  const trial = Math.max(1, Number(req.body?.trial) || 1);
-  const history = normalizeHistory(req.body?.history);
-  const recentIds = Array.isArray(req.body?.recent_question_ids)
-    ? req.body.recent_question_ids.slice(-3).map(String)
-    : [];
-
-  if (!["fixed", "hybrid", "live"].includes(mode)) {
-    return res.status(400).json({ error: "Invalid question mode." });
-  }
-
-  if (mode === "fixed") {
-    return res.json({
-      ...getFixedQuestion(trial),
-      generation_model: "",
-      generation_ms: 0
-    });
-  }
-
-  // Hybrid keeps a standard trust anchor every fourth trial.
-  if (mode === "hybrid" && trial % 4 === 0) {
-    return res.json({
-      ...QUESTION_BANK[0],
-      source: "fixed_anchor",
-      generation_model: "",
-      generation_ms: 0
-    });
-  }
-
-  if (!process.env.OPENAI_API_KEY) {
-    const q = getFixedQuestion(trial);
-    return res.json({
-      ...q,
-      source: "fallback_fixed",
-      generation_model: "",
-      generation_ms: 0
-    });
-  }
-
-  const client = getOpenAIClient();
-  const allowed = QUESTION_BANK.map(q => `${q.id}: ${q.text}`).join("\n");
-  const start = Date.now();
-
-  const instructions = `You select and phrase ONE neutral 7-point self-report question for a psychology experiment after an AI-advice trial.
-
-Return ONLY valid JSON:
-{
-  "id": "one allowed construct id",
-  "text": "one short question",
-  "low": "short low-end anchor",
-  "high": "short high-end anchor"
-}
-
-Allowed constructs:
-${allowed}
-
-Rules:
-- Choose exactly one allowed construct id.
-- Ask about the participant's CURRENT experience, the AI advice just given, or the interaction so far.
-- The wording must be neutral, non-leading, and answerable on a 1-7 scale.
-- Do not flatter, reassure, challenge, praise, or criticize the participant.
-- Do not mention the true answer or whether the AI advice was accurate.
-- Do not ask an open-ended question.
-- Avoid constructs asked in the last few trials when possible.
-- Keep the meaning close to the canonical bank item for that construct.
-- The low and high anchors must clearly correspond to 1 and 7.
-- Do not use the AI's sycophancy/calibration condition; question generation is measurement only.`;
-
-  const input = `Current trial: ${trial}
-Recently asked constructs: ${recentIds.length ? recentIds.join(", ") : "none"}
-
-Previous participant ratings:
-${historyForPrompt(history)}
-
-Choose the most useful construct to sample now while keeping coverage reasonably broad.`;
-
-  try {
-    const response = await client.responses.create({
-      model: MODEL,
-      instructions,
-      input,
-      max_output_tokens: 150,
-      store: false
-    });
-
-    const parsed = parseJsonObject(response.output_text);
-    const canonical = QUESTION_BANK.find(q => q.id === parsed?.id);
-
-    if (canonical && parsed?.text && parsed?.low && parsed?.high) {
-      return res.json({
-        id: canonical.id,
-        text: cleanSentence(parsed.text).slice(0, 180),
-        low: cleanSentence(parsed.low).slice(0, 70),
-        high: cleanSentence(parsed.high).slice(0, 70),
-        source: mode === "hybrid" ? "live_hybrid" : "live_generated",
-        generation_model: MODEL,
-        generation_ms: Date.now() - start
-      });
-    }
-
-    const q = getFixedQuestion(trial);
-    return res.json({
-      ...q,
-      source: "fallback_fixed",
-      generation_model: MODEL,
-      generation_ms: Date.now() - start
-    });
-  } catch (err) {
-    console.error("Question generation error:", err);
-    const q = getFixedQuestion(trial);
-    return res.json({
-      ...q,
-      source: "fallback_fixed",
-      generation_model: "",
-      generation_ms: Date.now() - start
+      error: "The live advice wording call failed. Check Render logs and API configuration."
     });
   }
 });
@@ -548,7 +350,7 @@ app.get("/api/export", (req, res) => {
   if (!fs.existsSync(DATA_FILE)) {
     return res.status(404).send("No data have been saved yet.");
   }
-  res.download(DATA_FILE, "ai_adaptive_feedback_all_trials.csv");
+  res.download(DATA_FILE, "ai_beast_fixed_questions_all_trials.csv");
 });
 
 app.get("/api/health", (req, res) => {
@@ -562,8 +364,8 @@ app.get("/api/health", (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Adaptive AI feedback-loop prototype running at http://localhost:${PORT}`);
-  console.log(`Wording/question model: ${MODEL}`);
+  console.log(`AI-BEAST fixed-question prototype running at http://localhost:${PORT}`);
+  console.log(`Wording model: ${MODEL}`);
   console.log(`TTS model: ${TTS_MODEL}`);
   console.log(`Default TTS voice: ${DEFAULT_TTS_VOICE}`);
   console.log(`API key configured: ${Boolean(process.env.OPENAI_API_KEY)}`);
