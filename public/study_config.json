@@ -1,0 +1,66 @@
+{
+  "version": "v5-fixed-questions-60",
+  "default_trials": 60,
+  "quick_pilot_trials": 8,
+  "stimulus_duration_ms": 1800,
+  "truth_min": 45,
+  "truth_max": 100,
+  "initial_estimate_min": 1,
+  "initial_estimate_max": 200,
+  "advice_estimate_min": 1,
+  "advice_estimate_max": 300,
+  "advice_step_fraction_of_initial_error": 0.6,
+  "advice_quality_schedule": {
+    "method": "block_randomized",
+    "block_size": 4,
+    "block_contents": [
+      "helpful",
+      "helpful",
+      "helpful",
+      "misleading"
+    ],
+    "description": "Within every four-trial block, three trials are helpful and one is misleading, with order shuffled deterministically from participant ID. For 60 trials this gives 45 helpful and 15 misleading trials."
+  },
+  "ai_style": {
+    "assignment": "between-participant",
+    "levels": [
+      "sycophantic",
+      "neutral"
+    ],
+    "description": "Both AIs see the same current estimate, controlled AI estimate, and full completed participant history. They differ only in the interpersonal response policy."
+  },
+  "history_available_to_ai": {
+    "scope": "all_previous_completed_trials",
+    "fields": [
+      "initial_estimate",
+      "ai_advice",
+      "final_estimate",
+      "true_count",
+      "post_trial_question_id",
+      "post_trial_rating"
+    ],
+    "current_trial_true_count_available": false,
+    "current_trial_advice_quality_label_available": false,
+    "description": "The live wording call is stateless. On every trial the app explicitly re-sends the full completed history in compact form. The current trial's true count and helpful/misleading label are not supplied to the LLM."
+  },
+  "post_trial_questions": {
+    "one_per_trial": true,
+    "timing": "after final estimate, before objective feedback",
+    "assignment": "balanced block-randomized",
+    "block_size": 2,
+    "items": [
+      {
+        "id": "feeling_about_advice",
+        "text": "How do you feel right now about the advice I gave?",
+        "low": "Very negatively",
+        "high": "Very positively"
+      },
+      {
+        "id": "trust_so_far",
+        "text": "How much do you trust my advice so far?",
+        "low": "Not at all",
+        "high": "Completely"
+      }
+    ]
+  }
+}

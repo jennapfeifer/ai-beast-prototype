@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Adaptive AI Advice Loop — Prototype</title>
+  <title>AI-BEAST Repeated Advice Prototype</title>
   <style>
     :root {
       --bg:#f4f5f7; --card:#fff; --ink:#20242a; --muted:#6c737f;
@@ -38,7 +38,6 @@
     .ratingBtn{background:#eef0f3;color:#20242a;border:1px solid #d4d8de;padding:13px 5px;font-weight:700}
     .ratingBtn.selected{background:#20242a;color:#fff;border-color:#20242a}
     .anchors{display:flex;justify-content:space-between;gap:20px;margin-top:8px;color:var(--muted);font-size:13px}
-    .userModel{border:1px solid var(--line);border-radius:10px;padding:14px;margin:14px 0;background:#fafafa}
     .pill{display:inline-block;background:#eceff3;border-radius:999px;padding:4px 9px;font-size:13px;margin:2px 4px 2px 0}
     table{width:100%;border-collapse:collapse;margin:15px 0}th,td{border-bottom:1px solid var(--line);text-align:left;padding:9px 6px;font-size:14px}
     @media(max-width:620px){.ratingButtons{grid-template-columns:repeat(4,1fr)}.anchors{font-size:12px}}
@@ -48,20 +47,20 @@
 <div class="wrap">
   <div class="card">
     <section id="startScreen">
-      <h1>Adaptive AI Advice Loop</h1>
-      <p class="muted">Prototype: controlled numerical advice + live state-aware wording + one 7-point question after each final estimate</p>
+      <h1>Repeated AI Advice Task</h1>
+      <p class="muted">Prototype for testing repeated sycophantic versus neutral AI advice</p>
 
       <div class="notice">
-        The experiment controls the <strong>numerical advice</strong>. The live AI controls the wording. On later trials, it can also use the participant's previous 7-point ratings when formulating its response.
+        <strong>Current frozen prototype:</strong> participant estimates dots → hears AI advice → revises estimate → answers one of two fixed 7-point questions → sees the correct answer.
       </div>
 
       <div class="row">
         <div class="field">
           <label for="participantId">Participant ID</label><br><br>
-          <input id="participantId" type="text" placeholder="e.g. PILOT001" autocomplete="off">
+          <input id="participantId" type="text" placeholder="e.g. SIM001" autocomplete="off">
         </div>
         <div class="field">
-          <label for="voiceSelect">Audio voice</label><br><br>
+          <label for="voiceSelect">AI voice</label><br><br>
           <select id="voiceSelect">
             <option value="cedar" selected>Cedar</option>
             <option value="marin">Marin</option>
@@ -79,39 +78,37 @@
         </div>
       </div>
 
-      <h3 style="margin-top:24px;">Researcher prototype controls</h3>
+      <h3 style="margin-top:24px;">Researcher controls</h3>
       <div class="row">
         <div class="field">
-          <label for="policySelect">AI response policy</label><br><br>
-          <select id="policySelect">
+          <label for="styleSelect">AI interpersonal style</label><br><br>
+          <select id="styleSelect">
             <option value="auto" selected>Auto-counterbalance by participant ID</option>
             <option value="sycophantic">Sycophantic / aligning</option>
-            <option value="calibrated">Calibrated / skeptical</option>
+            <option value="neutral">Neutral / independent</option>
           </select>
         </div>
         <div class="field">
-          <label for="questionMode">Post-trial question mode</label><br><br>
-          <select id="questionMode">
-            <option value="fixed">Fixed pre-written pool</option>
-            <option value="hybrid" selected>Hybrid: fixed trust anchors + live questions</option>
-            <option value="live">Live-generated question every trial</option>
+          <label for="trialCountSelect">Number of trials</label><br><br>
+          <select id="trialCountSelect">
+            <option value="60" selected>60 — simulation/full prototype</option>
+            <option value="8">8 — quick functionality test</option>
           </select>
         </div>
       </div>
 
       <div class="row" style="align-items:center;margin-top:16px;">
         <button id="testVoiceBtn" class="secondary">Test selected voice</button>
-        <label style="font-weight:400"><input id="speakQuestions" type="checkbox" checked> Speak post-trial questions</label>
         <label style="font-weight:400"><input id="debugToggle" type="checkbox"> Show researcher debug information</label>
       </div>
 
       <p id="serverStatus" class="small muted">Checking live model connection…</p>
 
-      <h2 style="margin-top:26px;">Participant flow</h2>
-      <p>Estimate the number of dots, hear the AI's advice, and enter your final estimate. <strong>Before seeing the correct answer</strong>, the AI asks one short question about the interaction or your current state. Answer it from 1 to 7.</p>
-      <p>The AI may use your earlier ratings when wording advice on later trials. There are no right or wrong answers to the rating questions.</p>
+      <h2 style="margin-top:26px;">What happens on each trial?</h2>
+      <p>You estimate the number of dots. The AI gives a numerical estimate. You may revise your answer. You then answer <strong>one short 1–7 question</strong> before seeing the correct number.</p>
+      <p class="small muted">The two fixed questions are balanced across trials. With 60 trials, the numerical advice schedule contains 45 helpful and 15 misleading trials in randomized four-trial blocks.</p>
 
-      <button id="startBtn" disabled>Start 8-trial prototype</button>
+      <button id="startBtn" disabled>Start task</button>
     </section>
 
     <section id="taskScreen" class="hidden">
@@ -155,11 +152,9 @@
       </section>
 
       <section id="questionStage" class="hidden">
-        <h2>A quick question from the AI</h2>
+        <h2>One quick question</h2>
         <div class="assistantBox" style="text-align:left;">
           <div id="questionText" class="ratingQuestion"></div>
-          <div id="questionAudioStatus" class="small muted"></div>
-          <button id="playQuestionBtn" class="secondary hidden" style="margin-top:10px;">Play question</button>
         </div>
 
         <div class="ratingWrap">
@@ -176,29 +171,27 @@
       <section id="feedbackStage" class="hidden">
         <h2>Feedback</h2>
         <div id="feedbackText" class="feedback"></div>
-        <div id="modelDebug" class="userModel hidden"></div>
+        <div id="historyDebug" class="debug hidden"></div>
         <button id="nextBtn">Next trial</button>
       </section>
     </section>
 
     <section id="endScreen" class="hidden">
-      <h1>Prototype complete</h1>
+      <h1>Task complete</h1>
       <div id="summary"></div>
       <div class="row" style="margin-top:20px;">
-        <button id="downloadParticipantBtn">Download this participant's CSV</button>
+        <button id="downloadParticipantBtn">Download participant CSV</button>
         <button id="downloadAllBtn" class="secondary">Download all locally saved trials</button>
         <button id="restartBtn" class="secondary">New participant</button>
       </div>
-      <p class="small muted">For piloting only: Render's local file storage is not a robust persistent study database.</p>
+      <p class="small muted">Pilot/simulation prototype only: Render local storage is not a persistent research database.</p>
     </section>
   </div>
 </div>
 
 <script>
-(() => {
-  const N_TRIALS = 8;
-  const SHOW_MS = 1800;
-  const MIN_INITIAL = 1, MAX_INITIAL = 200, MIN_ADVICE = 1, MAX_ADVICE = 300;
+(async () => {
+  const config = await fetch("/study_config.json").then(r => r.json());
 
   const $ = id => document.getElementById(id);
   const screens = { start:$("startScreen"), task:$("taskScreen"), end:$("endScreen") };
@@ -208,14 +201,13 @@
   const ctx = canvas.getContext("2d");
 
   let participantId = "";
+  let N_TRIALS = config.default_trials;
   let trialIndex = 0;
   let schedule = [];
   let current = null;
   let rows = [];
-  let policy = "calibrated";
-  let questionMode = "hybrid";
+  let aiStyle = "neutral";
   let selectedVoice = "cedar";
-  let speakQuestions = true;
 
   let generatedText = "";
   let generatedMeta = null;
@@ -226,11 +218,14 @@
 
   let currentQuestion = null;
   let selectedRating = null;
-  let questionSpeechDurationMs = null;
-  let questionTtsMeta = null;
 
   let audioObjectUrl = null;
   let audioPlayer = new Audio();
+
+  const MIN_INITIAL = config.initial_estimate_min;
+  const MAX_INITIAL = config.initial_estimate_max;
+  const MIN_ADVICE = config.advice_estimate_min;
+  const MAX_ADVICE = config.advice_estimate_max;
 
   function clamp(x, lo, hi){ return Math.max(lo, Math.min(hi, x)); }
 
@@ -255,13 +250,34 @@
     return a;
   }
 
-  function makeSchedule(pid){
+  function makeQualitySchedule(n,rng){
+    const out=[];
+    const block=["helpful","helpful","helpful","misleading"];
+    while(out.length<n){
+      out.push(...shuffleWithRng(block,rng));
+    }
+    return out.slice(0,n);
+  }
+
+  function makeQuestionSchedule(n,rng){
+    const ids=config.post_trial_questions.items.map(q=>q.id);
+    const out=[];
+    while(out.length<n){
+      out.push(...shuffleWithRng(ids,rng));
+    }
+    return out.slice(0,n);
+  }
+
+  function makeSchedule(pid,n){
     const rng=mulberry32(hashString(pid));
-    const helpful=shuffleWithRng([true,true,true,true,true,true,false,false],rng);
-    return helpful.map((isHelpful,i)=>({
+    const qualities=makeQualitySchedule(n,rng);
+    const questions=makeQuestionSchedule(n,rng);
+
+    return Array.from({length:n},(_,i)=>({
       trial:i+1,
-      helpful:isHelpful,
-      truth:Math.floor(45+rng()*56),
+      intendedQuality:qualities[i],
+      questionId:questions[i],
+      truth:Math.floor(config.truth_min+rng()*(config.truth_max-config.truth_min+1)),
       seed:Math.floor(rng()*1e9)
     }));
   }
@@ -284,76 +300,94 @@
     stage.classList.remove("hidden");
   }
 
-  function generateNumericalAdvice(truth,estimate,intendedHelpful,seed){
+  function classifyAdviceQuality(truth,initial,advice){
+    const initialError=Math.abs(initial-truth);
+    const adviceError=Math.abs(advice-truth);
+    if(adviceError<initialError)return"helpful";
+    if(adviceError>initialError)return"misleading";
+    return"equal";
+  }
+
+  function generateNumericalAdvice(truth,estimate,intendedQuality,seed){
     const initialError=Math.abs(estimate-truth);
     const rng=mulberry32((seed^Math.round(estimate*1009)^Math.round(truth*9176))>>>0);
 
-    if(initialError===0){
-      const step=Math.max(4,Math.round(truth*.06));
-      const candidates=[truth+step,truth-step].filter(x=>x>=MIN_ADVICE&&x<=MAX_ADVICE&&x!==estimate);
-      const advice=Math.round(candidates[Math.floor(rng()*candidates.length)]||clamp(truth+step,MIN_ADVICE,MAX_ADVICE));
-      return {advice,intendedHelpful,realizedHelpful:false,adjusted:true,reason:"initial_estimate_exactly_correct"};
+    // If the participant is exactly correct, no non-identical advice can be
+    // objectively "more helpful". Keep the same number and flag the trial.
+    if(initialError===0 && intendedQuality==="helpful"){
+      return {
+        advice:estimate,
+        realizedQuality:"equal",
+        adjusted:true,
+        reason:"initial_estimate_exactly_correct_helpful_not_possible"
+      };
     }
 
-    const targetDistance=Math.max(2,Math.round(initialError*.60));
-    const directionTowardTruth=Math.sign(truth-estimate);
-    const proposed=intendedHelpful
+    const targetDistance=Math.max(
+      2,
+      Math.round(initialError*config.advice_step_fraction_of_initial_error)
+    );
+    const directionTowardTruth=Math.sign(truth-estimate) || (rng()<.5?-1:1);
+
+    const proposed=intendedQuality==="helpful"
       ? estimate+directionTowardTruth*targetDistance
       : estimate-directionTowardTruth*targetDistance;
 
     const candidates=[];
     for(let a=MIN_ADVICE;a<=MAX_ADVICE;a++){
       if(a===estimate) continue;
-      const adviceError=Math.abs(a-truth);
-      const valid=intendedHelpful?adviceError<initialError:adviceError>initialError;
-      if(valid) candidates.push({a,d:Math.abs(a-proposed)});
+      const realized=classifyAdviceQuality(truth,estimate,a);
+      if(realized===intendedQuality){
+        candidates.push({a,d:Math.abs(a-proposed)});
+      }
     }
 
     if(!candidates.length){
-      const endpoints=[MIN_ADVICE,MAX_ADVICE].filter(a=>a!==estimate);
-      const advice=endpoints.sort((a,b)=>Math.abs(b-truth)-Math.abs(a-truth))[0];
-      return {advice,intendedHelpful,realizedHelpful:Math.abs(advice-truth)<initialError,adjusted:true,reason:"no_valid_candidate"};
+      const advice=clamp(Math.round(proposed),MIN_ADVICE,MAX_ADVICE);
+      return {
+        advice,
+        realizedQuality:classifyAdviceQuality(truth,estimate,advice),
+        adjusted:true,
+        reason:"no_exact_candidate_found"
+      };
     }
 
     candidates.sort((a,b)=>a.d-b.d);
     const advice=candidates[0].a;
+
     return {
       advice,
-      intendedHelpful,
-      realizedHelpful:Math.abs(advice-truth)<initialError,
+      realizedQuality:classifyAdviceQuality(truth,estimate,advice),
       adjusted:Math.round(proposed)!==advice,
       reason:Math.round(proposed)!==advice?"boundary_or_validity_adjustment":""
     };
   }
 
   function historyForModel(){
-    return rows.slice(-10).map(r=>({
+    // Full completed history: exact numeric trajectory + one fixed rating per trial.
+    return rows.map(r=>({
       trial:r.trial,
+      initial_estimate:r.initial_estimate,
+      advice:r.advice,
+      final_estimate:r.final_estimate,
+      true_count:r.true_count,
       question_id:r.question_id,
-      question_text:r.question_text,
-      rating:r.question_rating,
-      low_anchor:r.question_low_anchor,
-      high_anchor:r.question_high_anchor,
-      initial_abs_error:r.initial_abs_error,
-      final_abs_error:r.final_abs_error,
-      advice_helpful:Boolean(r.realized_helpful)
+      question_rating:r.question_rating
     }));
   }
 
-  function summarizeHistory(){
-    if(!rows.length) return "No ratings yet.";
-    const by={};
-    for(const r of rows){
-      if(!by[r.question_id]) by[r.question_id]=[];
-      by[r.question_id].push(Number(r.question_rating));
-    }
-    const bits=Object.entries(by).map(([k,v])=>{
-      const avg=v.reduce((a,b)=>a+b,0)/v.length;
+  function historySummary(){
+    if(!rows.length)return"No previous completed trials.";
+    const trust=rows.filter(r=>r.question_id==="trust_so_far").map(r=>Number(r.question_rating));
+    const feeling=rows.filter(r=>r.question_id==="feeling_about_advice").map(r=>Number(r.question_rating));
+    const fmt=(name,v)=>{
+      if(!v.length)return`${name}: none yet`;
+      const mean=v.reduce((a,b)=>a+b,0)/v.length;
       const trend=v.length>1?v[v.length-1]-v[0]:0;
-      const trendText=trend>0.5?"rising":trend<-0.5?"falling":"stable/unclear";
-      return `${k}: mean ${avg.toFixed(1)}/7, latest ${v[v.length-1]}/7, ${trendText}`;
-    });
-    return bits.join(" • ");
+      const tr=trend>0.75?"rising":trend<-0.75?"falling":"roughly stable";
+      return `${name}: ${v.join("→")} (mean ${mean.toFixed(1)}, ${tr})`;
+    };
+    return `${fmt("trust",trust)}\n${fmt("feeling",feeling)}`;
   }
 
   function stopAudio(){
@@ -365,46 +399,52 @@
   async function createAudio(text){
     stopAudio();
     const r=await fetch("/api/speech",{
-      method:"POST",headers:{"Content-Type":"application/json"},
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
       body:JSON.stringify({text,voice:selectedVoice})
     });
+
     if(!r.ok){
       let message="Neural voice generation failed.";
       try{const x=await r.json();if(x.error)message=x.error;}catch{}
       throw new Error(message);
     }
+
     const blob=await r.blob();
     audioObjectUrl=URL.createObjectURL(blob);
     audioPlayer=new Audio(audioObjectUrl);
     audioPlayer.preload="auto";
+
     const meta={
       model:r.headers.get("X-TTS-Model")||"",
       voice:r.headers.get("X-TTS-Voice")||selectedVoice,
       generation_ms:Number(r.headers.get("X-TTS-Generation-Ms")||0)
     };
+
     await new Promise((resolve,reject)=>{
       audioPlayer.addEventListener("canplaythrough",resolve,{once:true});
       audioPlayer.addEventListener("error",()=>reject(new Error("Generated audio could not be loaded.")),{once:true});
       audioPlayer.load();
     });
+
     return meta;
   }
 
-  function playAudio(statusEl,waveEl){
+  function playAudio(waveEl){
     return new Promise(async(resolve,reject)=>{
       if(!audioObjectUrl){reject(new Error("No audio is available."));return;}
       try{
         audioPlayer.currentTime=0;
-        if(waveEl) waveEl.classList.remove("hidden");
+        if(waveEl)waveEl.classList.remove("hidden");
         const start=performance.now();
         audioPlayer.onended=()=>{
-          if(waveEl) waveEl.classList.add("hidden");
+          if(waveEl)waveEl.classList.add("hidden");
           resolve(Math.round(performance.now()-start));
         };
         audioPlayer.onerror=()=>reject(new Error("Audio playback failed."));
         await audioPlayer.play();
       }catch(err){
-        if(waveEl) waveEl.classList.add("hidden");
+        if(waveEl)waveEl.classList.add("hidden");
         reject(err);
       }
     });
@@ -412,9 +452,10 @@
 
   async function checkServer(){
     try{
-      const r=await fetch("/api/health");const x=await r.json();
+      const r=await fetch("/api/health");
+      const x=await r.json();
       if(x.ok&&x.api_key_configured){
-        $("serverStatus").innerHTML=`<span class="statusGood">Live model + voice ready.</span> Wording/questions: ${x.model}; voice: ${x.tts_model}`;
+        $("serverStatus").innerHTML=`<span class="statusGood">Live advice + neural voice ready.</span> Wording: ${x.model}; voice: ${x.tts_model}`;
         $("startBtn").disabled=false;
       }else{
         $("serverStatus").innerHTML=`<span class="statusBad">Server is running, but no API key is configured.</span>`;
@@ -427,29 +468,36 @@
   $("voiceSelect").addEventListener("change",()=>selectedVoice=$("voiceSelect").value);
 
   $("testVoiceBtn").addEventListener("click",async()=>{
-    const btn=$("testVoiceBtn");btn.disabled=true;
+    const btn=$("testVoiceBtn");
+    btn.disabled=true;
     try{
       selectedVoice=$("voiceSelect").value;
       btn.textContent="Generating…";
       await createAudio("This is a short test of the AI voice used during the task.");
       btn.textContent="Playing…";
       await playAudio();
-    }catch(err){alert(err.message);}
-    finally{btn.disabled=false;btn.textContent="Test selected voice";}
+    }catch(err){
+      alert(err.message);
+    }finally{
+      btn.disabled=false;
+      btn.textContent="Test selected voice";
+    }
   });
 
   $("startBtn").addEventListener("click",()=>{
     participantId=$("participantId").value.trim()||`PILOT_${Date.now()}`;
     selectedVoice=$("voiceSelect").value;
-    questionMode=$("questionMode").value;
-    speakQuestions=$("speakQuestions").checked;
+    N_TRIALS=Number($("trialCountSelect").value)||config.default_trials;
 
-    const selectedPolicy=$("policySelect").value;
-    policy=selectedPolicy==="auto"
-      ? (hashString(participantId)%2===0?"sycophantic":"calibrated")
-      : selectedPolicy;
+    const selectedStyle=$("styleSelect").value;
+    aiStyle=selectedStyle==="auto"
+      ? (hashString(participantId)%2===0?"sycophantic":"neutral")
+      : selectedStyle;
 
-    rows=[];recentGeneratedTexts=[];trialIndex=0;schedule=makeSchedule(participantId);
+    rows=[];
+    recentGeneratedTexts=[];
+    trialIndex=0;
+    schedule=makeSchedule(participantId,N_TRIALS);
 
     screens.start.classList.add("hidden");
     screens.end.classList.add("hidden");
@@ -459,10 +507,13 @@
 
   function beginTrial(){
     current=schedule[trialIndex];
-    generatedText="";generatedMeta=null;replayCount=0;
-    adviceSpeechDurationMs=null;adviceTtsMeta=null;
-    currentQuestion=null;selectedRating=null;
-    questionSpeechDurationMs=null;questionTtsMeta=null;
+    generatedText="";
+    generatedMeta=null;
+    replayCount=0;
+    adviceSpeechDurationMs=null;
+    adviceTtsMeta=null;
+    currentQuestion=null;
+    selectedRating=null;
     stopAudio();
 
     $("progress").textContent=`Trial ${trialIndex+1} of ${N_TRIALS}`;
@@ -473,17 +524,18 @@
     $("replayBtn").classList.add("hidden");
     $("finalArea").classList.add("hidden");
     $("debugText").classList.add("hidden");
-    $("modelDebug").classList.add("hidden");
-    showStage($("stimulusStage"));
+    $("historyDebug").classList.add("hidden");
 
+    showStage($("stimulusStage"));
     drawDots(current.truth,current.seed);
     $("stimulusMessage").textContent="Look carefully…";
+
     setTimeout(()=>{
       ctx.clearRect(0,0,canvas.width,canvas.height);
       $("stimulusMessage").textContent="";
       showStage($("estimateStage"));
       $("initialEstimate").focus();
-    },SHOW_MS);
+    },config.stimulus_duration_ms);
   }
 
   $("getAdviceBtn").addEventListener("click",async()=>{
@@ -494,9 +546,16 @@
     }
 
     current.initial=initial;
-    const plan=generateNumericalAdvice(current.truth,current.initial,current.helpful,current.seed);
+
+    const plan=generateNumericalAdvice(
+      current.truth,
+      current.initial,
+      current.intendedQuality,
+      current.seed
+    );
+
     current.advice=plan.advice;
-    current.realizedHelpful=plan.realizedHelpful;
+    current.realizedQuality=plan.realizedQuality;
     current.adviceAdjusted=plan.adjusted;
     current.adviceAdjustmentReason=plan.reason;
 
@@ -506,31 +565,40 @@
 
     try{
       const hist=historyForModel();
+
       const r=await fetch("/api/advice",{
-        method:"POST",headers:{"Content-Type":"application/json"},
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
           initial:current.initial,
           advice:current.advice,
-          policy,
+          style:aiStyle,
           history:hist,
           recent_phrases:recentGeneratedTexts.slice(-3)
         })
       });
-      const x=await r.json();
-      if(!r.ok) throw new Error(x.error||"Advice generation failed.");
 
-      generatedText=x.text;generatedMeta=x;
+      const x=await r.json();
+      if(!r.ok)throw new Error(x.error||"Advice generation failed.");
+
+      generatedText=x.text;
+      generatedMeta=x;
       recentGeneratedTexts.push(generatedText);
       if(recentGeneratedTexts.length>3)recentGeneratedTexts.shift();
 
       if($("debugToggle").checked){
         $("debugText").classList.remove("hidden");
         $("debugText").textContent=
-`Researcher debug
-Policy: ${policy}
-Numerical advice: ${current.advice}
-History available to AI:
-${summarizeHistory()}
+`RESEARCHER DEBUG
+AI style: ${aiStyle}
+Intended current advice quality: ${current.intendedQuality}
+Realized current advice quality: ${current.realizedQuality}
+Current true count: ${current.truth}
+Current initial estimate: ${current.initial}
+Controlled AI estimate: ${current.advice}
+
+History supplied to wording model: ${hist.length} completed trial(s)
+${historySummary()}
 
 Generated sentence:
 ${generatedText}
@@ -538,17 +606,17 @@ ${generatedText}
 Fallback: ${x.fallback?"YES":"no"}`;
       }
 
-      $("thinking").textContent="Creating a natural voice response…";
+      $("thinking").textContent="Creating voice response…";
       adviceTtsMeta=await createAudio(generatedText);
 
       try{
         $("thinking").textContent="Listen to the advice…";
-        adviceSpeechDurationMs=await playAudio($("thinking"),$("wave"));
+        adviceSpeechDurationMs=await playAudio($("wave"));
         $("thinking").textContent="Advice finished";
         $("replayBtn").classList.remove("hidden");
         $("finalArea").classList.remove("hidden");
         $("finalEstimate").focus();
-      }catch(playErr){
+      }catch{
         $("thinking").textContent="Audio ready";
         $("playBtn").classList.remove("hidden");
       }
@@ -564,107 +632,74 @@ Fallback: ${x.fallback?"YES":"no"}`;
   $("playBtn").addEventListener("click",async()=>{
     $("playBtn").disabled=true;
     try{
-      adviceSpeechDurationMs=await playAudio($("thinking"),$("wave"));
+      adviceSpeechDurationMs=await playAudio($("wave"));
       $("thinking").textContent="Advice finished";
       $("playBtn").classList.add("hidden");
       $("replayBtn").classList.remove("hidden");
       $("finalArea").classList.remove("hidden");
       $("finalEstimate").focus();
     }catch(err){
-      $("audioError").textContent=err.message;$("audioError").classList.remove("hidden");
-    }finally{$("playBtn").disabled=false;}
+      $("audioError").textContent=err.message;
+      $("audioError").classList.remove("hidden");
+    }finally{
+      $("playBtn").disabled=false;
+    }
   });
 
   $("replayBtn").addEventListener("click",async()=>{
-    replayCount++;$("replayBtn").disabled=true;
-    try{await playAudio($("thinking"),$("wave"));$("thinking").textContent="Advice finished";}
-    catch(err){$("audioError").textContent=err.message;$("audioError").classList.remove("hidden");}
-    finally{$("replayBtn").disabled=false;}
+    replayCount++;
+    $("replayBtn").disabled=true;
+    try{
+      await playAudio($("wave"));
+      $("thinking").textContent="Advice finished";
+    }catch(err){
+      $("audioError").textContent=err.message;
+      $("audioError").classList.remove("hidden");
+    }finally{
+      $("replayBtn").disabled=false;
+    }
   });
 
-  $("submitFinalBtn").addEventListener("click",async()=>{
+  $("submitFinalBtn").addEventListener("click",()=>{
     const final=Number($("finalEstimate").value);
     if(!Number.isFinite(final)||final<MIN_ADVICE||final>MAX_ADVICE){
       alert(`Please enter a final estimate between ${MIN_ADVICE} and ${MAX_ADVICE}.`);
       return;
     }
-    current.final=final;
-    $("submitFinalBtn").disabled=true;
-    try{await prepareQuestion();}
-    catch(err){alert(`Could not load the rating question: ${err.message}`);}
-    finally{$("submitFinalBtn").disabled=false;}
-  });
 
-  async function prepareQuestion(){
-    showStage($("questionStage"));
-    $("questionText").textContent="Preparing a question…";
-    $("questionAudioStatus").textContent="";
-    $("playQuestionBtn").classList.add("hidden");
-    $("questionDebug").classList.add("hidden");
+    current.final=final;
+
+    const q=config.post_trial_questions.items.find(x=>x.id===current.questionId);
+    currentQuestion={...q};
     selectedRating=null;
+
+    $("questionText").textContent=currentQuestion.text;
+    $("lowAnchor").textContent=currentQuestion.low;
+    $("highAnchor").textContent=currentQuestion.high;
     $("submitRatingBtn").disabled=true;
     renderRatingButtons();
-
-    const r=await fetch("/api/question",{
-      method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        mode:questionMode,
-        trial:current.trial,
-        history:historyForModel(),
-        recent_question_ids:rows.slice(-3).map(x=>x.question_id)
-      })
-    });
-    const q=await r.json();
-    if(!r.ok) throw new Error(q.error||"Question generation failed.");
-
-    currentQuestion=q;
-    $("questionText").textContent=q.text;
-    $("lowAnchor").textContent=q.low;
-    $("highAnchor").textContent=q.high;
 
     if($("debugToggle").checked){
       $("questionDebug").classList.remove("hidden");
       $("questionDebug").textContent=
-`Researcher debug
-Question mode: ${questionMode}
-Construct: ${q.id}
-Source: ${q.source}
-Generation model: ${q.generation_model||"pre-written"}`;
+`RESEARCHER DEBUG
+Fixed question: ${currentQuestion.id}
+Question selection is pre-scheduled and does not depend on AI style, current estimate, or current advice quality.`;
+    }else{
+      $("questionDebug").classList.add("hidden");
     }
 
-    if(speakQuestions){
-      try{
-        $("questionAudioStatus").textContent="Generating spoken question…";
-        questionTtsMeta=await createAudio(q.text);
-        $("questionAudioStatus").textContent="Listen…";
-        try{
-          questionSpeechDurationMs=await playAudio();
-          $("questionAudioStatus").textContent="";
-        }catch{
-          $("questionAudioStatus").textContent="Question audio ready.";
-          $("playQuestionBtn").classList.remove("hidden");
-        }
-      }catch(err){
-        $("questionAudioStatus").textContent="Could not play the question; please read it on screen.";
-      }
-    }
-  }
-
-  $("playQuestionBtn").addEventListener("click",async()=>{
-    $("playQuestionBtn").disabled=true;
-    try{
-      questionSpeechDurationMs=await playAudio();
-      $("questionAudioStatus").textContent="";
-      $("playQuestionBtn").classList.add("hidden");
-    }catch(err){$("questionAudioStatus").textContent=err.message;}
-    finally{$("playQuestionBtn").disabled=false;}
+    showStage($("questionStage"));
   });
 
   function renderRatingButtons(){
-    const host=$("ratingButtons");host.innerHTML="";
+    const host=$("ratingButtons");
+    host.innerHTML="";
     for(let i=1;i<=7;i++){
       const b=document.createElement("button");
-      b.type="button";b.className="ratingBtn";b.textContent=String(i);
+      b.type="button";
+      b.className="ratingBtn";
+      b.textContent=String(i);
       b.addEventListener("click",()=>{
         selectedRating=i;
         [...host.children].forEach(x=>x.classList.remove("selected"));
@@ -685,16 +720,18 @@ Generation model: ${q.generation_model||"pre-written"}`;
     const adviceError=Math.abs(current.advice-current.truth);
     const finalError=Math.abs(current.final-current.truth);
 
+    const historyUsed=historyForModel();
+
     const row={
       participant_id:participantId,
       trial:current.trial,
-      policy,
-      question_mode:questionMode,
+      n_trials_planned:N_TRIALS,
+      ai_style:aiStyle,
       true_count:current.truth,
       initial_estimate:current.initial,
       advice:current.advice,
-      intended_helpful:current.helpful?1:0,
-      realized_helpful:current.realizedHelpful?1:0,
+      intended_advice_quality:current.intendedQuality,
+      realized_advice_quality:current.realizedQuality,
       advice_adjusted:current.adviceAdjusted?1:0,
       advice_adjustment_reason:current.adviceAdjustmentReason||"",
       final_estimate:current.final,
@@ -715,19 +752,17 @@ Generation model: ${q.generation_model||"pre-written"}`;
       question_text:currentQuestion.text,
       question_low_anchor:currentQuestion.low,
       question_high_anchor:currentQuestion.high,
-      question_source:currentQuestion.source,
-      question_generation_model:currentQuestion.generation_model||"",
-      question_generation_ms:currentQuestion.generation_ms||0,
       question_rating:selectedRating,
-      question_tts_generation_ms:questionTtsMeta?.generation_ms||"",
-      question_speech_duration_ms:questionSpeechDurationMs??"",
-      history_before_advice_json:JSON.stringify(historyForModel())
+      history_n_trials:historyUsed.length,
+      history_before_advice_json:JSON.stringify(historyUsed)
     };
 
     rows.push(row);
 
     fetch("/api/save-trial",{
-      method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(row)
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(row)
     }).catch(()=>{});
 
     $("feedbackText").innerHTML=`
@@ -738,14 +773,12 @@ Generation model: ${q.generation_model||"pre-written"}`;
     `;
 
     if($("debugToggle").checked){
-      $("modelDebug").classList.remove("hidden");
-      $("modelDebug").innerHTML=`
-        <strong>Accumulating user-state history</strong><br>
-        <span class="small">${summarizeHistory()}</span><br><br>
-        <span class="pill">Last question: ${currentQuestion.id}</span>
-        <span class="pill">Rating: ${selectedRating}/7</span>
-        <span class="pill">Policy: ${policy}</span>
-      `;
+      $("historyDebug").classList.remove("hidden");
+      $("historyDebug").textContent=
+`This response (${currentQuestion.id}=${selectedRating}/7) will be added to the history supplied on the NEXT trial.
+
+History now contains ${rows.length} completed trial(s).
+${historySummary()}`;
     }
 
     showStage($("feedbackStage"));
@@ -762,26 +795,38 @@ Generation model: ${q.generation_model||"pre-written"}`;
     screens.task.classList.add("hidden");
     screens.end.classList.remove("hidden");
 
-    const validWoa=rows.map(r=>Number(r.weight_of_advice)).filter(Number.isFinite);
-    const meanWoa=validWoa.length?validWoa.reduce((a,b)=>a+b,0)/validWoa.length:NaN;
+    const validWoa=rows
+      .map(r=>Number(r.weight_of_advice))
+      .filter(Number.isFinite);
 
-    const by={};
-    for(const r of rows){
-      if(!by[r.question_id])by[r.question_id]=[];
-      by[r.question_id].push(Number(r.question_rating));
-    }
-    const ratingRows=Object.entries(by).map(([id,v])=>{
-      const avg=v.reduce((a,b)=>a+b,0)/v.length;
-      return `<tr><td>${id}</td><td>${v.join(", ")}</td><td>${avg.toFixed(2)}</td></tr>`;
+    const meanWoa=validWoa.length
+      ? validWoa.reduce((a,b)=>a+b,0)/validWoa.length
+      : NaN;
+
+    const qualityCounts=rows.reduce((acc,r)=>{
+      acc[r.realized_advice_quality]=(acc[r.realized_advice_quality]||0)+1;
+      return acc;
+    },{});
+
+    const questionRows=config.post_trial_questions.items.map(q=>{
+      const vals=rows.filter(r=>r.question_id===q.id).map(r=>Number(r.question_rating));
+      const avg=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:NaN;
+      return `<tr><td>${q.id}</td><td>${vals.length}</td><td>${Number.isFinite(avg)?avg.toFixed(2):"—"}</td></tr>`;
     }).join("");
 
     $("summary").innerHTML=`
-      <p><strong>AI policy:</strong> ${policy}<br>
-      <strong>Question mode:</strong> ${questionMode}<br>
-      <strong>Mean Weight of Advice:</strong> ${Number.isFinite(meanWoa)?meanWoa.toFixed(3):"—"}</p>
-      <h3>Ratings collected</h3>
-      <table><thead><tr><th>Construct</th><th>Ratings</th><th>Mean</th></tr></thead><tbody>${ratingRows}</tbody></table>
-      <p class="small muted">This is a demonstration summary, not a preregistered analysis.</p>
+      <p>
+        <strong>AI style:</strong> ${aiStyle}<br>
+        <strong>Trials:</strong> ${rows.length}<br>
+        <strong>Realized advice quality:</strong> helpful ${qualityCounts.helpful||0}, misleading ${qualityCounts.misleading||0}, equal ${qualityCounts.equal||0}<br>
+        <strong>Mean Weight of Advice:</strong> ${Number.isFinite(meanWoa)?meanWoa.toFixed(3):"—"}
+      </p>
+      <h3>Fixed questionnaire responses</h3>
+      <table>
+        <thead><tr><th>Question</th><th>N asked</th><th>Mean rating</th></tr></thead>
+        <tbody>${questionRows}</tbody>
+      </table>
+      <p class="small muted">This is a prototype summary, not a preregistered analysis.</p>
     `;
   }
 
@@ -795,15 +840,24 @@ Generation model: ${q.generation_model||"pre-written"}`;
   function downloadText(filename,text){
     const blob=new Blob([text],{type:"text/csv;charset=utf-8"});
     const url=URL.createObjectURL(blob);
-    const a=document.createElement("a");a.href=url;a.download=filename;a.click();
+    const a=document.createElement("a");
+    a.href=url;
+    a.download=filename;
+    a.click();
     setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
 
   $("downloadParticipantBtn").addEventListener("click",()=>{
-    downloadText(`${participantId}_adaptive_ai_trials.csv`,toCsv(rows));
+    downloadText(`${participantId}_ai_beast_60trial.csv`,toCsv(rows));
   });
-  $("downloadAllBtn").addEventListener("click",()=>window.location.href="/api/export");
-  $("restartBtn").addEventListener("click",()=>window.location.reload());
+
+  $("downloadAllBtn").addEventListener("click",()=>{
+    window.location.href="/api/export";
+  });
+
+  $("restartBtn").addEventListener("click",()=>{
+    window.location.reload();
+  });
 
   checkServer();
 })();
