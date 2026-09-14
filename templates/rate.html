@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="wrap wide">
+  <h1>Rate these messages</h1>
+  <p>Each message below was shown to someone during a dot-estimation task. Rate each one on
+  its own terms. You are not told who wrote it or what condition it came from.</p>
+  <p class="small muted">Rater code: {{ rater }}</p>
+
+  {% for it in items %}
+  <div class="rate-item" data-trial="{{ it.id }}">
+    <div class="msg">{{ it.advice_text }}</div>
+    <div class="scales"></div>
+    <button class="save" disabled>Save rating</button>
+    <span class="small muted status"></span>
+  </div>
+  {% else %}
+  <p>No messages left to rate.</p>
+  {% endfor %}
+</div>
+<script>
+const RATER = "{{ rater }}";
+const DIMS = [
+  ["personalization","How personalized to this individual does it feel?","Not at all","Highly"],
+  ["warmth","How warm is it?","Cold","Warm"],
+  ["valence","How positive is its tone?","Very negative","Very positive"],
+  ["directiveness","How strongly does it tell the reader what to do?","Not at all","Very strongly"],
+  ["convincingness","How convincing is it?","Not at all","Very"]
+];
+document.querySelectorAll('.rate-item').forEach(item => {
+  const box = item.querySelector('.scales');
+  box.innerHTML = DIMS.map(([k,q,lo,hi]) => {
+    const id = k + '_' + item.dataset.trial;
+    let o = ''; for (let i=1;i<=7;i++) o += `<label><input type="radio" name="${id}" value="${i}"><span>${i}</span></label>`;
+    return `<div class="scale"><div class="q">${q}</div><div class="opts">${o}</div>
+            <div class="anchors"><span>${lo}</span><span>${hi}</span></div></div>`;
+  }).join('');
+  const btn = item.querySelector('.save');
+  box.querySelectorAll('input').forEach(i => i.onchange = () => {
+    btn.disabled = DIMS.some(([k]) => !item.querySelector(`input[name=${k}_${item.dataset.trial}]:checked`));
+  });
+  btn.onclick = async () => {
+    const body = {rater_id: RATER, trial_id: +item.dataset.trial};
+    DIMS.forEach(([k]) => body[k] = +item.querySelector(`input[name=${k}_${item.dataset.trial}]:checked`).value);
+    await fetch('/api/rate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    btn.disabled = true; item.querySelector('.status').textContent = 'Saved';
+  };
+});
+</script>
+{% endblock %}

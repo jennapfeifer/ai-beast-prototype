@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="wrap">
+  <h1>How each trial works</h1>
+  <ol>
+    <li>A dot image appears. Look at it and make a first estimate.</li>
+    <li>The image disappears and you type your first estimate.</li>
+    <li>The AI assistant shows you a written estimate.</li>
+    <li>You type your final estimate. It can be the same as your first, or different.</li>
+    <li>After every two trials, you answer two short questions about trust and how the advice made you feel.</li>
+  </ol>
+
+  <p>Don't try to count the dots one by one; estimating is the point. You will not be told the
+  correct number at any point.</p>
+
+  <h2>Eight rounds</h2>
+  <p>The 104 trials are split into 8 rounds of 13. A small progress track and checkpoint screen
+  show how far through the study you are. They are <strong>not</strong> a score and do not tell you
+  whether your answers are accurate.</p>
+  <p>To keep the task moving, the two short rating questions appear only after every second trial.</p>
+
+  <h2>One warm-up trial first</h2>
+  <p>These use the same image → estimate → advice → final-answer sequence and aren't recorded.</p>
+
+  <div class="center"><a href="{{ url_for('task') }}"><button>Begin practice</button></a></div>
+</div>
+{% endblock %}
