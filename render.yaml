@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: ai-beast
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt && python setup_files.py && python stimuli.py --size 512 --force"
+    startCommand: "gunicorn app:app --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT"
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: ADVISER_MODEL
+        value: gpt-5
+      - key: ADVISER_REASONING_EFFORT
+        value: low
+      - key: ADVISER_VALIDATION_ATTEMPTS
+        value: "6"
+      - key: ADVISER_MIN_WORDS
+        value: "25"
+      - key: ADVISER_MAX_WORDS
+        value: "30"
+      - key: ADVISER_MIN_DELAY_MS
+        value: "2500"
+      - key: STIMULUS_MS
+        value: "5000"
+      - key: PREFILL_FINAL
+        value: "0"
+      - key: COLLECT_RATINGS
+        value: "1"
+      - key: RATING_EVERY
+        value: "2"
+      - key: RESEARCHER_MODE
+        value: "0"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ai-beast-db
+          property: connectionString
+
+databases:
+  - name: ai-beast-db
+    plan: free
