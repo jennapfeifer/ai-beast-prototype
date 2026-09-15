@@ -4,7 +4,7 @@ AI-BEAST — human study web app.
 Flow: consent -> instructions -> 1 warm-up trial -> 8 rounds x 13 trials
       (checkpoint/break between rounds) -> debrief.
 
-Per trial: image -> initial estimate -> AI number + short note -> number-line final estimate ->
+Per trial: image -> click-on-line initial estimate -> AI number + short note -> number-line final estimate ->
            periodic trust + feeling ratings.
 
 The true count is never shown to the participant. Numerical advice follows NEW25;

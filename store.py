@@ -184,13 +184,18 @@ def participant_summary(pid: str) -> Optional[Dict[str, Any]]:
     initial_ape = []
     final_ape = []
     final_abs = []
+    improved_trials = 0
     for r in rows:
         truth = float(r["true_count"])
         if truth <= 0:
             continue
-        initial_ape.append(abs(float(r["initial_estimate"]) - truth) / truth * 100.0)
-        final_ape.append(abs(float(r["final_estimate"]) - truth) / truth * 100.0)
+        initial_abs = abs(float(r["initial_estimate"]) - truth)
+        final_abs_err = abs(float(r["final_estimate"]) - truth)
+        initial_ape.append(initial_abs / truth * 100.0)
+        final_ape.append(final_abs_err / truth * 100.0)
         final_abs.append(abs(int(r["final_estimate"]) - int(r["true_count"])))
+        if final_abs_err < initial_abs:
+            improved_trials += 1
     if not final_ape:
         return None
 
@@ -204,6 +209,8 @@ def participant_summary(pid: str) -> Optional[Dict[str, Any]]:
         "n_trials": len(final_ape),
         "score": score,
         "initial_score": initial_score,
+        "score_change": score - initial_score,
+        "improved_trials": improved_trials,
         "mean_abs_pct_error": round(mean_final, 1),
         "closest_dots": min(final_abs),
     }

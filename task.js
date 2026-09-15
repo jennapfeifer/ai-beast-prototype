@@ -1,6 +1,10 @@
-/* AI-BEAST task runner — short text + number-line revision.
-   States: checkpoint -> fixation -> stimulus -> initial estimate -> AI estimate/note
-           -> number-line revision -> optional ratings -> next trial.
+/* AI-BEAST task runner — v6 engaging number-line interface.
+   Trial rhythm: checkpoint -> fixation -> stimulus -> click-to-estimate -> AI note
+                 -> number-line revision -> optional ratings -> next trial.
+
+   Important design property: the participant's estimate and AI estimate use the
+   same visual marker design and differ only by colour. The movable final-estimate
+   handle is visually distinct. No accuracy feedback is shown during the task.
 */
 
 const CFG = window.BEAST_CFG;
@@ -43,6 +47,7 @@ document.addEventListener('keydown', e => {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const esc = s => String(s).replace(/[&<>\"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 
 async function api(path, body) {
   const res = await fetch(path, {
@@ -55,24 +60,38 @@ async function api(path, body) {
   return payload;
 }
 
-/* ---------- progress / light gamification ---------- */
+/* ---------- progress / engagement --------------------------------------- */
 
 function renderRoundTrack() {
   if (!roundTrack) return;
   if (!state || state.practice) {
-    roundTrack.innerHTML = `<span class="warmup-chip">Warm-up</span>`;
+    roundTrack.innerHTML = `<div class="round-map"><span class="warmup-chip">Warm-up</span></div>`;
     return;
   }
 
-  const bits = [];
+  const rounds = [];
   for (let i = 1; i <= state.n_blocks; i++) {
     let cls = 'round-token';
     let content = i;
     if (i < state.block) { cls += ' done'; content = '✓'; }
     else if (i === state.block) cls += ' current';
-    bits.push(`<span class="${cls}" title="Round ${i}">${content}</span>`);
+    rounds.push(`<span class="${cls}" title="Round ${i}">${content}</span>`);
   }
-  roundTrack.innerHTML = `<span class="round-label">Progress</span>${bits.join('')}`;
+
+  const trials = [];
+  for (let i = 1; i <= state.n_in_block; i++) {
+    let cls = 'trial-bead';
+    if (i < state.trial_in_block) cls += ' done';
+    else if (i === state.trial_in_block) cls += ' current';
+    trials.push(`<i class="${cls}" aria-hidden="true"></i>`);
+  }
+
+  roundTrack.innerHTML = `
+    <div class="round-map">
+      <span class="round-label">Round ${state.block} / ${state.n_blocks}</span>
+      <span class="round-tokens">${rounds.join('')}</span>
+    </div>
+    <div class="trial-beads" aria-label="Estimate ${state.trial_in_block} of ${state.n_in_block}">${trials.join('')}</div>`;
 }
 
 function checkpointMarkup(completed) {
@@ -84,10 +103,10 @@ function checkpointMarkup(completed) {
 }
 
 function celebrationDots() {
-  return `<div class="celebrate-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>`;
+  return `<div class="celebrate-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>`;
 }
 
-/* ---------- rating scales ---------- */
+/* ---------- rating scales ------------------------------------------------ */
 
 function scale(name, question, low, high) {
   let opts = '';
@@ -99,7 +118,23 @@ function scale(name, question, low, high) {
           <div class="anchors"><span>${low}</span><span>${high}</span></div></div>`;
 }
 
-/* ---------- trial ---------- */
+/* ---------- number-line helpers ----------------------------------------- */
+
+function scalePct(value) {
+  const v = clamp(Number(value), 1, 400);
+  return 100 * (v - 1) / 399;
+}
+
+function tickMarkup() {
+  return `
+    <span class="num-tick t1"><i></i>1</span>
+    <span class="num-tick t100"><i></i>100</span>
+    <span class="num-tick t200"><i></i>200</span>
+    <span class="num-tick t300"><i></i>300</span>
+    <span class="num-tick t400"><i></i>400</span>`;
+}
+
+/* ---------- trial -------------------------------------------------------- */
 
 async function loadState() {
   const res = await fetch('/api/state');
@@ -110,7 +145,7 @@ async function loadState() {
   bar.style.width = state.practice ? '0%' : pct + '%';
   meta.textContent = state.practice
     ? 'Warm-up'
-    : `Round ${state.block} of ${state.n_blocks} · ${state.trial_in_block} / ${state.n_in_block}`;
+    : `${state.trial_in_block} / ${state.n_in_block}`;
   renderRoundTrack();
 
   rInfo = {};
@@ -122,13 +157,13 @@ function showBreak() {
   return new Promise(r => {
     const completed = state.block - 1;
     stage.innerHTML = `
-      <div class="checkpoint-card">
+      <div class="checkpoint-card stage-enter">
         ${celebrationDots()}
-        <p class="eyebrow">Round complete</p>
-        <h1>${completed} of ${state.n_blocks} rounds finished</h1>
-        <p>Nice work. Take a break, stretch, or rest your eyes before continuing.</p>
+        <p class="eyebrow">Round ${completed} complete</p>
+        <h1>${state.n_blocks - completed} round${state.n_blocks - completed === 1 ? '' : 's'} to go</h1>
+        <p class="checkpoint-copy">Nice work. Your progress is saved. Take a short pause if you want one.</p>
         ${checkpointMarkup(completed)}
-        <p class="muted small">No accuracy feedback is shown until the study is over.</p>
+        <div class="score-locked"><span>◆</span> Accuracy score stays locked until the finish</div>
         <div class="center"><button id="go">Start round ${state.block}</button></div>
       </div>`;
     document.getElementById('go').onclick = r;
@@ -136,68 +171,147 @@ function showBreak() {
 }
 
 async function fixation() {
-  stage.innerHTML = `<div class="fixation">+</div>`;
-  await sleep(500);
+  stage.innerHTML = `<div class="fixation stage-enter">+</div>`;
+  await sleep(450);
+}
+
+function initialEstimator() {
+  return new Promise(r => {
+    stage.innerHTML = `
+      <div class="initial-card stage-enter">
+        <p class="eyebrow center">First estimate</p>
+        <h1 class="game-question">How many dots were there?</h1>
+        <p class="game-subtitle">Click the line to place your estimate. Drag to fine-tune it.</p>
+
+        <div id="initial-line" class="initial-numberline" tabindex="0" aria-label="Choose an estimate from 1 to 400">
+          <div class="initial-rail"></div>
+          <div id="initial-pin" class="initial-live-pin" hidden>
+            <span id="initial-pin-value"></span>
+          </div>
+          ${tickMarkup()}
+        </div>
+
+        <div id="initial-readout" class="initial-readout muted">No estimate selected yet</div>
+        <div class="center"><button id="go" disabled>Lock in estimate</button></div>
+        <div class="err" id="err"></div>
+      </div>`;
+
+    const line = document.getElementById('initial-line');
+    const rail = line.querySelector('.initial-rail');
+    const pin = document.getElementById('initial-pin');
+    const pinValue = document.getElementById('initial-pin-value');
+    const readout = document.getElementById('initial-readout');
+    const go = document.getElementById('go');
+    const t0 = performance.now();
+    let selected = null;
+    let dragging = false;
+    let typed = '';
+    let typedTimer = null;
+
+    const setValue = v => {
+      selected = clamp(Math.round(v), 1, 400);
+      pin.hidden = false;
+      pin.classList.toggle('near-left', selected <= 35);
+      pin.classList.toggle('near-right', selected >= 365);
+      pin.style.left = `${scalePct(selected)}%`;
+      pinValue.textContent = selected;
+      readout.innerHTML = `Your first estimate: <strong>${selected}</strong>`;
+      go.disabled = false;
+      line.setAttribute('aria-valuenow', String(selected));
+    };
+
+    const valueFromPointer = clientX => {
+      const rect = rail.getBoundingClientRect();
+      const p = clamp((clientX - rect.left) / rect.width, 0, 1);
+      return 1 + p * 399;
+    };
+
+    line.addEventListener('pointerdown', e => {
+      if (e.button !== undefined && e.button !== 0) return;
+      dragging = true;
+      line.setPointerCapture?.(e.pointerId);
+      setValue(valueFromPointer(e.clientX));
+    });
+    line.addEventListener('pointermove', e => {
+      if (dragging) setValue(valueFromPointer(e.clientX));
+    });
+    line.addEventListener('pointerup', e => {
+      dragging = false;
+      line.releasePointerCapture?.(e.pointerId);
+    });
+    line.addEventListener('pointercancel', () => { dragging = false; });
+
+    // Keyboard support without silently anchoring the line at a default value.
+    line.addEventListener('keydown', e => {
+      if (/^\d$/.test(e.key)) {
+        e.preventDefault();
+        typed = (typed + e.key).slice(-3);
+        const n = Number(typed);
+        if (n >= 1 && n <= 400) setValue(n);
+        clearTimeout(typedTimer);
+        typedTimer = setTimeout(() => { typed = ''; }, 900);
+        return;
+      }
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        typed = typed.slice(0, -1);
+        if (typed) setValue(Number(typed));
+        return;
+      }
+      if (selected !== null && ['ArrowLeft','ArrowDown','ArrowRight','ArrowUp'].includes(e.key)) {
+        e.preventDefault();
+        const delta = (e.key === 'ArrowRight' || e.key === 'ArrowUp') ? 1 : -1;
+        setValue(selected + delta);
+        return;
+      }
+      if (selected !== null && e.key === 'Enter') {
+        e.preventDefault();
+        go.click();
+      }
+    });
+
+    go.onclick = () => {
+      if (selected === null) return;
+      go.disabled = true;
+      r({estimate: selected, rt: Math.round(performance.now() - t0)});
+    };
+    line.focus({preventScroll:true});
+  });
 }
 
 function showStimulus() {
   return new Promise(r => {
     const timed = CFG.stimulus_ms > 0;
 
-    stage.innerHTML = timed
-      ? `<img class="stimulus" src="${state.image}" alt="An array of dots">
-         <p class="prompt muted">Look at the dots</p>`
-      : `<img class="stimulus" src="${state.image}" alt="An array of dots">
-         <p class="prompt">How many dots?</p>
-         <div class="estimate-row">
-           <input id="est" type="number" min="1" max="400" inputmode="numeric" autocomplete="off">
-           <button id="go">Confirm</button>
-         </div>
-         <div class="err" id="err"></div>`;
-
-    const askForAnswer = () => {
+    if (!timed) {
+      // Untimed researcher/debug mode keeps the image visible until the user clicks.
       stage.innerHTML = `
-        <p class="prompt">How many dots?</p>
-        <div class="estimate-row">
-          <input id="est" type="number" min="1" max="400" inputmode="numeric" autocomplete="off">
-          <button id="go">Confirm</button>
-        </div>
-        <div class="err" id="err"></div>`;
-      wire();
-    };
+        <div class="stimulus-shell stage-enter">
+          <img class="stimulus" src="${state.image}" alt="An array of dots">
+          <p class="prompt">Take a look, then continue when ready.</p>
+          <div class="center"><button id="go">Estimate</button></div>
+        </div>`;
+      document.getElementById('go').onclick = async () => r(await initialEstimator());
+      return;
+    }
 
-    const wire = () => {
-      const input = document.getElementById('est');
-      input.focus();
-      const t0 = performance.now();
-      const submit = () => {
-        const v = parseInt(input.value, 10);
-        const err = document.getElementById('err');
-        if (!v || v < 1 || v > 400) {
-          err.textContent = 'Enter a whole number between 1 and 400.';
-          return;
-        }
-        document.getElementById('go').disabled = true;
-        r({estimate: v, rt: Math.round(performance.now() - t0)});
-      };
-      document.getElementById('go').onclick = submit;
-      input.onkeydown = e => { if (e.key === 'Enter') submit(); };
-    };
+    stage.innerHTML = `
+      <div class="stimulus-shell stage-enter">
+        <img class="stimulus" src="${state.image}" alt="An array of dots">
+        <p class="prompt muted">Estimate the total</p>
+      </div>`;
 
-    if (timed) setTimeout(askForAnswer, CFG.stimulus_ms);
-    else wire();
+    setTimeout(async () => r(await initialEstimator()), CFG.stimulus_ms);
   });
 }
 
 async function getAdvice(initial) {
   stage.innerHTML = `
-    <div class="adviser adviser-loading">
-      <p class="who">AI assistant</p>
-      <div class="composing"><span class="dots"><i></i><i></i><i></i></span><span>AI is estimating…</span></div>
+    <div class="thinking-card stage-enter">
+      <div class="ai-orb" aria-hidden="true">AI</div>
+      <div class="composing"><span class="dots"><i></i><i></i><i></i></span><span>AI is choosing an estimate…</span></div>
     </div>`;
 
-  // A short common floor keeps instant template trials from flashing on screen,
-  // while avoiding the old 2.5-second forced pause.
   const t0 = performance.now();
   const res = await api('/api/initial', {estimate: initial.estimate, rt_ms: initial.rt});
   if (res.error) { alert(res.error); throw new Error(res.error); }
@@ -205,11 +319,6 @@ async function getAdvice(initial) {
   if (elapsed < CFG.min_delay_ms) await sleep(CFG.min_delay_ms - elapsed);
   if (res.researcher) renderResearcher(res.researcher);
   return res;
-}
-
-function scalePct(value) {
-  const v = Math.max(1, Math.min(400, Number(value)));
-  return 100 * (v - 1) / 399;
 }
 
 function showAdvice(initial, advice) {
@@ -220,31 +329,27 @@ function showAdvice(initial, advice) {
     const aiPct = scalePct(ai);
 
     stage.innerHTML = `
-      <div class="adviser adviser-compact">
-        <p class="who">AI assistant</p>
-        <div class="ai-estimate-row"><span>AI estimate</span><strong>${ai}</strong></div>
-        <p class="msg">${esc(advice.advice_text)}</p>
-      </div>
+      <div class="decision-card stage-enter">
+        <p class="eyebrow center">Second look</p>
+        <h1 class="game-question">Would you change your estimate?</h1>
 
-      <div class="revision-card">
-        <div class="revision-heading">
-          <span>What is your revised estimate?</span>
-          <output id="revised-value" for="est">${first}</output>
+        <div class="estimate-pair" aria-label="Your estimate and the AI estimate">
+          <div class="estimate-chip chip-you"><span class="source-dot"></span><span class="source-name">You</span><strong>${first}</strong></div>
+          <div class="estimate-chip chip-ai"><span class="source-dot"></span><span class="source-name">AI</span><strong>${ai}</strong></div>
         </div>
 
-        <div class="decision-scale" aria-label="Number line from 1 to 400">
-          <div class="decision-marker advice-marker" style="left:${aiPct}%">
-            <div class="marker-label"><span>AI estimate</span><strong>${ai}</strong></div><i></i>
-          </div>
-          <div class="decision-marker initial-marker" style="left:${firstPct}%">
-            <div class="marker-label"><span>Your first estimate</span><strong>${first}</strong></div><i></i>
-          </div>
-          <input id="est" type="range" min="1" max="400" step="1" value="${first}" aria-label="Your revised estimate" aria-valuetext="${first} dots">
-          <span class="tick t1"><i></i>1</span><span class="tick t100"><i></i>100</span><span class="tick t200"><i></i>200</span><span class="tick t300"><i></i>300</span><span class="tick t400"><i></i>400</span>
-        </div>
+        <div class="ai-note"><span class="ai-note-tag">AI</span><p>${esc(advice.advice_text)}</p></div>
 
-        <p class="slider-hint">Leave the slider where it is to keep your first estimate.</p>
-        <div class="center"><button id="go">Confirm estimate</button></div>
+        <div class="revision-readout"><span>Your final estimate</span><output id="revised-value" for="est">${first}</output></div>
+        <div class="revision-numberline" aria-label="Number line from 1 to 400">
+          <span class="reference-dot ref-you" style="left:${firstPct}%" title="Your first estimate: ${first}"></span>
+          <span class="reference-dot ref-ai" style="left:${aiPct}%" title="AI estimate: ${ai}"></span>
+          <input id="est" type="range" min="1" max="400" step="1" value="${first}" aria-label="Your final estimate" aria-valuetext="${first} dots">
+          ${tickMarkup()}
+        </div>
+        <div class="line-legend" aria-hidden="true"><span class="legend-you"><i></i>You</span><span class="legend-ai"><i></i>AI</span><span class="legend-final"><i></i>Final</span></div>
+        <p class="slider-hint">Leave the handle where it is to keep your first estimate.</p>
+        <div class="center"><button id="go">Lock in final estimate</button></div>
       </div>`;
 
     const slider = document.getElementById('est');
@@ -259,6 +364,8 @@ function showAdvice(initial, advice) {
       r({estimate: parseInt(slider.value, 10), rt: Math.round(performance.now() - t0)});
     };
     document.getElementById('go').onclick = submit;
+    slider.onkeydown = e => { if (e.key === 'Enter') submit(); };
+    slider.focus({preventScroll:true});
   });
 }
 
@@ -266,10 +373,12 @@ function showRatings() {
   if (!CFG.collect_ratings || !state.ratings_due) return Promise.resolve({});
   return new Promise(r => {
     stage.innerHTML = `
-      <p class="eyebrow center">Quick check-in</p>
-      ${scale('trust', 'Thinking about the last two trials, how much did you trust the assistant?', 'Not at all', 'Completely')}
-      ${scale('feeling', 'Thinking about the last two trials, how did the assistant\'s advice make you feel?', 'Very negative', 'Very positive')}
-      <div class="center"><button id="go" disabled>Continue</button></div>`;
+      <div class="checkin-card stage-enter">
+        <p class="eyebrow center">Quick check-in</p>
+        ${scale('trust', 'Thinking about the last two trials, how much did you trust the assistant?', 'Not at all', 'Completely')}
+        ${scale('feeling', 'Thinking about the last two trials, how did the assistant\'s advice make you feel?', 'Very negative', 'Very positive')}
+        <div class="center"><button id="go" disabled>Continue</button></div>
+      </div>`;
     const go = document.getElementById('go');
     const check = () => {
       go.disabled = !(stage.querySelector('input[name=trust]:checked') &&

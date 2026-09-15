@@ -1,121 +1,122 @@
-# AI-BEAST human study — v5 usability revision
+# AI-BEAST human study prototype — v6
 
-This revision keeps the locked NEW25 numerical schedules, counterbalancing, 8 conditions, 13 trials per condition, one warm-up, adaptive full within-block history, and the trust/feeling schedule. It changes the participant-facing interaction to reduce reading and waiting burden.
+A Flask web app for the NEW25 AI-advice dot-estimation study. This version keeps the experimental numerical architecture intact while making the participant interaction quicker and more game-like.
 
-## What changed
+## Participant flow
 
-### 1. Advice number and language are now separate
-The AI recommendation is a controlled number shown prominently as **AI estimate**. The model generates only a short note underneath it. The note contains no digits. This makes the numerical recommendation easy to see and keeps the communication manipulation separate from the number itself.
+1. Consent
+2. Short instructions
+3. One warm-up trial (unless skipped in researcher mode)
+4. Eight rounds of 13 experimental trials
+5. End-only estimation summary and debrief
 
-### 2. Final response uses a 1–400 number line
-After the participant's first estimate, the final-answer screen shows:
-- the AI estimate;
-- the participant's initial estimate;
-- both positions on a fixed 1–400 number line;
-- a slider starting exactly at the participant's initial estimate.
+Each trial is:
 
-Leaving the slider untouched therefore means no revision. The initial estimate is still typed rather than entered on a slider so the scale cannot anchor the initial judgment.
+**dot image → click first estimate on a 1–400 line → AI estimate + very short note → revise/confirm on the same scale → occasional check-in**
 
-### 3. Shorter, simpler advice
-Generated notes default to **8–16 words**, one sentence, plain language. The validator rejects:
-- digits;
-- image-specific claims about clusters, overlap, spacing, density, edges, etc.;
-- jargon such as *anchor* or *calibrate*;
-- claims of proven/verified accuracy;
+The participant never sees the true count or correctness feedback during the task.
+
+## Interface / gamification
+
+- First estimates are made by clicking the number line; there is no visible default marker before the first click.
+- **You** and **AI** use matched circular markers and matched information cards; only colour differs.
+- The final-estimate handle is visually distinct.
+- The top display shows the current round plus an 8-round map and within-round estimate beads.
+- Round-complete screens provide completion feedback only.
+- Accuracy score remains locked until the task is finished.
+- There are no points for agreeing with AI, no streaks, no leaderboards, no speed reward, and no interim correctness feedback.
+
+The debrief can show:
+- first-estimate score,
+- final-estimate score,
+- closest final estimate,
+- number of trials where the final estimate improved on the first.
+
+Scores are 100 minus mean absolute percentage error, clipped to 0–100. These are motivational end feedback, not analysis variables.
+
+## Adviser generation
+
+The numerical advice comes from `design.py`; the language model generates only the short note beneath the displayed AI estimate.
+
+Default visible-note length: **6–12 words**.
+
+`ADVISER_PROVIDER=auto` prefers Gemini when `GEMINI_API_KEY` exists and otherwise uses OpenAI. The Render blueprint is configured for Gemini Flash.
+
+The adviser validator rejects:
+- additional visible numerical values,
+- image-specific evidence such as invented claims about clusters or overlap,
+- jargon such as anchoring/calibration,
+- claims of verified/proven correctness,
 - highly repetitive wording.
 
-Adaptive messages still receive every completed earlier trial in the same block and may refer qualitatively to the participant's prior response pattern when that claim is supported by the history.
+Adaptive conditions still receive the complete earlier history from the current block.
 
-### 4. Faster adviser path
-The adviser is provider-configurable:
-- Gemini default: `gemini-3.7-flash`, low thinking;
-- OpenAI fallback/default without a Gemini key: `gpt-5.6-luna`, reasoning effort `none`.
+## Core design retained
 
-`ADVISER_PROVIDER=auto` prefers Gemini when `GEMINI_API_KEY` exists and otherwise uses OpenAI. The Render blueprint is set to Gemini explicitly.
+- Study seed: `20260909`
+- 8 conditions × 13 experimental trials = 104 trials
+- 104 distinct experimental stimulus images per participant
+- C1 mean advice error: exactly 0%
+- C3/C4/C5 mean advice error: exactly +25%
+- C6/C7/C8 mean advice error: exactly -25%
+- C3=C4=C5 numerically for a given truth
+- C6=C7=C8 numerically for a given truth
+- 144-dot special case remains 144 in C1 and both fixed ±25 schedules
+- Ratings after trials 2, 4, 6, 8, 10, 12
 
-The old fixed 2500 ms waiting floor is reduced to **700 ms**. Real model latency can still exceed that floor.
-
-### 5. More motivating, but non-contaminating, progress feedback
-During the task, participants get only completion feedback: an 8-round tracker, round-complete checkpoint screens, and subtle progress animation. They do **not** receive accuracy feedback, AI-agreement rewards, streaks, leaderboards, or trial-by-trial scores.
-
-After the final experimental decision, the debrief can show an end-only estimation score and the participant's closest final estimate. The score is `100 - mean absolute percentage error`, clipped to 0–100. This is motivational feedback, not an analysis variable. Disable it with `SHOW_END_SCORE=0` if desired.
-
-### 6. Instructions are shorter
-The long instruction wording was removed. The participant now gets five concise steps and a simple 8-round roadmap.
-
-### 7. Researcher skip-warm-up path is clearer
-When the researcher selects **Skip warm-up**, the instructions page now says **Begin task** instead of **Begin warm-up**. The schedule itself continues to omit the warm-up.
-
-## Locked experimental structure
-
-- 8 conditions × 13 trials = 104 experimental trials.
-- 1 warm-up trial (88 dots), unless skipped in researcher mode.
-- True counts: `32, 40, 48, 64, 80, 96, 112, 128, 144, 160, 192, 224, 256`.
-- C1 mean signed advice error 0%.
-- C3/C4/C5 share the fixed NEW25 +25% mean schedule.
-- C6/C7/C8 share the fixed NEW25 -25% mean schedule.
-- C2 remains participant-relative and changes the current initial estimate by <4%.
-- Image-to-condition mapping and condition order remain counterbalanced.
-- 144 remains explicitly position-counterbalanced.
-- Trust + feeling check-ins remain after trials 2, 4, 6, 8, 10 and 12 in each condition.
-
-The production trial count is intentionally **not shortened in this revision**. Researcher mode already lets you test any condition with 1–13 trials. A production reduction should be decided from the primary contrast/power analysis rather than only from the usability pilot.
-
-## Model configuration
+## Environment variables
 
 | Variable | Default | Purpose |
-|---|---|---|
+|---|---:|---|
 | `ADVISER_PROVIDER` | `auto` | `gemini`, `openai`, or automatic key-based choice |
 | `GEMINI_MODEL` | `gemini-3.7-flash` | Gemini adviser model |
-| `OPENAI_MODEL` | `gpt-5.6-luna` | OpenAI fallback adviser model |
+| `OPENAI_MODEL` | `gpt-5.6-luna` | OpenAI fallback model |
 | `ADVISER_THINKING_LEVEL` | `low` | Gemini thinking level |
 | `ADVISER_REASONING_EFFORT` | `none` | OpenAI reasoning effort |
-| `ADVISER_MIN_WORDS` / `ADVISER_MAX_WORDS` | `8` / `16` | visible note length |
+| `ADVISER_MIN_WORDS` / `ADVISER_MAX_WORDS` | `6` / `12` | visible note length |
 | `ADVISER_VALIDATION_ATTEMPTS` | `3` | retries before fallback |
-| `ADVISER_MIN_DELAY_MS` | `700` | minimum wait floor in all conditions |
-| `STIMULUS_MS` | `5000` | image viewing time |
-| `SHOW_END_SCORE` | `1` | show score only after task completion |
-| `RESEARCHER_MODE` | `0` | researcher controls/overlay |
+| `ADVISER_MIN_DELAY_MS` | `700` | common minimum wait floor |
+| `STIMULUS_MS` | `5000` | dot-image display time; `0` = untimed debug mode |
+| `COLLECT_RATINGS` | `1` | collect trust/feeling check-ins |
+| `RATING_EVERY` | `2` | check-in cadence |
+| `SHOW_END_SCORE` | `1` | show performance summary only after task completion |
+| `RESEARCHER_MODE` | `0` | researcher controls and diagnostic overlay |
 
-## Render
+### Gemini / Render
 
-For the default Gemini setup, add a secret environment variable:
-
-```text
-GEMINI_API_KEY = your Gemini API key
-```
-
-and set:
+Set the following in Render Environment:
 
 ```text
+GEMINI_API_KEY = your key
 ADVISER_PROVIDER = gemini
 GEMINI_MODEL = gemini-3.7-flash
 ADVISER_THINKING_LEVEL = low
+ADVISER_MIN_WORDS = 6
+ADVISER_MAX_WORDS = 12
 ADVISER_MIN_DELAY_MS = 700
 ```
 
-If you want to stay on OpenAI instead, use:
+For the supervisor/researcher deployment also set:
 
 ```text
-ADVISER_PROVIDER = openai
-OPENAI_MODEL = gpt-5.6-luna
-OPENAI_API_KEY = your existing key
+RESEARCHER_MODE = 1
 ```
 
-The researcher overlay reports the actual provider/model in `source`, e.g. `gemini:gemini-3.7-flash`.
-
-## Local run
+## Run locally
 
 ```bash
 pip install -r requirements.txt
 python setup_files.py
 python stimuli.py --size 512 --force
-python smoke_test.py
 python app.py
 ```
 
-Open `http://127.0.0.1:5000`.
+Researcher mode:
 
-## Important protocol note
+```bash
+RESEARCHER_MODE=1 ADMIN_TOKEN=test123 python app.py
+```
 
-Changing from GPT-5 to Gemini 3.7 Flash or GPT-5.6 Luna changes the language model that instantiates the communication manipulation. Treat that as a protocol change and document it. The NEW25 numbers themselves are unchanged.
+## Data
+
+The built-in admin page can export participants, trials, ratings, or all data as a ZIP. Keep the admin token private.

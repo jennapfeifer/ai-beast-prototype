@@ -40,11 +40,12 @@ def main():
         ("app.py", "advice_number", "separate numerical advice API"),
         ("adviser.py", "gemini-3.7-flash", "fast Gemini adviser option"),
         ("adviser.py", "image_specific_evidence", "no invented image evidence"),
-        ("static/task.js", "decision-scale", "number-line revision interface"),
-        ("static/task.js", "AI is estimating", "lighter waiting screen"),
-        ("static/style.css", ".revision-card", "number-line styles"),
-        ("templates/instructions.html", "Use the number line", "shorter instructions"),
-        ("templates/debrief.html", "estimation summary", "end-only performance summary"),
+        ("static/task.js", "initial-numberline", "click-to-estimate first response"),
+        ("static/task.js", "estimate-pair", "equal You/AI comparison display"),
+        ("static/task.js", "trial-beads", "within-round progress display"),
+        ("static/style.css", ".estimate-chip", "matched You/AI marker styles"),
+        ("templates/instructions.html", "click the number line", "game-style instructions"),
+        ("templates/debrief.html", "final estimation score", "end-only performance summary"),
     ]
     old = []
     for rel, needle, label in checks:

@@ -4,7 +4,7 @@ The numerical recommendation is fixed by design.py and is displayed separately
 from the wording. The model therefore generates only a short verbal note.
 
 Design goals in this revision:
-- low reading burden (default 8-16 words, one short sentence);
+- low reading burden (default 6-12 words, one short sentence);
 - fast model path (Gemini Flash or OpenAI Luna, configurable by env vars);
 - no invented image-specific evidence (the adviser never sees the dot image);
 - no invented claims of verified correctness;
@@ -30,8 +30,8 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.7-flash").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-luna").strip()
 ADVISER_THINKING_LEVEL = os.getenv("ADVISER_THINKING_LEVEL", "low").strip().lower()
 ADVISER_REASONING_EFFORT = os.getenv("ADVISER_REASONING_EFFORT", "none").strip().lower()
-ADVISER_MIN_WORDS = int(os.getenv("ADVISER_MIN_WORDS", "8"))
-ADVISER_MAX_WORDS = int(os.getenv("ADVISER_MAX_WORDS", "16"))
+ADVISER_MIN_WORDS = int(os.getenv("ADVISER_MIN_WORDS", "6"))
+ADVISER_MAX_WORDS = int(os.getenv("ADVISER_MAX_WORDS", "12"))
 ADVISER_VALIDATION_ATTEMPTS = int(os.getenv("ADVISER_VALIDATION_ATTEMPTS", "3"))
 REPETITION_SIMILARITY_LIMIT = float(os.getenv("REPETITION_SIMILARITY_LIMIT", "0.88"))
 
