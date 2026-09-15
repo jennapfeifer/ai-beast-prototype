@@ -1,9 +1,6 @@
-/* AI-BEAST task runner — text-only human study.
-   States: checkpoint/break -> fixation -> stimulus -> initial -> composing ->
-           advice -> final -> ratings -> next trial.
-
-   Gamification is deliberately progress-only: rounds/checkpoints mark completion,
-   never accuracy, agreement with the AI, or performance.
+/* AI-BEAST task runner — short text + number-line revision.
+   States: checkpoint -> fixation -> stimulus -> initial estimate -> AI estimate/note
+           -> number-line revision -> optional ratings -> next trial.
 */
 
 const CFG = window.BEAST_CFG;
@@ -75,7 +72,7 @@ function renderRoundTrack() {
     else if (i === state.block) cls += ' current';
     bits.push(`<span class="${cls}" title="Round ${i}">${content}</span>`);
   }
-  roundTrack.innerHTML = `<span class="round-label">Rounds</span>${bits.join('')}`;
+  roundTrack.innerHTML = `<span class="round-label">Progress</span>${bits.join('')}`;
 }
 
 function checkpointMarkup(completed) {
@@ -84,6 +81,10 @@ function checkpointMarkup(completed) {
     tokens.push(`<span class="checkpoint-token ${i <= completed ? 'done' : ''}">${i <= completed ? '✓' : i}</span>`);
   }
   return `<div class="checkpoint-track">${tokens.join('')}</div>`;
+}
+
+function celebrationDots() {
+  return `<div class="celebrate-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>`;
 }
 
 /* ---------- rating scales ---------- */
@@ -122,12 +123,12 @@ function showBreak() {
     const completed = state.block - 1;
     stage.innerHTML = `
       <div class="checkpoint-card">
-        <div class="checkpoint-badge">✓</div>
-        <p class="eyebrow">Checkpoint reached</p>
-        <h1>Round ${completed} complete</h1>
-        <p>You've cleared ${completed} of ${state.n_blocks} rounds. Take a break and rest your eyes for as long as you like.</p>
+        ${celebrationDots()}
+        <p class="eyebrow">Round complete</p>
+        <h1>${completed} of ${state.n_blocks} rounds finished</h1>
+        <p>Nice work. Take a break, stretch, or rest your eyes before continuing.</p>
         ${checkpointMarkup(completed)}
-        <p class="muted small">These checkpoints only mark your progress — there is no accuracy score or performance feedback.</p>
+        <p class="muted small">No accuracy feedback is shown until the study is over.</p>
         <div class="center"><button id="go">Start round ${state.block}</button></div>
       </div>`;
     document.getElementById('go').onclick = r;
@@ -136,14 +137,13 @@ function showBreak() {
 
 async function fixation() {
   stage.innerHTML = `<div class="fixation">+</div>`;
-  await sleep(600);
+  await sleep(500);
 }
 
 function showStimulus() {
   return new Promise(r => {
     const timed = CFG.stimulus_ms > 0;
 
-    // Phase 1: image only. The answer box is hidden while the image is visible.
     stage.innerHTML = timed
       ? `<img class="stimulus" src="${state.image}" alt="An array of dots">
          <p class="prompt muted">Look at the dots</p>`
@@ -156,7 +156,6 @@ function showStimulus() {
          <div class="err" id="err"></div>`;
 
     const askForAnswer = () => {
-      // Phase 2: the image disappears before the initial estimate is entered.
       stage.innerHTML = `
         <p class="prompt">How many dots?</p>
         <div class="estimate-row">
@@ -192,13 +191,13 @@ function showStimulus() {
 
 async function getAdvice(initial) {
   stage.innerHTML = `
-    <div class="adviser">
+    <div class="adviser adviser-loading">
       <p class="who">AI assistant</p>
-      <div class="composing"><span class="dots"><i></i><i></i><i></i></span><span>Preparing a response</span></div>
+      <div class="composing"><span class="dots"><i></i><i></i><i></i></span><span>AI is estimating…</span></div>
     </div>`;
 
-  // Same minimum delay in every condition so model latency does not visibly
-  // distinguish fixed/neutral/static/adaptive conditions.
+  // A short common floor keeps instant template trials from flashing on screen,
+  // while avoiding the old 2.5-second forced pause.
   const t0 = performance.now();
   const res = await api('/api/initial', {estimate: initial.estimate, rt_ms: initial.rt});
   if (res.error) { alert(res.error); throw new Error(res.error); }
@@ -208,36 +207,58 @@ async function getAdvice(initial) {
   return res;
 }
 
+function scalePct(value) {
+  const v = Math.max(1, Math.min(400, Number(value)));
+  return 100 * (v - 1) / 399;
+}
+
 function showAdvice(initial, advice) {
   return new Promise(r => {
+    const ai = Number(advice.advice_number);
+    const first = Number(initial.estimate);
+    const firstPct = scalePct(first);
+    const aiPct = scalePct(ai);
+
     stage.innerHTML = `
-      <div class="adviser">
+      <div class="adviser adviser-compact">
         <p class="who">AI assistant</p>
+        <div class="ai-estimate-row"><span>AI estimate</span><strong>${ai}</strong></div>
         <p class="msg">${esc(advice.advice_text)}</p>
       </div>
-      <p class="prompt">Your first answer was <strong>${initial.estimate}</strong>. What's your final answer?</p>
-      <div class="estimate-row">
-        <input id="est" type="number" min="1" max="400" inputmode="numeric" autocomplete="off" ${CFG.prefill_final ? `value="${initial.estimate}"` : ''}>
-        <button id="go">Confirm</button>
-      </div>
-      <div class="err" id="err"></div>`;
 
-    const input = document.getElementById('est');
-    if (CFG.prefill_final) input.select(); else input.focus();
+      <div class="revision-card">
+        <div class="revision-heading">
+          <span>What is your revised estimate?</span>
+          <output id="revised-value" for="est">${first}</output>
+        </div>
 
+        <div class="decision-scale" aria-label="Number line from 1 to 400">
+          <div class="decision-marker advice-marker" style="left:${aiPct}%">
+            <div class="marker-label">AI <strong>${ai}</strong></div><i></i>
+          </div>
+          <div class="decision-marker initial-marker" style="left:${firstPct}%">
+            <div class="marker-label">You <strong>${first}</strong></div><i></i>
+          </div>
+          <input id="est" type="range" min="1" max="400" step="1" value="${first}" aria-label="Your revised estimate" aria-valuetext="${first} dots">
+          <span class="tick t1">1</span><span class="tick t100">100</span><span class="tick t200">200</span><span class="tick t300">300</span><span class="tick t400">400</span>
+        </div>
+
+        <p class="slider-hint">Leave the slider where it is to keep your first estimate.</p>
+        <div class="center"><button id="go">Confirm estimate</button></div>
+      </div>`;
+
+    const slider = document.getElementById('est');
+    const value = document.getElementById('revised-value');
     const t0 = performance.now();
+    slider.oninput = () => {
+      value.value = slider.value;
+      slider.setAttribute('aria-valuetext', `${slider.value} dots`);
+    };
     const submit = () => {
-      const v = parseInt(input.value, 10);
-      const err = document.getElementById('err');
-      if (!v || v < 1 || v > 400) {
-        err.textContent = 'Enter a whole number between 1 and 400.';
-        return;
-      }
       document.getElementById('go').disabled = true;
-      r({estimate: v, rt: Math.round(performance.now() - t0)});
+      r({estimate: parseInt(slider.value, 10), rt: Math.round(performance.now() - t0)});
     };
     document.getElementById('go').onclick = submit;
-    input.onkeydown = e => { if (e.key === 'Enter') submit(); };
   });
 }
 

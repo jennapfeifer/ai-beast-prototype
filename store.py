@@ -166,3 +166,44 @@ def save_rating(row: Dict[str, Any]) -> None:
     row["created_at"] = dt.datetime.utcnow()
     with engine.begin() as con:
         con.execute(insert(message_ratings).values(**row))
+
+
+def participant_summary(pid: str) -> Optional[Dict[str, Any]]:
+    """End-of-study performance summary. Never used during the task itself."""
+    with engine.begin() as con:
+        rows = con.execute(
+            select(
+                trials.c.true_count,
+                trials.c.initial_estimate,
+                trials.c.final_estimate,
+            ).where(trials.c.pid == pid).order_by(trials.c.global_trial)
+        ).mappings().all()
+    if not rows:
+        return None
+
+    initial_ape = []
+    final_ape = []
+    final_abs = []
+    for r in rows:
+        truth = float(r["true_count"])
+        if truth <= 0:
+            continue
+        initial_ape.append(abs(float(r["initial_estimate"]) - truth) / truth * 100.0)
+        final_ape.append(abs(float(r["final_estimate"]) - truth) / truth * 100.0)
+        final_abs.append(abs(int(r["final_estimate"]) - int(r["true_count"])))
+    if not final_ape:
+        return None
+
+    mean_initial = sum(initial_ape) / len(initial_ape)
+    mean_final = sum(final_ape) / len(final_ape)
+    # A simple, transparent 0-100 index: 100 minus mean absolute percentage error.
+    # This is motivational end feedback, not an analysis variable.
+    score = max(0, min(100, round(100.0 - mean_final)))
+    initial_score = max(0, min(100, round(100.0 - mean_initial)))
+    return {
+        "n_trials": len(final_ape),
+        "score": score,
+        "initial_score": initial_score,
+        "mean_abs_pct_error": round(mean_final, 1),
+        "closest_dots": min(final_abs),
+    }

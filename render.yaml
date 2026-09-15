@@ -2,28 +2,32 @@ services:
   - type: web
     name: ai-beast
     runtime: python
-    plan: free
+    plan: starter
     buildCommand: "pip install -r requirements.txt && python setup_files.py && python stimuli.py --size 512 --force"
     startCommand: "gunicorn app:app --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT"
     envVars:
-      - key: OPENAI_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: ADMIN_TOKEN
         generateValue: true
-      - key: ADVISER_MODEL
-        value: gpt-5
-      - key: ADVISER_REASONING_EFFORT
+      - key: ADVISER_PROVIDER
+        value: gemini
+      - key: GEMINI_MODEL
+        value: gemini-3.7-flash
+      - key: OPENAI_MODEL
+        value: gpt-5.6-luna
+      - key: ADVISER_THINKING_LEVEL
         value: low
       - key: ADVISER_VALIDATION_ATTEMPTS
-        value: "6"
+        value: "3"
       - key: ADVISER_MIN_WORDS
-        value: "25"
+        value: "8"
       - key: ADVISER_MAX_WORDS
-        value: "30"
+        value: "16"
       - key: ADVISER_MIN_DELAY_MS
-        value: "2500"
+        value: "700"
       - key: STIMULUS_MS
         value: "5000"
       - key: PREFILL_FINAL
@@ -32,6 +36,8 @@ services:
         value: "1"
       - key: RATING_EVERY
         value: "2"
+      - key: SHOW_END_SCORE
+        value: "1"
       - key: RESEARCHER_MODE
         value: "0"
       - key: DATABASE_URL
@@ -41,4 +47,4 @@ services:
 
 databases:
   - name: ai-beast-db
-    plan: free
+    plan: basic-256mb

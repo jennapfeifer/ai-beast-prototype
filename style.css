@@ -183,3 +183,107 @@ input[type=number],input[type=text],select{
 .researcher-test-panel input[type=number]{display:block;margin-top:.25rem;max-width:100%;width:22rem}
 .researcher-test-panel .checkline{display:flex;align-items:center;gap:.5rem}
 .researcher-test-panel .checkline input{margin:0}
+
+/* --- v5: faster, lighter advice + number-line revision ------------------ */
+.compact-steps li{margin-bottom:.65rem}
+.study-roadmap{
+  display:flex;align-items:center;justify-content:center;gap:.7rem;flex-wrap:wrap;
+  margin:1.5rem 0 2rem;padding:.8rem 1rem;border:1px solid var(--rule);
+  border-radius:999px;background:#fff;font-size:.88rem;color:var(--slate)
+}
+.study-roadmap i{width:5px;height:5px;border-radius:50%;background:var(--focus)}
+
+.adviser-compact{max-width:42rem;margin:0 auto;width:100%;padding:1rem 1.2rem}
+.adviser-loading{max-width:36rem;margin:0 auto;width:100%}
+.ai-estimate-row{
+  display:flex;align-items:baseline;justify-content:space-between;gap:1rem;
+  border-bottom:1px solid #dde3ea;padding:.1rem 0 .75rem;margin-bottom:.75rem;
+  color:var(--muted);font-size:.9rem
+}
+.ai-estimate-row strong{
+  color:var(--ink);font-size:2.25rem;line-height:1;font-weight:650;
+  font-variant-numeric:tabular-nums
+}
+.adviser-compact .msg{font-size:1rem;line-height:1.45;color:var(--ink)}
+
+.revision-card{
+  max-width:46rem;width:100%;margin:0 auto;background:#fff;border:1px solid var(--rule);
+  border-radius:14px;padding:1.25rem 1.4rem 1.4rem
+}
+.revision-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem;font-weight:600}
+.revision-heading output{
+  min-width:3.4ch;text-align:center;padding:.15rem .55rem;border-radius:8px;
+  background:#edf1ff;color:#314db9;font-size:1.7rem;font-variant-numeric:tabular-nums
+}
+.decision-scale{position:relative;height:190px;margin:1rem 18px .2rem}
+.decision-scale input[type=range]{
+  position:absolute;left:0;right:0;top:125px;width:100%;height:38px;margin:0;
+  appearance:none;-webkit-appearance:none;background:transparent;cursor:pointer;z-index:4
+}
+.decision-scale input[type=range]::-webkit-slider-runnable-track{
+  height:6px;border-radius:999px;background:#d9e0e8
+}
+.decision-scale input[type=range]::-moz-range-track{
+  height:6px;border-radius:999px;background:#d9e0e8
+}
+.decision-scale input[type=range]::-webkit-slider-thumb{
+  appearance:none;-webkit-appearance:none;width:26px;height:26px;margin-top:-10px;
+  border-radius:50%;background:#425bd0;border:3px solid #fff;box-shadow:0 0 0 1px #425bd0
+}
+.decision-scale input[type=range]::-moz-range-thumb{
+  width:20px;height:20px;border-radius:50%;background:#425bd0;border:3px solid #fff;
+  box-shadow:0 0 0 1px #425bd0
+}
+.decision-scale input[type=range]:focus-visible{outline:none}
+.decision-scale input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px rgba(66,91,208,.25),0 0 0 1px #425bd0}
+.decision-marker{position:absolute;top:0;height:142px;width:0;z-index:2;pointer-events:none}
+.decision-marker .marker-label{
+  position:absolute;left:50%;transform:translateX(-50%);white-space:nowrap;
+  padding:.25rem .55rem;border-radius:8px;background:#f6f7fb;border:1px solid #d9ddea;
+  font-size:.82rem;color:var(--slate)
+}
+.decision-marker .marker-label strong{font-size:1rem;color:var(--ink);font-variant-numeric:tabular-nums}
+.decision-marker i{position:absolute;left:-1px;width:2px;background:#8795a3}
+.advice-marker .marker-label{top:0}
+.advice-marker i{top:33px;height:98px;background:#08766d}
+.advice-marker:after{
+  content:"";position:absolute;left:-5px;top:126px;width:10px;height:10px;
+  background:#08766d;transform:rotate(45deg)
+}
+.initial-marker .marker-label{top:47px}
+.initial-marker i{top:80px;height:51px;border-left:2px dashed #965921;background:transparent}
+.initial-marker:after{
+  content:"";position:absolute;left:-5px;top:126px;width:10px;height:10px;
+  background:#fff;border:2px solid #965921;transform:rotate(45deg)
+}
+.tick{position:absolute;top:163px;transform:translateX(-50%);font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.t1{left:0;transform:none}.t100{left:24.812%}.t200{left:49.875%}.t300{left:74.937%}.t400{left:100%;transform:translateX(-100%)}
+.slider-hint{text-align:center;color:var(--muted);font-size:.82rem;margin:.2rem 0 1rem}
+
+/* Progress has a little more reward without giving performance feedback. */
+.round-token.done,.checkpoint-token.done{box-shadow:0 0 0 3px rgba(76,105,122,.08)}
+.round-token.current{animation:roundPulse 1.6s ease-in-out infinite}
+@keyframes roundPulse{0%,100%{box-shadow:0 0 0 0 rgba(47,117,145,.05)}50%{box-shadow:0 0 0 6px rgba(47,117,145,.12)}}
+@media (prefers-reduced-motion:reduce){.round-token.current{animation:none}}
+.celebrate-dots{height:52px;position:relative;width:120px;margin:0 auto .25rem}
+.celebrate-dots i{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--focus)}
+.celebrate-dots i:nth-child(1){left:5px;top:28px}.celebrate-dots i:nth-child(2){left:27px;top:7px}.celebrate-dots i:nth-child(3){left:49px;top:31px}.celebrate-dots i:nth-child(4){left:70px;top:4px}.celebrate-dots i:nth-child(5){left:91px;top:26px}.celebrate-dots i:nth-child(6){left:111px;top:13px}
+
+.finish-cluster{display:grid;grid-template-columns:repeat(4,14px);gap:9px;width:max-content;margin:0 auto 1.2rem}
+.finish-cluster span{width:14px;height:14px;border-radius:50%;background:var(--slate)}
+.score-card{
+  margin:1.5rem auto 2.2rem;max-width:34rem;text-align:center;background:#fff;
+  border:1px solid var(--rule);border-radius:14px;padding:1.5rem 1.4rem
+}
+.score-number{font-size:3.4rem;font-weight:650;line-height:1;color:var(--slate);font-variant-numeric:tabular-nums}
+.score-number span{font-size:1.2rem;color:var(--muted);font-weight:500;margin-left:.2rem}
+.score-details{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;margin:1.15rem 0}
+.score-details span{padding:.55rem .7rem;border-radius:8px;background:var(--panel);font-size:.88rem}
+
+@media (max-width:600px){
+  .revision-card{padding:1rem .85rem 1.15rem}
+  .decision-scale{margin-left:10px;margin-right:10px;height:200px}
+  .decision-marker .marker-label{font-size:.76rem;padding:.2rem .35rem}
+  .ai-estimate-row strong{font-size:2rem}
+  .revision-heading{align-items:flex-start}
+}

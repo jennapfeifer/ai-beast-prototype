@@ -4,8 +4,8 @@ AI-BEAST — human study web app.
 Flow: consent -> instructions -> 1 warm-up trial -> 8 rounds x 13 trials
       (checkpoint/break between rounds) -> debrief.
 
-Per trial: image -> initial estimate -> TEXT AI advice -> final estimate ->
-           trust + feeling ratings.
+Per trial: image -> initial estimate -> AI number + short note -> number-line final estimate ->
+           periodic trust + feeling ratings.
 
 The true count is never shown to the participant. Numerical advice follows NEW25;
 static/adaptive wording uses the historical broad-persuasion policy in adviser.py.
@@ -26,7 +26,7 @@ from flask import (
 
 import design
 import store
-from adviser import ADVISER_MODEL, generate_message
+from adviser import resolved_provider, resolved_model, generate_message
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("app")
@@ -36,14 +36,19 @@ app.secret_key = os.getenv("SECRET_KEY", "dev-key-change-me")
 app.config.update(SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_HTTPONLY=True)
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
-ADVISER_MIN_DELAY_MS = int(os.getenv("ADVISER_MIN_DELAY_MS", "2500"))
+ADVISER_MIN_DELAY_MS = int(os.getenv("ADVISER_MIN_DELAY_MS", "700"))
 STIMULUS_MS = int(os.getenv("STIMULUS_MS", "5000"))  # 0 = untimed
 COLLECT_RATINGS = os.getenv("COLLECT_RATINGS", "1") not in {"0", "false"}
 RATING_EVERY = max(1, int(os.getenv("RATING_EVERY", "2")))
 PREFILL_FINAL = os.getenv("PREFILL_FINAL", "0") not in {"0", "false"}
 RESEARCHER_MODE = os.getenv("RESEARCHER_MODE", "0") not in {"0", "false"}
+SHOW_END_SCORE = os.getenv("SHOW_END_SCORE", "1") not in {"0", "false"}
 
 store.init_db()
+
+
+def _truthy(value):
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 # --- session helpers --------------------------------------------------------
@@ -115,7 +120,7 @@ def start():
                 trials_per_block = n
         except ValueError:
             pass
-        skip_practice = bool(request.args.get("skip_practice") or request.form.get("skip_practice"))
+        skip_practice = _truthy(request.args.get("skip_practice") or request.form.get("skip_practice"))
         try:
             test_index = int(request.args.get("test_index") or request.form.get("test_index") or 0) % 8
         except ValueError:
@@ -155,7 +160,7 @@ def start():
 @app.route("/instructions")
 def instructions():
     require_session()
-    return render_template("instructions.html")
+    return render_template("instructions.html", skip_practice=bool(session.get("skip_practice")))
 
 
 @app.route("/task")
@@ -177,9 +182,12 @@ def task():
 @app.route("/debrief")
 def debrief():
     pid = session.get("pid")
+    summary = None
     if pid:
         store.update_participant(pid, debriefed=True)
-    return render_template("debrief.html")
+        if SHOW_END_SCORE:
+            summary = store.participant_summary(pid)
+    return render_template("debrief.html", summary=summary, show_end_score=SHOW_END_SCORE)
 
 
 # --- trial API --------------------------------------------------------------
@@ -276,9 +284,9 @@ def api_initial():
         advice = design.advice_number(trial["condition_id"], truth, initial)
 
     # Completed rows in this block are used in two different ways:
-    # - adaptive: ALL details are exposed to GPT-5 as persuasion history;
-    # - neutral/static: prior message text is used only by the server-side
-    #   repetition validator and is never shown to GPT-5.
+    # - adaptive: ALL details are exposed to the adviser model as persuasion history;
+    # - neutral/static: prior note text is used only by the server-side
+    #   repetition validator and is never shown to the adviser model.
     block_rows = [] if is_practice else store.block_history(session["pid"], trial["condition_id"])
     history = block_rows if style == "adaptive" else []
     previous_messages = [r.get("advice_text") for r in block_rows if r.get("advice_text")]
@@ -310,6 +318,7 @@ def api_initial():
 
     return jsonify({
         "advice_text": msg["text"],
+        "advice_number": advice,
         "latency_ms": latency_ms,
         "researcher": ({
             "initial": initial,
@@ -500,7 +509,7 @@ def export(what):
 
 @app.get("/healthz")
 def healthz():
-    return jsonify({"ok": True, "adviser_model": ADVISER_MODEL, "delivery": "text-only", "rating_every": RATING_EVERY})
+    return jsonify({"ok": True, "adviser_provider": resolved_provider(), "adviser_model": resolved_model(), "delivery": "text-only", "rating_every": RATING_EVERY})
 
 
 if __name__ == "__main__":
