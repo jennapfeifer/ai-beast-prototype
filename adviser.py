@@ -26,13 +26,13 @@ log = logging.getLogger("adviser")
 
 ADVISER_PROVIDER = os.getenv("ADVISER_PROVIDER", "auto").strip().lower()
 # If no explicit model is supplied, choose a fast model for the resolved provider.
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.7-flash").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-luna").strip()
-ADVISER_THINKING_LEVEL = os.getenv("ADVISER_THINKING_LEVEL", "low").strip().lower()
+ADVISER_THINKING_LEVEL = os.getenv("ADVISER_THINKING_LEVEL", "minimal").strip().lower()
 ADVISER_REASONING_EFFORT = os.getenv("ADVISER_REASONING_EFFORT", "none").strip().lower()
 ADVISER_MIN_WORDS = int(os.getenv("ADVISER_MIN_WORDS", "6"))
 ADVISER_MAX_WORDS = int(os.getenv("ADVISER_MAX_WORDS", "12"))
-ADVISER_VALIDATION_ATTEMPTS = int(os.getenv("ADVISER_VALIDATION_ATTEMPTS", "3"))
+ADVISER_VALIDATION_ATTEMPTS = int(os.getenv("ADVISER_VALIDATION_ATTEMPTS", "1"))
 REPETITION_SIMILARITY_LIMIT = float(os.getenv("REPETITION_SIMILARITY_LIMIT", "0.88"))
 
 
@@ -311,7 +311,7 @@ def _gemini_text(system: str, user: str) -> str:
     client = get_gemini_client()
     config_kwargs: Dict[str, Any] = {
         "system_instruction": system,
-        "max_output_tokens": 80,
+        "max_output_tokens": 32,
     }
     if ADVISER_THINKING_LEVEL:
         config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=ADVISER_THINKING_LEVEL)
@@ -347,7 +347,7 @@ def _fallback_message(
 
 def generate_message(
     style: str,
-    initial: int,
+    initial: Optional[int],
     advice: int,
     history: Optional[List[Dict[str, Any]]] = None,
     previous_messages: Optional[List[str]] = None,
@@ -364,16 +364,24 @@ def generate_message(
     previous_messages = [m for m in (previous_messages or []) if m]
     attempts = attempts or ADVISER_VALIDATION_ATTEMPTS
     context = full_history(history) if style == "adaptive" else "No earlier trials."
-    relation = (
-        "The displayed recommendation is ABOVE the participant's current initial estimate."
-        if advice > initial else
-        "The displayed recommendation is BELOW the participant's current initial estimate."
-        if advice < initial else
-        "The displayed recommendation is THE SAME AS the participant's current initial estimate."
-    )
+    if initial is None:
+        relation = (
+            "The participant has not entered the current estimate yet. "
+            "Do not use directional language about moving up or down; refer only to giving the displayed estimate more or less weight."
+        )
+        initial_line = "Participant's current initial estimate: not yet available"
+    else:
+        relation = (
+            "The displayed recommendation is ABOVE the participant's current initial estimate."
+            if advice > initial else
+            "The displayed recommendation is BELOW the participant's current initial estimate."
+            if advice < initial else
+            "The displayed recommendation is THE SAME AS the participant's current initial estimate."
+        )
+        initial_line = f"Participant's current initial estimate (internal only): {initial}"
     system = ADVISER_SHARED + "\n\n" + STRATEGY_PROMPTS[style]
     base_user = (
-        f"Participant's current initial estimate (internal only): {initial}\n"
+        f"{initial_line}\n"
         f"Fixed displayed recommendation (internal only): {advice}\n"
         f"{relation}\n"
         "If you use directional language, make it consistent with that relation; 'move toward my estimate' is safest.\n\n"

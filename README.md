@@ -69,7 +69,7 @@ Adaptive conditions still receive the complete earlier history from the current 
 | Variable | Default | Purpose |
 |---|---:|---|
 | `ADVISER_PROVIDER` | `auto` | `gemini`, `openai`, or automatic key-based choice |
-| `GEMINI_MODEL` | `gemini-3.7-flash` | Gemini adviser model |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini adviser model |
 | `OPENAI_MODEL` | `gpt-5.6-luna` | OpenAI fallback model |
 | `ADVISER_THINKING_LEVEL` | `low` | Gemini thinking level |
 | `ADVISER_REASONING_EFFORT` | `none` | OpenAI reasoning effort |
@@ -89,11 +89,11 @@ Set the following in Render Environment:
 ```text
 GEMINI_API_KEY = your key
 ADVISER_PROVIDER = gemini
-GEMINI_MODEL = gemini-3.7-flash
-ADVISER_THINKING_LEVEL = low
+GEMINI_MODEL = gemini-3.5-flash-lite
+ADVISER_THINKING_LEVEL = minimal
 ADVISER_MIN_WORDS = 6
 ADVISER_MAX_WORDS = 12
-ADVISER_MIN_DELAY_MS = 700
+ADVISER_MIN_DELAY_MS = 0
 ```
 
 For the supervisor/researcher deployment also set:

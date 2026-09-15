@@ -36,7 +36,7 @@ app.secret_key = os.getenv("SECRET_KEY", "dev-key-change-me")
 app.config.update(SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_HTTPONLY=True)
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
-ADVISER_MIN_DELAY_MS = int(os.getenv("ADVISER_MIN_DELAY_MS", "700"))
+ADVISER_MIN_DELAY_MS = int(os.getenv("ADVISER_MIN_DELAY_MS", "0"))
 STIMULUS_MS = int(os.getenv("STIMULUS_MS", "5000"))  # 0 = untimed
 COLLECT_RATINGS = os.getenv("COLLECT_RATINGS", "1") not in {"0", "false"}
 RATING_EVERY = max(1, int(os.getenv("RATING_EVERY", "2")))
@@ -154,6 +154,7 @@ def start():
     session["participant_index"] = participant_index
     session["cursor"] = 0
     session["pending"] = None
+    session["prefetched"] = None
     return redirect(url_for("instructions"))
 
 
@@ -257,6 +258,67 @@ def api_state():
     })
 
 
+@app.post("/api/prefetch")
+def api_prefetch():
+    """Generate the current trial's AI wording while the dot image is on screen.
+
+    C3-C8 use truth-relative fixed advice, so their advice number is known before
+    the participant enters the current estimate. C1/C2/practice use fixed local
+    wording and therefore need no model call. Adaptive wording may use the full
+    completed history from the current block, but never the current estimate.
+    """
+    require_session()
+    trial, _ = current_trial()
+    if trial is None:
+        return jsonify({"done": True}), 400
+
+    cursor = session.get("cursor", 0)
+    existing = session.get("prefetched")
+    if existing and existing.get("cursor") == cursor:
+        return jsonify({"ok": True, "prefetched": True, "latency_ms": existing.get("latency_ms", 0)})
+
+    cid = trial["condition_id"]
+    style = trial["adviser_style"]
+    if cid == "PRACTICE" or style == "fixed":
+        session["prefetched"] = {"cursor": cursor, "skip": True}
+        session.modified = True
+        return jsonify({"ok": True, "prefetched": False, "latency_ms": 0})
+
+    truth = trial["true_count"]
+    # For C3-C8 the schedule is truth-relative and independent of the current estimate.
+    advice = design.advice_number(cid, truth, truth)
+    block_rows = store.block_history(session["pid"], cid)
+    history = block_rows if style == "adaptive" else []
+    previous_messages = [r.get("advice_text") for r in block_rows if r.get("advice_text")]
+
+    t0 = time.time()
+    msg = generate_message(
+        style=style,
+        initial=None,
+        advice=advice,
+        history=history,
+        previous_messages=previous_messages,
+        key=f"{session['participant_index']}|{cid}|{trial['trial_position']}",
+    )
+    latency_ms = int((time.time() - t0) * 1000)
+    session["prefetched"] = {
+        "cursor": cursor,
+        "condition_id": cid,
+        "trial_position": trial["trial_position"],
+        "advice": advice,
+        "text": msg["text"],
+        "source": msg["source"],
+        "attempts": msg["attempts"],
+        "word_count": msg["word_count"],
+        "validation": msg.get("validation"),
+        "latency_ms": latency_ms,
+        "history_used": len(history),
+        "prior_messages_checked": len(previous_messages),
+    }
+    session.modified = True
+    return jsonify({"ok": True, "prefetched": True, "latency_ms": latency_ms})
+
+
 @app.post("/api/initial")
 def api_initial():
     require_session()
@@ -291,18 +353,40 @@ def api_initial():
     history = block_rows if style == "adaptive" else []
     previous_messages = [r.get("advice_text") for r in block_rows if r.get("advice_text")]
 
-    # Practice uses a deterministic non-persuasive message and does not spend an API call.
-    generation_style = "fixed" if is_practice else style
-    t0 = time.time()
-    msg = generate_message(
-        style=generation_style,
-        initial=initial,
-        advice=advice,
-        history=history,
-        previous_messages=previous_messages,
-        key=f"{session['participant_index']}|{trial['condition_id']}|{trial['trial_position']}",
+    # If the wording was prefetched during stimulus viewing, reuse it here.
+    prefetched = session.get("prefetched") or {}
+    use_prefetch = bool(
+        prefetched.get("cursor") == session.get("cursor", 0)
+        and prefetched.get("condition_id") == trial["condition_id"]
+        and prefetched.get("trial_position") == trial["trial_position"]
+        and prefetched.get("advice") == advice
+        and prefetched.get("text")
     )
-    latency_ms = int((time.time() - t0) * 1000)
+    if use_prefetch:
+        msg = {
+            "text": prefetched["text"],
+            "source": prefetched["source"],
+            "attempts": prefetched["attempts"],
+            "word_count": prefetched["word_count"],
+            "validation": prefetched.get("validation"),
+        }
+        latency_ms = int(prefetched.get("latency_ms") or 0)
+    else:
+        # Practice/C1/C2 are local. This is also a safe synchronous fallback if
+        # prefetch did not complete or was unavailable.
+        generation_style = "fixed" if is_practice else style
+        t0 = time.time()
+        msg = generate_message(
+            style=generation_style,
+            initial=initial,
+            advice=advice,
+            history=history,
+            previous_messages=previous_messages,
+            key=f"{session['participant_index']}|{trial['condition_id']}|{trial['trial_position']}",
+        )
+        latency_ms = int((time.time() - t0) * 1000)
+
+    session["prefetched"] = None
 
     session["pending"] = {
         "initial": initial,
@@ -396,6 +480,7 @@ def api_final():
 
     session["cursor"] = session.get("cursor", 0) + 1
     session["pending"] = None
+    session["prefetched"] = None
     session.modified = True
     return jsonify({"ok": True})
 

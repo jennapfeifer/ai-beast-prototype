@@ -35,3 +35,12 @@ This revision keeps the NEW25 experimental architecture unchanged and redesigns 
 - Adaptive adviser receives complete earlier within-block history.
 - Trust/feeling ratings remain after trials 2, 4, 6, 8, 10, and 12.
 - No correctness feedback occurs before the experiment is complete.
+
+
+## v6.1 — latency pass
+- Gemini default changed to `gemini-3.5-flash-lite` with `minimal` thinking.
+- Advice wording is prefetched while the dot image is on screen, hiding most model latency.
+- Validation uses one model attempt, then a safe fallback, instead of up to three sequential calls.
+- Gemini output cap reduced to 32 tokens.
+- Removed the artificial 700 ms minimum delay (`ADVISER_MIN_DELAY_MS=0`).
+- Adaptive prefetch still uses the complete completed history from the current block; it simply does not use the current trial's initial estimate before that estimate exists.
