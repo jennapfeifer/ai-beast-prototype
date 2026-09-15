@@ -3,32 +3,24 @@
 <div class="wrap">
   <h1>Dot estimation with an AI assistant</h1>
 
-  <p>This study looks at how people estimate quantities and how they use written advice from an
-  AI assistant. It takes about 40–45 minutes.</p>
+  <p>This study looks at how people estimate quantities and use AI advice. It takes about 35–45 minutes.</p>
 
   <h2>What you'll do</h2>
   <ul>
-    <li>You'll see images containing many dots, one at a time.</li>
-    <li>For each image you give a first estimate of how many dots there are.</li>
-    <li>An AI assistant then gives you a written estimate.</li>
-    <li>You give a final estimate. After every two trials, you answer two short questions about trust and how the advice made you feel.</li>
-    <li>There are 104 images in total, split into 8 rounds, with a checkpoint and optional break between rounds.</li>
-    <li><strong>You will never be told the correct number of dots.</strong> There is no score and no feedback on accuracy.</li>
+    <li>Estimate the number of dots in 104 images, split into 8 rounds.</li>
+    <li>After each first estimate, an AI assistant gives an estimate and a short comment.</li>
+    <li>Choose a final estimate on a number line. Every two trials, answer two quick check-in questions.</li>
+    <li>No correctness feedback is shown during the task. An overall estimation summary appears at the end.</li>
   </ul>
 
-  <h2>Things to know before you agree</h2>
+  <h2>Before you agree</h2>
   <ul>
-    <li>The AI assistant's estimates are generated for the purposes of this study and are
-    <strong>not</strong> guaranteed to be accurate. Please treat them as one input, not as a correct answer.</li>
-    <li>Some details of the study design are withheld until the end so they don't influence your
-    responses. You'll get a full explanation on the final page, and you can withdraw your data then.</li>
     <li>Your responses are stored under a random code, not your name.</li>
-    <li>You can stop at any point by closing the tab, without giving a reason.</li>
+    <li>You can stop at any point by closing the tab.</li>
   </ul>
 
-  <!-- REPLACE the block below with the wording approved by your HREC. -->
-  <p class="small muted">Contact and ethics approval details go here (researcher name, institution,
-  HREC reference, data-protection contact, data retention period).</p>
+  <!-- REPLACE with the wording approved by your ethics/HREC process. -->
+  <p class="small muted">Contact, ethics approval, data-protection and retention details go here.</p>
 
   <hr>
 
@@ -54,8 +46,8 @@
           {% for i in range(8) %}<option value="{{ i }}" {% if test_index|int == i %}selected{% endif %}>Row {{ i + 1 }} (participant index {{ i }})</option>{% endfor %}
         </select>
       </label>
-      <label class="checkline"><input type="checkbox" name="skip_practice" value="1" {% if skip_practice %}checked{% endif %}> Skip practice</label>
-      <p class="small muted">Researcher sessions are marked TEST and do not consume the production counterbalancing sequence.</p>
+      <label class="checkline"><input type="checkbox" name="skip_practice" value="1" {% if skip_practice %}checked{% endif %}> Skip warm-up</label>
+      <p class="small muted">TEST sessions do not consume the production counterbalancing sequence.</p>
     </div>
     {% endif %}
     <p><label><input type="checkbox" required> I have read the above, I am 18 or older, and I agree to take part.</label></p>
