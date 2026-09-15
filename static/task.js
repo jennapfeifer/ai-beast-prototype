@@ -1,4 +1,4 @@
-/* AI-BEAST task runner — v6 engaging number-line interface.
+/* AI-BEAST task runner — v6.1 engaging number-line interface.
    Trial rhythm: checkpoint -> fixation -> stimulus -> click-to-estimate -> AI note
                  -> number-line revision -> optional ratings -> next trial.
 
@@ -15,6 +15,7 @@ const roundTrack = document.getElementById('round-track');
 
 let state = null;
 let rInfo = {};
+let prefetchPromise = null;
 
 function renderResearcher(extra) {
   const el = document.getElementById('rmode');
@@ -283,6 +284,11 @@ function showStimulus() {
   return new Promise(r => {
     const timed = CFG.stimulus_ms > 0;
 
+    // Hide model latency under the dot-viewing period. C3-C8 wording can be
+    // generated from the fixed advice schedule + completed block history before
+    // the participant enters the current estimate.
+    prefetchPromise = api('/api/prefetch', {}).catch(() => null);
+
     if (!timed) {
       // Untimed researcher/debug mode keeps the image visible until the user clicks.
       stage.innerHTML = `
@@ -313,6 +319,13 @@ async function getAdvice(initial) {
     </div>`;
 
   const t0 = performance.now();
+  // Ensure any in-flight prefetch response has landed before /api/initial so
+  // Flask's session cookie contains the prefetched note. Usually this wait is
+  // already hidden by the stimulus + first-estimate period.
+  if (prefetchPromise) {
+    try { await prefetchPromise; } catch (_) {}
+    prefetchPromise = null;
+  }
   const res = await api('/api/initial', {estimate: initial.estimate, rt_ms: initial.rt});
   if (res.error) { alert(res.error); throw new Error(res.error); }
   const elapsed = performance.now() - t0;
