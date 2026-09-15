@@ -4,18 +4,24 @@
   <div class="finish-cluster" aria-hidden="true">
     {% for i in range(8) %}<span></span>{% endfor %}
   </div>
-  <h1>All rounds complete</h1>
+  <h1 class="center">All rounds complete</h1>
 
   {% if show_end_score and summary %}
   <div class="score-card">
-    <p class="eyebrow">Your estimation summary</p>
+    <p class="eyebrow">Your final estimation score</p>
     <div class="score-number">{{ summary.score }}<span>/100</span></div>
-    <p>Overall final-estimate score</p>
+
+    <div class="score-comparison">
+      <div class="score-stat"><span>First-estimate score</span><strong>{{ summary.initial_score }}</strong></div>
+      <div class="score-stat"><span>Final-estimate score</span><strong>{{ summary.score }}</strong></div>
+    </div>
+
     <div class="score-details">
       <span><strong>{{ summary.n_trials }}</strong> estimates completed</span>
-      <span><strong>{{ summary.closest_dots }}</strong> dots away on your closest final estimate</span>
+      <span>Closest final estimate: <strong>{{ summary.closest_dots }}</strong> dots away</span>
+      <span>Final estimate improved on <strong>{{ summary.improved_trials }}</strong> trials</span>
     </div>
-    <p class="small muted">The score is 100 minus your mean absolute percentage error, clipped to 0–100. It is shown only after all study decisions are finished.</p>
+    <p class="small muted">Scores are 100 minus mean absolute percentage error, clipped to 0–100. They are shown only after all study decisions are finished.</p>
   </div>
   {% endif %}
 
