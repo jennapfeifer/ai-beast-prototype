@@ -215,7 +215,7 @@ input[type=number],input[type=text],select{
   min-width:3.4ch;text-align:center;padding:.15rem .55rem;border-radius:8px;
   background:#edf1ff;color:#314db9;font-size:1.7rem;font-variant-numeric:tabular-nums
 }
-.decision-scale{position:relative;height:190px;margin:1rem 18px .2rem}
+.decision-scale{position:relative;height:198px;margin:1rem 18px .2rem}
 .decision-scale input[type=range]{
   position:absolute;left:0;right:0;top:125px;width:100%;height:38px;margin:0;
   appearance:none;-webkit-appearance:none;background:transparent;cursor:pointer;z-index:4
@@ -239,24 +239,26 @@ input[type=number],input[type=text],select{
 .decision-marker{position:absolute;top:0;height:142px;width:0;z-index:2;pointer-events:none}
 .decision-marker .marker-label{
   position:absolute;left:50%;transform:translateX(-50%);white-space:nowrap;
-  padding:.25rem .55rem;border-radius:8px;background:#f6f7fb;border:1px solid #d9ddea;
-  font-size:.82rem;color:var(--slate)
+  padding:.3rem .6rem;border-radius:8px;background:#f6f7fb;border:1px solid #d9ddea;
+  font-size:.78rem;color:var(--slate);text-align:center;line-height:1.15
 }
-.decision-marker .marker-label strong{font-size:1rem;color:var(--ink);font-variant-numeric:tabular-nums}
+.decision-marker .marker-label span{display:block}
+.decision-marker .marker-label strong{display:block;margin-top:.12rem;font-size:1.12rem;color:var(--ink);font-variant-numeric:tabular-nums}
 .decision-marker i{position:absolute;left:-1px;width:2px;background:#8795a3}
 .advice-marker .marker-label{top:0}
-.advice-marker i{top:33px;height:98px;background:#08766d}
+.advice-marker i{top:43px;height:88px;background:#08766d}
 .advice-marker:after{
   content:"";position:absolute;left:-5px;top:126px;width:10px;height:10px;
   background:#08766d;transform:rotate(45deg)
 }
-.initial-marker .marker-label{top:47px}
-.initial-marker i{top:80px;height:51px;border-left:2px dashed #965921;background:transparent}
+.initial-marker .marker-label{top:49px}
+.initial-marker i{top:101px;height:30px;border-left:2px dashed #965921;background:transparent}
 .initial-marker:after{
   content:"";position:absolute;left:-5px;top:126px;width:10px;height:10px;
   background:#fff;border:2px solid #965921;transform:rotate(45deg)
 }
-.tick{position:absolute;top:163px;transform:translateX(-50%);font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.tick{position:absolute;top:163px;transform:translateX(-50%);font-size:.9rem;font-weight:600;color:#475864;font-variant-numeric:tabular-nums;text-align:center}
+.tick i{display:block;width:1px;height:7px;background:#9aa8b4;margin:0 auto .18rem}
 .t1{left:0;transform:none}.t100{left:24.812%}.t200{left:49.875%}.t300{left:74.937%}.t400{left:100%;transform:translateX(-100%)}
 .slider-hint{text-align:center;color:var(--muted);font-size:.82rem;margin:.2rem 0 1rem}
 

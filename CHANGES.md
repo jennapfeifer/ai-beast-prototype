@@ -13,3 +13,8 @@
 - Enhanced progress-only gamification with round-complete feedback and subtle progress animation.
 - Added an optional end-only estimation score and closest-estimate summary after all experimental decisions are complete.
 - Kept 8×13 production design unchanged pending a power/design decision about shortening the study.
+
+## v5.1 participant-screen patch
+- Removed pre-task warnings that the AI estimates are not guaranteed accurate and that design details are withheld.
+- Made the number-line scale labels and AI/initial estimate markers substantially more visible.
+- Added cache-busting version tags to CSS and task JavaScript so an updated Render deployment does not keep serving an older task screen from browser cache.

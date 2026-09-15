@@ -1,4 +1,4 @@
-# AI-BEAST study 
+# AI-BEAST human study — v5 usability revision
 
 This revision keeps the locked NEW25 numerical schedules, counterbalancing, 8 conditions, 13 trials per condition, one warm-up, adaptive full within-block history, and the trust/feeling schedule. It changes the participant-facing interaction to reduce reading and waiting burden.
 

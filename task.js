@@ -234,13 +234,13 @@ function showAdvice(initial, advice) {
 
         <div class="decision-scale" aria-label="Number line from 1 to 400">
           <div class="decision-marker advice-marker" style="left:${aiPct}%">
-            <div class="marker-label">AI <strong>${ai}</strong></div><i></i>
+            <div class="marker-label"><span>AI estimate</span><strong>${ai}</strong></div><i></i>
           </div>
           <div class="decision-marker initial-marker" style="left:${firstPct}%">
-            <div class="marker-label">You <strong>${first}</strong></div><i></i>
+            <div class="marker-label"><span>Your first estimate</span><strong>${first}</strong></div><i></i>
           </div>
           <input id="est" type="range" min="1" max="400" step="1" value="${first}" aria-label="Your revised estimate" aria-valuetext="${first} dots">
-          <span class="tick t1">1</span><span class="tick t100">100</span><span class="tick t200">200</span><span class="tick t300">300</span><span class="tick t400">400</span>
+          <span class="tick t1"><i></i>1</span><span class="tick t100"><i></i>100</span><span class="tick t200"><i></i>200</span><span class="tick t300"><i></i>300</span><span class="tick t400"><i></i>400</span>
         </div>
 
         <p class="slider-hint">Leave the slider where it is to keep your first estimate.</p>
