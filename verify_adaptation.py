@@ -97,7 +97,7 @@ def run_probe(live=False, repetitions=1, contrast='behaviour'):
           'Review tone and invitation across matched rating contrasts; accepted_for_review is not a failed API call or verified adaptation.',
           'Offline branches are illustrative code paths, not evidence about GPT.',
           'A behavioural effect requires human pilot data; this probe uses synthetic histories.',
-          'Retry budget is checked between requests; SDK timeouts are not an exact wall-clock deadline.'])
+          'Retry budget is checked between requests and limits each request timeout; SDK timeouts are not an exact wall-clock deadline.'])
 
 
 def write_report(report, folder):

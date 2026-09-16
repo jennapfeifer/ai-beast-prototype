@@ -22,13 +22,19 @@ def build_report(records,people):
         if not row.get('practice'):
             grouped[row['condition_id']].append(row)
             model_groups[(row['condition_id'],row.get('provider','unknown'),row.get('model','unknown'),
-                          row.get('reasoning','unknown'),row.get('adviser_mode','unknown'),row.get('prompt_version') or 'unknown')].append(row)
+                          row.get('reasoning','unknown'),row.get('adviser_mode','unknown'),row.get('prompt_version') or 'unknown',
+                          row.get('retry_policy_version') or 'unknown',row.get('max_attempts') or 0,
+                          row.get('total_budget_s') or 0)].append(row)
     model_conditions=[]
-    for (cid,provider,model,reasoning,mode,prompt_version),rows in sorted(model_groups.items()):
+    for (cid,provider,model,reasoning,mode,prompt_version,retry_policy,max_attempts,budget),rows in sorted(model_groups.items()):
         timed=[r for r in rows if r.get('timing_complete')]
         live=[r for r in rows if r.get('live_model')]
         model_conditions.append(dict(condition=cid,provider=provider,model=model,reasoning=reasoning,mode=mode,prompt_version=prompt_version,
+            retry_policy_version=retry_policy,max_attempts=max_attempts or None,total_budget_s=budget or None,
             trials=len(rows),live_messages=len(live),fallbacks=sum(bool(r.get('fallback')) for r in rows),
+            retried_trials=sum((r.get('retry_count') or 0)>0 for r in rows),
+            recovered_trials=sum(bool(r.get('recovered_after_retry')) for r in rows),
+            recorded_api_attempts=sum(r.get('attempts') or 0 for r in rows if r.get('retry_policy_version')),
             history_reactions=sum(r.get('history_check')=='history_wording_screen_passed' and not r.get('review_required') for r in live),
             trust_reactions=sum(r.get('adaptation_check')=='trust_reference_screen_passed' and not r.get('review_required') for r in live),
             feeling_reactions=sum(r.get('adaptation_check')=='feeling_reference_screen_passed' and not r.get('review_required') for r in live),

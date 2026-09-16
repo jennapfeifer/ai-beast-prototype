@@ -8,7 +8,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.6-grounded-adaptation'
+APP_VERSION = 'fieldwork-2.7-patient-retries'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -186,7 +186,7 @@ def task():
     return render_template('task.html',config=dict(csrf=csrf(),min_delay_ms=ADVISER_MIN_DELAY_MS,stimulus_ms=STIMULUS_MS,
         fixation_ms=FIXATION_MS,collect_ratings=COLLECT_RATINGS,rating_every=RATING_EVERY,prefill_final=PREFILL_FINAL,
         researcher_mode=bool(session.get('researcher') and data['config'].get('researcher')),max_estimate=design.MAX_ESTIMATE,
-        pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline'))
+        pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline',request_timeout_ms=90000))
 
 
 @app.get('/api/state')
@@ -263,7 +263,10 @@ def prepared_advice(con,data,trial,initial):
                   'feeling_latest_rating','feeling_latest_trial','feeling_previous_rating','feeling_change','feeling_age_trials',
                   'adaptive_focus','adaptive_strategy','adaptation_check','feeling_check','repetition_check','repetition_similarity',
                   'review_required','review_reasons','rating_strategies','grounding_record_check','model_basis',
-                  'generation_status','rating_influence_status','persuasion_check'):
+                  'generation_status','rating_influence_status','persuasion_check',
+                  'max_attempts','total_budget_s','retry_policy_version','retry_count',
+                  'recovered_after_retry','stop_reason','budget_overrun',
+                  'target_word_range','word_tolerance','word_count_check','direction_check'):
         diagnostic[field]=msg.get(field)
     return advice,msg,diagnostic
 
@@ -402,6 +405,9 @@ def researcher_status():
     return jsonify(version=APP_VERSION,provider=adviser.resolved_provider(),model=adviser.resolved_model(),
         has_key=adviser.has_api_key(),database_dialect=store.engine.dialect.name,study_mode=STUDY_MODE,
         adviser_mode=ADVISER_MODE,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
+        retry_policy_version=adviser.RETRY_POLICY_VERSION,max_attempts=adviser.ADVISER_MAX_ATTEMPTS,
+        total_budget_s=adviser.ADVISER_TOTAL_BUDGET_SECONDS,model_profiles=adviser.model_profiles(),
+        word_tolerance=adviser.ADVISER_WORD_TOLERANCE,
         minimum_wait_ms=ADVISER_MIN_DELAY_MS,stimulus_ms=STIMULUS_MS,private_gate=bool(ACCESS_CODE))
 
 
@@ -447,6 +453,8 @@ def export_all_zip():
             adviser_model=adviser.resolved_model(),adviser_provider=adviser.resolved_provider(),study_mode=STUDY_MODE,default_adviser_mode=ADVISER_MODE,
             stimulus_ms=STIMULUS_MS,fixation_ms=FIXATION_MS,minimum_advice_wait_ms=ADVISER_MIN_DELAY_MS,
             rating_every=RATING_EVERY,prefill_final=PREFILL_FINAL,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
+            retry_policy_version=adviser.RETRY_POLICY_VERSION,model_profiles=adviser.model_profiles(),
+            word_tolerance=adviser.ADVISER_WORD_TOLERANCE,
             conditions=design.CONDITIONS,limits=['Offline rehearsals do not validate live model behaviour.',
             'Timing is browser instrumentation, not an eye-tracker trigger.',
             'Mechanical validity does not certify persuasive content or historical claims.']),indent=2))
