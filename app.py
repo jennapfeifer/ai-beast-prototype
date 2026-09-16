@@ -145,7 +145,13 @@ def start():
     researcher=bool(session.get('researcher') and request.form.get('researcher_test')=='1')
     mode=request.form.get('adviser_mode',ADVISER_MODE) if researcher else ADVISER_MODE
     if mode not in {'offline','live'}: return 'Invalid adviser mode.',400
-    if mode=='live' and not adviser.has_api_key(): return 'Live adviser key is not configured. Use an offline pilot or configure the key on the server.',400
+    profile_id=request.form.get('model_profile','server') if researcher else 'server'
+    profiles=adviser.model_profiles()
+    if profile_id not in profiles:return 'Unknown model choice. Reload the researcher workspace.',400
+    profile=profiles[profile_id]
+    if mode=='live' and not adviser.has_api_key(profile['provider']):
+        key_name='GEMINI_API_KEY' if profile['provider']=='gemini' else 'OPENAI_API_KEY'
+        return f'Live adviser key is not configured for {profile["provider"]}. Set {key_name} in Render Environment or select an offline rehearsal.',400
     if STUDY_MODE=='production' and not researcher and (mode!='live' or not STUDY_CONTACT or not ETHICS_DETAILS):
         return 'Production is not configured: live adviser, approved study information and contact details are required.',503
     conditions=[]
@@ -157,7 +163,8 @@ def start():
     conf=dict(conditions=conditions,trials_per_block=n,skip_practice=researcher and request.form.get('skip_practice')=='1',
               test_index=integer(request.form.get('test_index','0'),0,7) if researcher else 0,
               adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
-              ui_version='fieldwork-2.1-prefetch',started_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat())
+              model_profile_id=profile_id,model_profile=profile,
+              ui_version='fieldwork-2.2-model-choice',started_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat())
     pid=uuid.uuid4().hex[:12]
     store.create_session(pid,conf,(request.form.get('external_id') or '')[:128] or None)
     session['pid']=pid
@@ -233,16 +240,20 @@ def prepared_advice(con,data,trial,initial):
     t=time.perf_counter()
     # Keep information available to the model identical whether prefetch succeeded
     # or synchronous generation is needed: current initial estimate is unavailable.
-    msg=generator(style=style,initial=initial if style=='fixed' else None,advice=advice,history=history,
-        previous_messages=[r['advice_text'] for r in rows if r.get('advice_text')],
-        key=f"{data['participant_index']}|{trial['condition_id']}|{trial['trial_position']}")
+    profile=data['config'].get('model_profile') or adviser.model_profiles()['server']
+    with adviser.use_model_profile(profile):
+        msg=generator(style=style,initial=initial if style=='fixed' else None,advice=advice,history=history,
+            previous_messages=[r['advice_text'] for r in rows if r.get('advice_text')],
+            key=f"{data['participant_index']}|{trial['condition_id']}|{trial['trial_position']}")
     diagnostic=dict(history_rows=len(history),expected_history_rows=trial['trial_position']-1 if style=='adaptive' else 0,
         history_positions=[r['trial_position'] for r in history],source=msg['source'],attempts=msg['attempts'],
         validation=msg['validation'],word_count=msg['word_count'],live_model=msg.get('live_model',False),
         history_route=msg.get('history_route'),generation_ms=round((time.perf_counter()-t)*1000),
+        history_check=msg.get('history_check'),prompt_version=msg.get('prompt_version'),
+        prompt_sha256=msg.get('prompt_sha256'),
         attempt_log=msg.get('attempt_log',[]),fallback=msg['source'].startswith('fallback:'),
-        initial_context_available=style=='fixed',prefetched=False,provider=adviser.resolved_provider(),
-        model=adviser.resolved_model(),advice=advice)
+        initial_context_available=style=='fixed',prefetched=False,provider=profile['provider'],
+        model=profile['model'],reasoning=profile['reasoning'],request_timeout_s=profile['timeout'],advice=advice)
     return advice,msg,diagnostic
 
 
@@ -359,7 +370,10 @@ def researcher():
         else:error='Researcher token not recognised.'
     if not session.get('researcher'):return render_template('researcher_login.html',error=error,configured=bool(ADMIN_TOKEN))
     records=store.diagnostic_rows();people=store.export_rows(store.participants)
+    profiles={k:dict(v,available=adviser.has_api_key(v['provider'])) for k,v in adviser.model_profiles().items()}
+    default_profile=next((k for k in ['gemini_fast','gpt_stronger','server'] if profiles[k]['available']),'server')
     return render_template('researcher.html',conditions=design.CONDITIONS,report=build_report(records,people),
+        model_profiles=profiles,default_profile=default_profile,has_any_key=any(v['available'] for v in profiles.values()),
         has_key=adviser.has_api_key(),model=adviser.ADVISER_MODEL,stimulus_ms=STIMULUS_MS,
         delay_ms=ADVISER_MIN_DELAY_MS,rating_every=RATING_EVERY,projection=timing_projection(
             wait_s=ADVISER_MIN_DELAY_MS/1000,stimulus_s=STIMULUS_MS/1000,fixation_s=FIXATION_MS/1000,
@@ -374,7 +388,7 @@ def admin_downloads():
 @app.get('/api/researcher/status')
 def researcher_status():
     require_admin()
-    return jsonify(version='fieldwork-2.1-prefetch',provider=adviser.resolved_provider(),model=adviser.resolved_model(),
+    return jsonify(version='fieldwork-2.2-model-choice',provider=adviser.resolved_provider(),model=adviser.resolved_model(),
         has_key=adviser.has_api_key(),database_dialect=store.engine.dialect.name,study_mode=STUDY_MODE,
         adviser_mode=ADVISER_MODE,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
         minimum_wait_ms=ADVISER_MIN_DELAY_MS,stimulus_ms=STIMULUS_MS,private_gate=bool(ACCESS_CODE))
@@ -401,7 +415,8 @@ def csv_text(rows):
 def export_tables():
     diagnostics=store.diagnostic_rows();people=store.export_rows(store.participants)
     return dict(trials=store.export_rows(store.trials),participants=people,ratings=store.export_rows(store.message_ratings),
-                diagnostics=diagnostics,timing_summary=build_report(diagnostics,people)['conditions'])
+                diagnostics=diagnostics,timing_summary=build_report(diagnostics,people)['conditions'],
+                model_comparison=build_report(diagnostics,people)['model_conditions'])
 
 
 @app.get('/admin/export/<what>.csv')
@@ -417,7 +432,7 @@ def export_all_zip():
     with zipfile.ZipFile(memory,'w',zipfile.ZIP_DEFLATED) as z:
         for name,rows in tables.items():z.writestr(name+'.csv',csv_text(rows))
         z.writestr('pilot_report.json',json.dumps(build_report(tables['diagnostics'],tables['participants']),default=str,indent=2))
-        z.writestr('run_metadata.json',json.dumps(dict(ui_version='fieldwork-2.1-prefetch',study_seed=design.STUDY_SEED,
+        z.writestr('run_metadata.json',json.dumps(dict(ui_version='fieldwork-2.2-model-choice',study_seed=design.STUDY_SEED,
             adviser_model=adviser.resolved_model(),adviser_provider=adviser.resolved_provider(),study_mode=STUDY_MODE,default_adviser_mode=ADVISER_MODE,
             stimulus_ms=STIMULUS_MS,fixation_ms=FIXATION_MS,minimum_advice_wait_ms=ADVISER_MIN_DELAY_MS,
             rating_every=RATING_EVERY,prefill_final=PREFILL_FINAL,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
@@ -446,7 +461,7 @@ def api_rate():
 
 
 @app.get('/healthz')
-def healthz():return jsonify(ok=True,version='fieldwork-2.1-prefetch')
+def healthz():return jsonify(ok=True,version='fieldwork-2.2-model-choice')
 
 
 if __name__=='__main__':

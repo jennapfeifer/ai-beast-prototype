@@ -17,8 +17,23 @@ def timing_projection(initial_s=4,final_s=7,wait_s=2.5,rating_s=6,break_s=20,ins
 
 def build_report(records,people):
     grouped=defaultdict(list)
+    model_groups=defaultdict(list)
     for row in records:
-        if not row.get('practice'):grouped[row['condition_id']].append(row)
+        if not row.get('practice'):
+            grouped[row['condition_id']].append(row)
+            model_groups[(row['condition_id'],row.get('provider','unknown'),row.get('model','unknown'),
+                          row.get('reasoning','unknown'),row.get('adviser_mode','unknown'))].append(row)
+    model_conditions=[]
+    for (cid,provider,model,reasoning,mode),rows in sorted(model_groups.items()):
+        timed=[r for r in rows if r.get('timing_complete')]
+        live=[r for r in rows if r.get('live_model')]
+        model_conditions.append(dict(condition=cid,provider=provider,model=model,reasoning=reasoning,mode=mode,
+            trials=len(rows),live_messages=len(live),fallbacks=sum(bool(r.get('fallback')) for r in rows),
+            history_reactions=sum(r.get('history_check')=='history_wording_screen_passed' for r in live),
+            generation_p50_ms=quantile([r.get('generation_ms') for r in live],.5),
+            generation_p90_ms=quantile([r.get('generation_ms') for r in live],.9),
+            wait_p50_ms=quantile([r.get('advice_wait_ms') for r in timed],.5),
+            wait_p90_ms=quantile([r.get('advice_wait_ms') for r in timed],.9)))
     conditions=[]
     for cid,rows in sorted(grouped.items()):
         valid=[r for r in rows if r.get('timing_complete')]
@@ -44,7 +59,7 @@ def build_report(records,people):
             instrumented_minutes=round(sum(r.get('total_wall_ms',0) for r in rs)/60000,2),
             break_seconds=round(sum(r.get('break_ms',0) for r in rs)/1000,1),
             hidden_seconds=round(sum(r.get('hidden_ms',0) for r in rs)/1000,1)))
-    return dict(conditions=conditions,sessions=sessions,total_trials=sum(not r.get('practice') for r in records),
+    return dict(conditions=conditions,model_conditions=model_conditions,sessions=sessions,total_trials=sum(not r.get('practice') for r in records),
         complete_sessions=sum(s['completed'] for s in sessions),timed_trials=sum(r.get('timing_complete',False) for r in records),
         live_trials=sum(r.get('live_model',False) for r in records),fallbacks=sum(r.get('fallback',False) for r in records),
         history_mismatches=sum(r.get('history_rows')!=r.get('expected_history_rows') for r in records),

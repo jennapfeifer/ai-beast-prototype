@@ -16,14 +16,19 @@ Design goals in this revision:
 from __future__ import annotations
 
 from difflib import SequenceMatcher
+from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import logging
+import math
 import os
 import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger("adviser")
+PROMPT_VERSION = "adaptive-reaction-v2"
+_profile = ContextVar('beast_model_profile', default=None)
 
 ADVISER_PROVIDER = os.getenv("ADVISER_PROVIDER", "auto").strip().lower()
 # If no explicit model is supplied, choose a fast model for the resolved provider.
@@ -41,6 +46,8 @@ REPETITION_SIMILARITY_LIMIT = float(os.getenv("REPETITION_SIMILARITY_LIMIT", "0.
 
 
 def resolved_provider() -> str:
+    if _profile.get():
+        return _profile.get()['provider']
     if ADVISER_PROVIDER in {"gemini", "openai"}:
         return ADVISER_PROVIDER
     # Auto makes the downloaded prototype work with whichever key the researcher
@@ -51,6 +58,8 @@ def resolved_provider() -> str:
 
 
 def resolved_model() -> str:
+    if _profile.get():
+        return _profile.get()['model']
     return GEMINI_MODEL if resolved_provider() == "gemini" else OPENAI_MODEL
 
 
@@ -74,8 +83,9 @@ CONTROL_MESSAGE_BANK = [
     "That's simply the estimate I would make on this one.",
 ]
 
-ADVISER_SHARED = f"""You are an AI adviser in a dot-estimation task. A participant has already seen a dot image,
-entered an initial estimate, and will now see your fixed numerical recommendation separately on screen.
+ADVISER_SHARED = f"""You are an AI adviser in a dot-estimation task. Your note will be shown after a participant
+has seen a dot image and entered an estimate. The note may be prepared before that estimate is available.
+The participant will see your fixed numerical recommendation separately on screen.
 Your job is to write ONLY a brief verbal note that accompanies that number.
 
 Write exactly one short sentence of {ADVISER_MIN_WORDS}-{ADVISER_MAX_WORDS} words.
@@ -94,10 +104,15 @@ STRATEGY_PROMPTS = {
 Be confident and direct, but stay believable. You may encourage reconsideration of the first impression,
 but do not invent evidence, visual details, or past performance. You know nothing about earlier trials.""",
     "adaptive": """Your goal is to persuade the participant to move toward your displayed estimate.
-You are given the complete earlier history from this block. Use that history to tailor your wording when useful.
-You may refer qualitatively to whether they tended to resist, move partway, follow closely, or respond inconsistently.
-Any claim about THIS participant's previous behaviour must match the supplied history. If the history is mixed,
-describe it as mixed or avoid a behavioural claim. Do not invent past accuracy or correctness.""",
+You are given completed earlier trials from this block. When a recent response is supplied, your sentence MUST
+acknowledge that specific response to your earlier advice, then invite consideration of your current estimate.
+Use 'last time', 'previously', 'earlier', or 'recently' to make clear you mean a completed trial.
+Say what they actually did: kept their estimate, moved away, moved partway, followed closely, or went beyond yours.
+Do not substitute generic encouragement such as 'blend your perspective with this thoughtful suggestion'.
+Do not infer trust, uncertainty, emotions, motives, or accuracy from an estimate change.
+The recent-response fact takes precedence over the overall pattern: respond to a change in behaviour.
+When there are no earlier trials, give a brief invitation without claiming any previous behaviour.
+The current estimate is unavailable during prefetch; never pretend you have just seen it.""",
 }
 
 FALLBACK_BANKS = {
@@ -123,6 +138,36 @@ FALLBACK_BANKS = {
 
 _openai_client = None
 _gemini_client = None
+
+
+def model_profiles():
+    """Researcher-only presets; no credentials are returned or stored in sessions."""
+    return {
+        'server': dict(label='Server default', provider=resolved_provider(), model=resolved_model(),
+                       reasoning=ADVISER_REASONING_EFFORT if resolved_provider() == 'openai' else ADVISER_THINKING_LEVEL,
+                       timeout=ADVISER_REQUEST_TIMEOUT, budget=ADVISER_BUDGET_SECONDS),
+        'gemini_fast': dict(label='Gemini Flash-Lite · minimal thinking', provider='gemini',
+                            model=GEMINI_MODEL, reasoning='minimal', timeout=10, budget=12),
+        'gpt_stronger': dict(label='GPT-5.6 Sol · low reasoning', provider='openai',
+                             model='gpt-5.6-sol', reasoning='low', timeout=25, budget=30),
+        'gpt_fast': dict(label='GPT-5.6 Sol · no reasoning', provider='openai',
+                         model='gpt-5.6-sol', reasoning='none', timeout=10, budget=12),
+    }
+
+
+@contextmanager
+def use_model_profile(profile):
+    """Keep simultaneous pilot requests isolated; never change process env vars."""
+    token = _profile.set(profile)
+    try:
+        yield
+    finally:
+        _profile.reset(token)
+
+
+def generation_settings():
+    return _profile.get() or dict(reasoning=ADVISER_REASONING_EFFORT if resolved_provider() == 'openai' else ADVISER_THINKING_LEVEL,
+                                  timeout=ADVISER_REQUEST_TIMEOUT, budget=ADVISER_BUDGET_SECONDS)
 
 
 def get_openai_client():
@@ -266,10 +311,86 @@ def history_behavior_summary(history: List[Dict[str, Any]]) -> str:
     return "The participant's earlier responses are mixed: sometimes moving toward the recommendation and sometimes staying with their own judgment or moving away."
 
 
+REACTION_FACTS = {
+    "stayed": "On the last completed trial, they kept or stayed close to their own initial estimate.",
+    "away": "On the last completed trial, they moved away from your recommendation.",
+    "partway": "On the last completed trial, they moved partway toward your recommendation.",
+    "followed": "On the last completed trial, their final answer was close to your recommendation.",
+    "beyond": "On the last completed trial, they moved beyond your recommendation.",
+    "aligned": "On the last completed trial, your recommendation matched their initial estimate; advice uptake cannot be inferred.",
+    "no_history": "No completed trials yet. Do not make a claim about earlier behaviour.",
+    "unusable": "The most recent response cannot be assessed. Do not invent a behavioural claim.",
+}
+
+
+def recent_response(history):
+    """Describe the last completed response, not inferred trust or accuracy.
+
+    Ratios are only descriptive: <=5% movement is treated as staying close;
+    75–125% means ending close to the advice. Overshoots are kept distinct.
+    """
+    if not history:
+        return "no_history"
+    try:
+        row = history[-1]
+        initial, advice, final = (float(row[k]) for k in
+                                 ("initial_estimate", "advice_number", "final_estimate"))
+        if not all(math.isfinite(x) for x in (initial, advice, final)):
+            return "unusable"
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return "unusable"
+    if advice == initial:
+        return "aligned"
+    ratio = (final - initial) / (advice - initial)
+    if ratio < -0.05:
+        return "away"
+    if ratio <= 0.05:
+        return "stayed"
+    if ratio < 0.75:
+        return "partway"
+    if ratio <= 1.25:
+        return "followed"
+    return "beyond"
+
+
+_PAST_REFERENCE_RE = re.compile(r"\b(?:last time|last (?:trial|answer|response)|previous(?:ly)?|earlier|recent(?:ly)?)\b", re.I)
+_REACTION_PATTERNS = {
+    "stayed": r"(?:kept|stuck with|retained|held (?:to|onto)|stayed (?:near|close to|with))\s+(?:your\s+)?(?:own\s+|initial\s+|original\s+)?(?:estimate|answer|judg(?:e)?ment)",
+    "away": r"(?:moved|shifted|went)\s+(?:further\s+)?away",
+    "partway": r"(?:moved|shifted|followed|came|went)\s+(?:only\s+)?(?:partway|partly|partially|halfway|closer)",
+    "followed": r"(?:followed|adopted|accepted|matched)\s+(?:my|the|that)\s+(?:earlier\s+|previous\s+)?(?:estimate|advice|suggestion|recommendation)|(?:answer|estimate)\s+(?:was|ended|landed|stayed)\s+(?:close to|near)\s+mine",
+    "beyond": r"(?:moved|went|shifted)\s+(?:past|beyond)|overshot",
+    "aligned": r"(?:our|both)\s+(?:earlier\s+|previous\s+)?estimates\s+(?:matched|agreed|coincided)|(?:my|your)\s+estimate\s+matched\s+(?:yours|mine)",
+}
+
+
+def adaptive_history_check(text, history):
+    """Conservative wording screen, NOT an automatic semantic validation.
+
+    Require an explicit, recognisable reaction to the most recent response.
+    Human review still checks the meaning and whether the claim is supported.
+    """
+    route = recent_response(history)
+    past = bool(_PAST_REFERENCE_RE.search(text))
+    if route in {"no_history", "unusable"}:
+        return (not past, "no_history" if not past else "history_claim_without_usable_history")
+    if not past or not re.search(r"\b(?:you|your|our|we)\b", text, re.I):
+        return False, "missing_history_reaction"
+    # Avoid accepting a negated opposite action as evidence of the expected action.
+    if re.search(r"\b(?:not|never|didn't|haven't|hadn't|weren't)\b", text, re.I):
+        return False, "ambiguous_history_reaction"
+    if not re.search(_REACTION_PATTERNS[route], text, re.I):
+        return False, "history_reaction_mismatch:" + route
+    return True, "history_wording_screen_passed"
+
+
 def full_history(history: List[Dict[str, Any]]) -> str:
     if not history:
         return "No earlier trials."
-    lines = ["SERVER-DERIVED QUALITATIVE BEHAVIOUR SUMMARY:", history_behavior_summary(history), "", "EXACT INTERNAL HISTORY:"]
+    route = recent_response(history)
+    lines = ["REQUIRED RECENT-RESPONSE FACT:", REACTION_FACTS[route],
+             "React to this fact rather than substituting generic encouragement.",
+             "SERVER-DERIVED QUALITATIVE BEHAVIOUR SUMMARY:", history_behavior_summary(history), "", "EXACT INTERNAL HISTORY:"]
     for h in history:
         msg = str(h.get("advice_text") or h.get("ai_message") or "").replace('"', "'")
         line = (
@@ -286,26 +407,20 @@ def full_history(history: List[Dict[str, Any]]) -> str:
 
 
 def _openai_text(system: str, user: str) -> str:
-    client = get_openai_client()
+    settings = generation_settings()
+    client = get_openai_client().with_options(timeout=settings['timeout'], max_retries=0)
     kwargs = dict(
         model=resolved_model(),
         input=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        max_output_tokens=80,
+        max_output_tokens=2048 if settings['reasoning'] not in {'', 'none'} else 128,
         store=False,
     )
-    if ADVISER_REASONING_EFFORT:
-        kwargs["reasoning"] = {"effort": ADVISER_REASONING_EFFORT}
-    try:
-        resp = client.responses.create(**kwargs)
-    except Exception as e:
-        if "reasoning" in str(e).lower() or "effort" in str(e).lower():
-            kwargs.pop("reasoning", None)
-            resp = client.responses.create(**kwargs)
-        else:
-            raise
+    if settings['reasoning']:
+        kwargs["reasoning"] = {"effort": settings['reasoning']}
+    resp = client.responses.create(**kwargs)
     return (resp.output_text or "").strip()
 
 
@@ -313,12 +428,14 @@ def _gemini_text(system: str, user: str) -> str:
     from google.genai import types
 
     client = get_gemini_client()
+    settings = generation_settings()
     config_kwargs: Dict[str, Any] = {
         "system_instruction": system,
-        "max_output_tokens": 32,
+        "max_output_tokens": 128,
+        "http_options": types.HttpOptions(timeout=int(settings['timeout'] * 1000)),
     }
-    if ADVISER_THINKING_LEVEL:
-        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=ADVISER_THINKING_LEVEL)
+    if settings['reasoning']:
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=settings['reasoning'])
     response = client.models.generate_content(
         model=resolved_model(),
         contents=user,
@@ -349,8 +466,8 @@ def _fallback_message(
     return bank[start], start
 
 
-def has_api_key():
-    return bool(os.getenv("GEMINI_API_KEY" if resolved_provider() == "gemini" else "OPENAI_API_KEY"))
+def has_api_key(provider=None):
+    return bool(os.getenv("GEMINI_API_KEY" if (provider or resolved_provider()) == "gemini" else "OPENAI_API_KEY"))
 
 
 def build_prompt(style, initial, advice, history=None):
@@ -403,13 +520,19 @@ def generate_message(
     previous_messages = [m for m in (previous_messages or []) if m]
     attempts = attempts or ADVISER_VALIDATION_ATTEMPTS
     system, base_user = build_prompt(style, initial, advice, history)
+    route = recent_response(history) if style == "adaptive" else "not_applicable"
+    settings = generation_settings()
+    audit = dict(prompt_version=PROMPT_VERSION, history_route=route,
+                 provider=resolved_provider(),model=resolved_model(),reasoning=settings['reasoning'],
+                 request_timeout_s=settings['timeout'],
+                 prompt_sha256=hashlib.sha256((system + "\n" + base_user).encode()).hexdigest())
 
     started = time.perf_counter()
     attempt_log = []
     last_reason = "not_generated"
     retry_note = ""
     for k in range(1, attempts + 1):
-        if time.perf_counter()-started >= ADVISER_BUDGET_SECONDS:
+        if time.perf_counter()-started >= settings['budget']:
             last_reason = "time_budget_exceeded"
             break
         attempt_start = time.perf_counter()
@@ -425,21 +548,32 @@ def generate_message(
             continue
 
         ok, reason = message_is_valid(draft, None, previous_messages)
+        history_check = "not_applicable"
+        if ok and style == "adaptive":
+            ok, history_check = adaptive_history_check(draft, history)
+            if not ok:
+                reason = history_check
         if ok:
             return {
+                **audit,
                 "text": draft,
                 "source": f"{resolved_provider()}:{resolved_model()}",
                 "attempts": k,
                 "word_count": words(draft),
                 "validation": "passed",
                 "live_model": True,
+                "history_check": history_check,
                 "attempt_log": attempt_log + [{"attempt": k, "result": "passed", "ms": round((time.perf_counter()-attempt_start)*1000)}],
             }
 
         last_reason = reason
-        attempt_log.append({"attempt": k, "result": reason, "ms": round((time.perf_counter()-attempt_start)*1000)})
+        attempt_log.append({"attempt": k, "result": reason, "draft": draft,
+                            "ms": round((time.perf_counter()-attempt_start)*1000)})
         log.warning("adviser validation failed (attempt %d/%d): %s", k, attempts, reason)
-        if reason.startswith("repetition_similarity"):
+        if "history" in reason:
+            feedback = ("Explicitly acknowledge this completed response using plain past-tense wording: "
+                        + REACTION_FACTS[route] + " Then invite consideration of the current recommendation.")
+        elif reason.startswith("repetition_similarity"):
             feedback = "Use substantially different wording and sentence structure."
         elif reason.startswith("word_count"):
             feedback = f"Use {ADVISER_MIN_WORDS}-{ADVISER_MAX_WORDS} words."
@@ -457,12 +591,14 @@ def generate_message(
         len(attempt_log), style, advice, last_reason, idx,
     )
     return {
+        **audit,
         "text": text,
         "source": f"fallback:{style}:{idx:02d}",
         "attempts": len(attempt_log),
         "word_count": words(text),
         "validation": f"fallback_after:{last_reason}",
         "live_model": False,
+        "history_check": "fallback_not_adaptive",
         "attempt_log": attempt_log,
     }
 
