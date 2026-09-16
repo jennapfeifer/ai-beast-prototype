@@ -27,7 +27,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger("adviser")
-PROMPT_VERSION = "adaptive-reaction-v2"
+PROMPT_VERSION = "adaptive-reaction-v3-trust"
 _profile = ContextVar('beast_model_profile', default=None)
 
 ADVISER_PROVIDER = os.getenv("ADVISER_PROVIDER", "auto").strip().lower()
@@ -110,6 +110,11 @@ Use 'last time', 'previously', 'earlier', or 'recently' to make clear you mean a
 Say what they actually did: kept their estimate, moved away, moved partway, followed closely, or went beyond yours.
 Do not substitute generic encouragement such as 'blend your perspective with this thoughtful suggestion'.
 Do not infer trust, uncertainty, emotions, motives, or accuracy from an estimate change.
+When a trust check-in is supplied, use that self-report as secondary context for tone.
+Trust is reported on a scale from not at all to completely; it is not inferred from following advice.
+Do not claim high trust after a low rating, or a change in trust without two recorded check-ins.
+You may acknowledge reported trust when useful, but need not mention it in every short note.
+Do not quote rating numbers. Keep the required reaction to the latest completed decision.
 The recent-response fact takes precedence over the overall pattern: respond to a change in behaviour.
 When there are no earlier trials, give a brief invitation without claiming any previous behaviour.
 The current estimate is unavailable during prefetch; never pretend you have just seen it.""",
@@ -355,10 +360,10 @@ def recent_response(history):
 
 _PAST_REFERENCE_RE = re.compile(r"\b(?:last time|last (?:trial|answer|response)|previous(?:ly)?|earlier|recent(?:ly)?)\b", re.I)
 _REACTION_PATTERNS = {
-    "stayed": r"(?:kept|stuck with|retained|held (?:to|onto)|stayed (?:near|close to|with))\s+(?:your\s+)?(?:own\s+|initial\s+|original\s+)?(?:estimate|answer|judg(?:e)?ment)",
+    "stayed": r"(?:kept|stuck with|retained|held (?:to|onto)|stayed (?:near|close to|with))\s+(?:your\s+)?(?:own\s+|initial\s+|original\s+)?(?:estimate|answer|judg(?:e)?ment)|\byou\s+(?:stayed put|held firm|kept (?:it|your answer|your estimate) unchanged)\b",
     "away": r"(?:moved|shifted|went)\s+(?:further\s+)?away",
     "partway": r"(?:moved|shifted|followed|came|went)\s+(?:only\s+)?(?:partway|partly|partially|halfway|closer)",
-    "followed": r"(?:followed|adopted|accepted|matched)\s+(?:my|the|that)\s+(?:earlier\s+|previous\s+)?(?:estimate|advice|suggestion|recommendation)|(?:answer|estimate)\s+(?:was|ended|landed|stayed)\s+(?:close to|near)\s+mine",
+    "followed": r"(?:followed|adopted|accepted|matched|took|went with)\s+(?:my|the|that)\s+(?:earlier\s+|previous\s+)?(?:estimate|advice|suggestion|recommendation)|\bfollowed\s+(?:it\s+)?closely\b|(?:answer|estimate)\s+(?:was|ended|landed|stayed)\s+(?:close to|near)\s+mine|\byou\s+(?:ended|landed|stayed|settled)\s+(?:close to|near)\s+(?:mine|my estimate)\b",
     "beyond": r"(?:moved|went|shifted)\s+(?:past|beyond)|overshot",
     "aligned": r"(?:our|both)\s+(?:earlier\s+|previous\s+)?estimates\s+(?:matched|agreed|coincided)|(?:my|your)\s+estimate\s+matched\s+(?:yours|mine)",
 }
@@ -379,18 +384,102 @@ def adaptive_history_check(text, history):
     # Avoid accepting a negated opposite action as evidence of the expected action.
     if re.search(r"\b(?:not|never|didn't|haven't|hadn't|weren't)\b", text, re.I):
         return False, "ambiguous_history_reaction"
-    if not re.search(_REACTION_PATTERNS[route], text, re.I):
-        return False, "history_reaction_mismatch:" + route
+    matched = {name for name, pattern in _REACTION_PATTERNS.items() if re.search(pattern, text, re.I)}
+    if route not in matched:
+        # An unfamiliar paraphrase is not evidence of a semantic contradiction.
+        reason = "history_reaction_mismatch:" if matched else "history_wording_unrecognised:"
+        return False, reason + route
+    if matched - {route}:
+        return False, "conflicting_history_reactions"
     return True, "history_wording_screen_passed"
+
+
+def _valid_rating(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+        return int(number) if math.isfinite(number) and number.is_integer() and 1 <= number <= 7 else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def trust_context(history):
+    """Latest available self-report in the supplied completed within-block history.
+
+    Missing check-ins do not become neutral ratings. Trust and advice uptake are
+    kept separate, including when someone follows advice despite reporting low trust.
+    """
+    rated = [(row, _valid_rating(row.get('trust_rating'))) for row in history]
+    rated = [(row, value) for row, value in rated if value is not None]
+    context = dict(trust_rating_available=bool(rated), trust_latest_rating=None,
+                   trust_latest_trial=None, trust_previous_rating=None,
+                   trust_change='not_available', trust_age_trials=None)
+    if not rated:
+        return context
+    row, value = rated[-1]
+    context.update(trust_latest_rating=value, trust_latest_trial=row.get('trial_position'))
+    if rated[-1][0].get('trial_position') is not None and history[-1].get('trial_position') is not None:
+        context['trust_age_trials'] = history[-1]['trial_position'] - row['trial_position']
+    if len(rated) > 1:
+        previous = rated[-2][1]
+        context.update(trust_previous_rating=previous,
+                       trust_change='increased' if value > previous else 'decreased' if value < previous else 'unchanged')
+    return context
+
+
+def trust_prompt_summary(context):
+    if not context['trust_rating_available']:
+        return 'No trust check-in has been recorded in this block. Do not infer reported trust from decisions.'
+    change = context['trust_change']
+    comparison = ('No earlier check-in for comparison.' if change == 'not_available' else
+                  f"Previous check-in={context['trust_previous_rating']}; reported trust {change}.")
+    return (f"Scale: 1=not at all; 7=completely. Latest trust check-in={context['trust_latest_rating']}; "
+            f"recorded after completed trial {context['trust_latest_trial']}; "
+            f"completed trials since that check-in={context['trust_age_trials']}. {comparison} "
+            'This is a retrospective self-report, not proof of current trust, agreement, accuracy, or emotion.')
+
+
+def trust_wording_check(text, context):
+    """Non-blocking lexical audit; neither semantic validation nor proof of use.
+
+    Low/high are descriptive screening bands (1-3 / 5-7), not validated cutoffs.
+    Unknown wording and negation go to human review instead of causing fallback.
+    """
+    if not re.search(r'\b(?:trust\w*|distrust\w*)\b', text, re.I):
+        return 'trust_not_mentioned' if context['trust_rating_available'] else 'no_trust_rating_available'
+    if re.search(r"\b(?:not|never|didn't|don't|wasn't|isn't|haven't)\b", text, re.I):
+        return 'trust_reference_needs_review'
+    level = re.search(r'\b(?:you (?:reported|expressed|had)|your check-in (?:showed|reported))\s+(low|little|high|strong)\s+trust\b', text, re.I)
+    if not level:
+        level = re.search(r'\byour (?:reported )?trust (?:was|is)\s+(low|little|high|strong)\b', text, re.I)
+    trend = re.search(r'\byour (?:reported )?trust\s+(?:has\s+)?(increased|decreased|rose|fell)\b', text, re.I)
+    if level or trend:
+        if not context['trust_rating_available']:
+            return 'trust_claim_without_rating'
+        if level:
+            low = level.group(1).lower() in {'low', 'little'}
+            rating = context['trust_latest_rating']
+            if not (rating <= 3 if low else rating >= 5):
+                return 'trust_claim_conflicts_with_rating'
+        if trend:
+            if context['trust_previous_rating'] is None:
+                return 'trust_trend_without_comparison'
+            expected = 'increased' if trend.group(1).lower() in {'increased', 'rose'} else 'decreased'
+            if context['trust_change'] != expected:
+                return 'trust_trend_conflicts_with_ratings'
+        return 'trust_wording_consistent'
+    return 'trust_reference_needs_review'
 
 
 def full_history(history: List[Dict[str, Any]]) -> str:
     if not history:
-        return "No earlier trials."
+        return "No earlier trials.\n" + trust_prompt_summary(trust_context(history))
     route = recent_response(history)
     lines = ["REQUIRED RECENT-RESPONSE FACT:", REACTION_FACTS[route],
              "React to this fact rather than substituting generic encouragement.",
-             "SERVER-DERIVED QUALITATIVE BEHAVIOUR SUMMARY:", history_behavior_summary(history), "", "EXACT INTERNAL HISTORY:"]
+             "SERVER-DERIVED QUALITATIVE BEHAVIOUR SUMMARY:", history_behavior_summary(history),
+             "LATEST SELF-REPORTED TRUST:", trust_prompt_summary(trust_context(history)), "", "EXACT INTERNAL HISTORY:"]
     for h in history:
         msg = str(h.get("advice_text") or h.get("ai_message") or "").replace('"', "'")
         line = (
@@ -398,7 +487,7 @@ def full_history(history: List[Dict[str, Any]]) -> str:
             f"you_said={h['advice_number']}; their_final={h['final_estimate']}"
         )
         if h.get("trust_rating") is not None:
-            line += f"; two_trial_trust_checkin={h['trust_rating']}; two_trial_feeling_checkin={h.get('feeling_rating')}"
+            line += f"; trust_checkin={h['trust_rating']}; feeling_checkin={h.get('feeling_rating')}"
         else:
             line += "; ratings=not_collected_on_this_trial"
         line += f"; your_note=\"{msg}\""
@@ -521,8 +610,10 @@ def generate_message(
     attempts = attempts or ADVISER_VALIDATION_ATTEMPTS
     system, base_user = build_prompt(style, initial, advice, history)
     route = recent_response(history) if style == "adaptive" else "not_applicable"
+    trust = trust_context(history if style == 'adaptive' else [])
     settings = generation_settings()
-    audit = dict(prompt_version=PROMPT_VERSION, history_route=route,
+    audit = dict(**trust, trust_context_in_prompt=style == 'adaptive' and trust['trust_rating_available'],
+                 model_response_received=False, prompt_version=PROMPT_VERSION, history_route=route,
                  provider=resolved_provider(),model=resolved_model(),reasoning=settings['reasoning'],
                  request_timeout_s=settings['timeout'],
                  prompt_sha256=hashlib.sha256((system + "\n" + base_user).encode()).hexdigest())
@@ -538,6 +629,7 @@ def generate_message(
         attempt_start = time.perf_counter()
         try:
             draft = re.sub(r"\s+", " ", _model_text(system, base_user + retry_note)).strip().strip('"“”')
+            audit['model_response_received'] = True
         except Exception as e:
             last_reason = f"api_error:{type(e).__name__}"
             attempt_log.append({"attempt": k, "result": last_reason, "ms": round((time.perf_counter()-attempt_start)*1000)})
@@ -548,6 +640,7 @@ def generate_message(
             continue
 
         ok, reason = message_is_valid(draft, None, previous_messages)
+        trust_check = trust_wording_check(draft, trust) if style == 'adaptive' else 'not_applicable'
         history_check = "not_applicable"
         if ok and style == "adaptive":
             ok, history_check = adaptive_history_check(draft, history)
@@ -563,11 +656,13 @@ def generate_message(
                 "validation": "passed",
                 "live_model": True,
                 "history_check": history_check,
-                "attempt_log": attempt_log + [{"attempt": k, "result": "passed", "ms": round((time.perf_counter()-attempt_start)*1000)}],
+                "trust_check": trust_check,
+                "attempt_log": attempt_log + [{"attempt": k, "result": "passed", "trust_check": trust_check,
+                                               "ms": round((time.perf_counter()-attempt_start)*1000)}],
             }
 
         last_reason = reason
-        attempt_log.append({"attempt": k, "result": reason, "draft": draft,
+        attempt_log.append({"attempt": k, "result": reason, "draft": draft, "trust_check": trust_check,
                             "ms": round((time.perf_counter()-attempt_start)*1000)})
         log.warning("adviser validation failed (attempt %d/%d): %s", k, attempts, reason)
         if "history" in reason:
@@ -599,6 +694,7 @@ def generate_message(
         "validation": f"fallback_after:{last_reason}",
         "live_model": False,
         "history_check": "fallback_not_adaptive",
+        "trust_check": "fallback_not_trust_adaptive",
         "attempt_log": attempt_log,
     }
 

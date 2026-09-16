@@ -164,7 +164,7 @@ def start():
               test_index=integer(request.form.get('test_index','0'),0,7) if researcher else 0,
               adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
               model_profile_id=profile_id,model_profile=profile,
-              ui_version='fieldwork-2.2-model-choice',started_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat())
+              ui_version='fieldwork-2.3-trust-checks',started_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat())
     pid=uuid.uuid4().hex[:12]
     store.create_session(pid,conf,(request.form.get('external_id') or '')[:128] or None)
     session['pid']=pid
@@ -254,6 +254,11 @@ def prepared_advice(con,data,trial,initial):
         attempt_log=msg.get('attempt_log',[]),fallback=msg['source'].startswith('fallback:'),
         initial_context_available=style=='fixed',prefetched=False,provider=profile['provider'],
         model=profile['model'],reasoning=profile['reasoning'],request_timeout_s=profile['timeout'],advice=advice)
+    diagnostic.update(model_response_received=msg.get('model_response_received',False),
+        trust_context_in_prompt=msg.get('trust_context_in_prompt',False),
+        trust_check=msg.get('trust_check','not_checked_offline' if data['config']['adviser_mode']=='offline' else 'not_applicable'))
+    for field in ('trust_latest_rating','trust_latest_trial','trust_previous_rating','trust_change','trust_age_trials'):
+        diagnostic[field]=msg.get(field)
     return advice,msg,diagnostic
 
 
@@ -388,7 +393,7 @@ def admin_downloads():
 @app.get('/api/researcher/status')
 def researcher_status():
     require_admin()
-    return jsonify(version='fieldwork-2.2-model-choice',provider=adviser.resolved_provider(),model=adviser.resolved_model(),
+    return jsonify(version='fieldwork-2.3-trust-checks',provider=adviser.resolved_provider(),model=adviser.resolved_model(),
         has_key=adviser.has_api_key(),database_dialect=store.engine.dialect.name,study_mode=STUDY_MODE,
         adviser_mode=ADVISER_MODE,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
         minimum_wait_ms=ADVISER_MIN_DELAY_MS,stimulus_ms=STIMULUS_MS,private_gate=bool(ACCESS_CODE))
@@ -432,7 +437,7 @@ def export_all_zip():
     with zipfile.ZipFile(memory,'w',zipfile.ZIP_DEFLATED) as z:
         for name,rows in tables.items():z.writestr(name+'.csv',csv_text(rows))
         z.writestr('pilot_report.json',json.dumps(build_report(tables['diagnostics'],tables['participants']),default=str,indent=2))
-        z.writestr('run_metadata.json',json.dumps(dict(ui_version='fieldwork-2.2-model-choice',study_seed=design.STUDY_SEED,
+        z.writestr('run_metadata.json',json.dumps(dict(ui_version='fieldwork-2.3-trust-checks',study_seed=design.STUDY_SEED,
             adviser_model=adviser.resolved_model(),adviser_provider=adviser.resolved_provider(),study_mode=STUDY_MODE,default_adviser_mode=ADVISER_MODE,
             stimulus_ms=STIMULUS_MS,fixation_ms=FIXATION_MS,minimum_advice_wait_ms=ADVISER_MIN_DELAY_MS,
             rating_every=RATING_EVERY,prefill_final=PREFILL_FINAL,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
@@ -461,7 +466,7 @@ def api_rate():
 
 
 @app.get('/healthz')
-def healthz():return jsonify(ok=True,version='fieldwork-2.2-model-choice')
+def healthz():return jsonify(ok=True,version='fieldwork-2.3-trust-checks')
 
 
 if __name__=='__main__':
