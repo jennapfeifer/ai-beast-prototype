@@ -1,6 +1,6 @@
 {
   "name": "beast-fieldwork-validation",
   "private": true,
-  "scripts": { "test:browser": "node tests/browser_smoke.cjs" },
-  "devDependencies": { "playwright": "1.62.1" }
+  "scripts": { "test:browser": "node tests/browser_smoke.cjs", "test:ui": "node --test tests/estimate_ui.test.cjs" },
+  "devDependencies": { "playwright": "1.62.1", "linkedom": "0.18.12" }
 }
