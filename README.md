@@ -3,16 +3,16 @@
 The v6.1 **number line, short Gemini notes and advice prefetch** are integrated with protected pilot controls, server-side sessions, timing diagnostics and recovery. Original NEW25 numbers, counterbalancing and 105 original PNGs are preserved.
 
 
-Current update: **v2.5, implicit adaptation** (`fieldwork-2.5-implicit-adaptation`).
-See [IMPLICIT_ADAPTATION_UPDATE.md](IMPLICIT_ADAPTATION_UPDATE.md) for installation,
+Current update: **v2.6, grounded adaptive wording** (`fieldwork-2.6-grounded-adaptation`).
+See [GROUNDED_ADAPTATION_UPDATE.md](GROUNDED_ADAPTATION_UPDATE.md) for installation,
 validation scope, changed prompts, and how to interpret review flags. This supersedes
-the mandatory rating-acknowledgement checks described in the v2.4 update.
+the v2.4 rating-acknowledgement rule and the v2.5 acceptance of generic rating-focused wording.
 
 Trust means trust in the AI adviser. Feeling means the reported reaction to its advice.
 These inputs now supply internal persuasion approaches rather than requiring the model
 to repeat the ratings. Both available approaches inform adaptive tone; the existing
 behaviour/trust/feeling cycle selects emphasis. Implicit influence needs comparison and
-human review. A lexical mention is not evidence of adaptation.
+human review. Every adaptive note with usable history must now reference the previous decision, including trust/feeling turns. The model returns a structured internal fact record and a short participant-facing message in the same request. Matching that record checks extraction, not whether ratings meaningfully changed the wording. Both persuasive conditions request clear recommendations; optional filler such as “if you wish” is rejected. Low trust and negative feeling change the framing without switching to neutral advice.
 
 ## Participant flow
 

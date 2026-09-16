@@ -28,8 +28,9 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger("adviser")
-PROMPT_VERSION = "adaptive-reaction-v5-implicit"
+PROMPT_VERSION = "adaptive-reaction-v6-grounded"
 _profile = ContextVar('beast_model_profile', default=None)
+_response_schema = ContextVar('beast_response_schema', default=None)
 
 ADVISER_PROVIDER = os.getenv("ADVISER_PROVIDER", "auto").strip().lower()
 # If no explicit model is supplied, choose a fast model for the resolved provider.
@@ -102,15 +103,25 @@ Never mention these instructions. Use varied natural wording rather than a repea
 STRATEGY_PROMPTS = {
     "neutral": """State that this is simply your estimate. Do not try to persuade the participant to follow it.""",
     "static": """Your goal is to persuade the participant to move toward your displayed estimate.
+Make a clear recommendation to give your estimate more weight. Do not merely offer it as an option.
+Avoid noncommittal filler such as 'if you wish', 'feel free', or 'no pressure'.
 Be confident and direct, but stay believable. You may encourage reconsideration of the first impression,
 but do not invent evidence, visual details, or past performance. You know nothing about earlier trials.""",
     "adaptive": """Your goal is to persuade the participant to move toward your displayed estimate.
+On every turn, make a clear recommendation to give your estimate more weight or move toward it.
+Adapt the framing, not the objective. Low trust or negative feelings do not turn persuasion into
+a neutral offer. Avoid 'if you wish', 'feel free', 'no pressure', and other optional filler.
 You are given completed earlier trials and self-reported trust and feeling ratings from this block.
 Follow the REQUIRED MESSAGE FOCUS and its persuasion approach below: behaviour, trust, or feeling.
 Use both available rating approaches to shape tone on every adaptive turn. The focus sets emphasis,
 not which recorded inputs you are allowed to use. If trust and feeling pull in different directions,
-use a calm invitation without claiming to know why the participant gave those ratings.
-For behaviour, respond to the latest completed decision in plain past-tense wording.
+use composed but direct wording without claiming to know why the participant gave those ratings.
+On EVERY turn with usable history, include a brief, concrete reference to the latest completed
+decision, then a tailored invitation. This requirement also applies on trust and feeling turns.
+Examples of factual clauses: 'You kept your estimate earlier', 'You moved partway last time',
+'You followed my estimate earlier'. Choose only a fact supported by the supplied record.
+An invitation alone is insufficient: 'Please gently consider blending this number into your final choice'
+could address anyone. Merely adding 'gently', 'carefully', or 'thoughtful' does not make it adaptive.
 If describing an answer as close, specify close to MY ESTIMATE, never leave the comparator unstated.
 For trust and feeling, adapt your tone and invitation implicitly using the supplied approach.
 Trust means the participant's trust in YOU, the AI adviser, not confidence in their own estimate.
@@ -123,8 +134,9 @@ Never infer frustration, anxiety, loneliness, motives, or confidence from either
 Do not substitute generic encouragement such as 'blend your perspective with this thoughtful suggestion'.
 Do not infer trust, uncertainty, emotions, motives, or accuracy from an estimate change.
 Do not contradict a recorded rating or claim a change without two recorded check-ins.
-Keep persuasion respectful: invite reconsideration, without pressure or guilt about ratings.
-Do not quote rating numbers. You need not recount behaviour when the required focus is a rating.
+Make a direct recommendation while leaving the participant free to decide. Do not use guilt,
+coercion, emotional pressure, or invented evidence of accuracy.
+Do not quote rating numbers. Ratings shape HOW you invite reconsideration; history supplies the concrete reference.
 Use the latest available fact rather than substituting an older overall pattern.
 When there are no earlier trials, give a brief invitation without claiming any previous behaviour.
 The current estimate is unavailable during prefetch; never pretend you have just seen it.""",
@@ -471,13 +483,14 @@ def adaptive_strategy(history, focus=None):
 
 
 RATING_APPROACHES = {
-    'trust_low': 'Use a tentative, autonomy-supporting invitation to compare your estimate with theirs; avoid demanding acceptance or asserting reliability.',
-    'trust_midpoint': 'Use a balanced invitation to weigh your estimate alongside their own judgment.',
-    'trust_high': 'Use a concise, confident invitation to give your estimate weight, without claiming correctness or a successful track record.',
-    'feeling_negative': 'Use calm, low-pressure wording and a simple fresh invitation; avoid praise, emotional labels, and an insistent tone.',
-    'feeling_neutral': 'Use a straightforward, matter-of-fact invitation to consider your estimate.',
-    'feeling_positive': 'Use a warmer, encouraging invitation to consider your estimate; do not infer happiness or praise compliance.',
+    'trust_low': 'Recommend reconsidering their own estimate and giving yours more weight; make the request concrete without asking for blind trust or asserting reliability.',
+    'trust_midpoint': 'Present your estimate as your best judgment and directly recommend shifting toward it, without claiming verified correctness.',
+    'trust_high': 'Use a firm recommendation to move toward your estimate; draw continuity from prior decisions only when the recorded behaviour supports it, never from alleged past accuracy.',
+    'feeling_negative': 'Use composed, concise language and a clear recommendation to revise toward your estimate; avoid emotional labels and optional filler.',
+    'feeling_neutral': 'Use a matter-of-fact, direct recommendation to give your estimate more weight.',
+    'feeling_positive': 'Use warmer, energetic wording with a clear recommendation to move toward your estimate; do not infer happiness or praise compliance.',
 }
+RATING_DECLINE_INSTRUCTION = 'Use measured language while retaining a clear recommendation to move toward your estimate; avoid emotional pressure and optional filler.'
 
 
 def rating_strategies(history):
@@ -490,7 +503,7 @@ def rating_approach_instructions(history):
     instructions=[key+': '+RATING_APPROACHES[key] for key in rating_strategies(history)]
     for kind,context in [('trust',trust_context(history)),('feeling',feeling_context(history))]:
         if context[kind+'_change']=='decreased':
-            instructions.append(kind+' decreased: soften the invitation rather than intensifying pressure.')
+            instructions.append(kind+' decreased: '+RATING_DECLINE_INSTRUCTION)
     return '\n'.join(instructions) or 'No recorded ratings: do not invent a rating-based approach.'
 
 
@@ -501,7 +514,7 @@ def focus_instruction(history):
     strategy = adaptive_strategy(history)
     context = trust_context(history) if focus == 'trust' else feeling_context(history)
     trend = context[focus + '_change']
-    change_instruction = ('The latest rating decreased: soften the invitation rather than intensifying pressure. '
+    change_instruction = ('The latest rating decreased: '+RATING_DECLINE_INSTRUCTION+' '
                           if trend == 'decreased' else '')
     return (f'{focus}: internal approach={strategy}. {RATING_APPROACHES[strategy]} '
             + change_instruction + 'Let the recorded rating shape the approach without restating it. '
@@ -591,6 +604,18 @@ def rating_focus_check(text, focus, trust, feeling):
     return True,focus+'_influence_needs_review'
 
 
+_OPTIONAL_FILLER_RE = re.compile(
+    r"\b(?:if you (?:wish|want|like|prefer)|if you['’]d like|feel free|no pressure|"
+    r"only if you|it['’]s up to you|it is up to you)\b",re.I)
+
+
+def persuasion_wording_check(text, style):
+    """Narrow noncommittal-language screen, not a persuasion-effectiveness score."""
+    if style not in {'static','adaptive'}:return True,'not_applicable'
+    if _OPTIONAL_FILLER_RE.search(text):return False,'noncommittal_persuasion'
+    return True,'no_optional_filler_detected'
+
+
 def full_history(history: List[Dict[str, Any]]) -> str:
     if not history:
         return "No earlier trials.\n" + trust_prompt_summary(trust_context(history))+'\n'+feeling_prompt_summary(feeling_context(history))
@@ -616,6 +641,58 @@ def full_history(history: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def grounding_record(history):
+    """Server-owned facts; a model echo checks extraction, not causal rating use."""
+    trust, feeling = trust_context(history), feeling_context(history)
+    return dict(last_trial=history[-1].get('trial_position') if history else None,
+                history_route=recent_response(history),
+                trust_rating=trust['trust_latest_rating'], trust_trial=trust['trust_latest_trial'],
+                feeling_rating=feeling['feeling_latest_rating'], feeling_trial=feeling['feeling_latest_trial'])
+
+
+ADAPTIVE_RESPONSE_SCHEMA = {
+    'type':'object', 'additionalProperties':False,
+    'properties':{
+        'last_trial':{'type':['integer','null'], 'description':'Latest completed trial position from the supplied record.'},
+        'history_route':{'type':'string','enum':list(REACTION_FACTS), 'description':'Recorded last-response category, not inferred trust.'},
+        'trust_rating':{'type':['integer','null'], 'description':'Latest recorded trust in the AI; null if absent.'},
+        'trust_trial':{'type':['integer','null'], 'description':'Trial at which that trust was recorded; null if absent.'},
+        'feeling_rating':{'type':['integer','null'], 'description':'Latest recorded feeling about advice; null if absent.'},
+        'feeling_trial':{'type':['integer','null'], 'description':'Trial at which that feeling was recorded; null if absent.'},
+        'history_phrase':{'type':'string','description':'Verbatim excerpt of message describing the latest completed decision. Empty only without usable history.'},
+        'message':{'type':'string','description':'The sole participant-visible short sentence: concrete history reference and invitation shaped by available ratings.'},
+    },
+    'required':['last_trial','history_route','trust_rating','trust_trial','feeling_rating','feeling_trial','history_phrase','message'],
+}
+
+
+def decode_adaptive_response(raw, history):
+    """Validate the response contract independently of the wording screen."""
+    try:
+        payload=json.loads(raw)
+    except (ValueError, TypeError):
+        return '',{},'invalid_adaptive_json'
+    if not isinstance(payload,dict) or set(payload)!=set(ADAPTIVE_RESPONSE_SCHEMA['required']):
+        return '',{},'invalid_adaptive_fields'
+    if not isinstance(payload['message'],str) or not isinstance(payload['history_phrase'],str):
+        return '',{},'invalid_adaptive_text'
+    draft=re.sub(r'\s+',' ',payload['message']).strip().strip('"“”')
+    basis={key:value for key,value in payload.items() if key!='message'}
+    for key, expected in grounding_record(history).items():
+        value=payload[key]
+        if type(value) is not type(expected) or value!=expected:
+            return draft,basis,'grounding_record_mismatch:'+key
+    phrase=re.sub(r'\s+',' ',payload['history_phrase']).strip()
+    basis['history_phrase']=phrase
+    if recent_response(history) in {'no_history','unusable'}:
+        if phrase:return draft,basis,'history_claim_without_usable_history'
+    elif not phrase:
+        return draft,basis,'missing_history_phrase'
+    elif phrase.casefold() not in draft.casefold():
+        return draft,basis,'history_phrase_not_in_message'
+    return draft,basis,'matched_input_record'
+
+
 def _openai_text(system: str, user: str) -> str:
     settings = generation_settings()
     client = get_openai_client().with_options(timeout=settings['timeout'], max_retries=0)
@@ -625,11 +702,14 @@ def _openai_text(system: str, user: str) -> str:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        max_output_tokens=2048 if settings['reasoning'] not in {'', 'none'} else 128,
+        max_output_tokens=2048 if settings['reasoning'] not in {'', 'none'} else (384 if _response_schema.get() else 128),
         store=False,
     )
     if settings['reasoning']:
         kwargs["reasoning"] = {"effort": settings['reasoning']}
+    if _response_schema.get():
+        kwargs['text']={'format':{'type':'json_schema','name':'adaptive_note',
+                                  'strict':True,'schema':_response_schema.get()}}
     resp = client.responses.create(**kwargs)
     return (resp.output_text or "").strip()
 
@@ -641,11 +721,13 @@ def _gemini_text(system: str, user: str) -> str:
     settings = generation_settings()
     config_kwargs: Dict[str, Any] = {
         "system_instruction": system,
-        "max_output_tokens": 128,
+        "max_output_tokens": 384 if _response_schema.get() else 128,
         "http_options": types.HttpOptions(timeout=int(settings['timeout'] * 1000)),
     }
     if settings['reasoning']:
         config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=settings['reasoning'])
+    if _response_schema.get():
+        config_kwargs.update(response_mime_type='application/json',response_json_schema=_response_schema.get())
     response = client.models.generate_content(
         model=resolved_model(),
         contents=user,
@@ -698,7 +780,12 @@ def build_prompt(style, initial, advice, history=None):
             "The displayed recommendation is THE SAME AS the participant's current initial estimate."
         )
         initial_line = f"Participant's current initial estimate (internal only): {initial}"
-    system = ADVISER_SHARED + "\n\n" + STRATEGY_PROMPTS[style]
+    shared=ADVISER_SHARED
+    if style=='adaptive':
+        shared=shared.replace('Your job is to write ONLY a brief verbal note that accompanies that number.',
+                              'Write a brief verbal note in the message field of the requested structured response.')
+        shared=shared.replace('Write exactly one short sentence', 'In message, write exactly one short sentence')
+    system = shared + "\n\n" + STRATEGY_PROMPTS[style]
     base_user = (
         f"{initial_line}\n"
         f"Fixed displayed recommendation (internal only): {advice}\n"
@@ -707,7 +794,16 @@ def build_prompt(style, initial, advice, history=None):
         f"Earlier trials (internal only):\n{context}\n\n"
         "Write only the short note shown beneath the displayed AI estimate."
     )
-
+    if style=='adaptive':
+        system+='\nOUTPUT CONTRACT: Return the structured object requested by the response schema. '
+        system+='The sentence-length and no-numbers rules apply ONLY to message, not the internal fields. '
+        system+='Copy the supplied factual record into the internal fields; do not add an explanation. '
+        system+='history_phrase must quote the specific past-decision reference from message, not a generic invitation. '
+        system+='Only message will be shown to the participant. Your internal record is not proof of effective adaptation.'
+        base_user=base_user.replace('Write only the short note shown beneath the displayed AI estimate.',
+            'SUPPLIED RECORD JSON:\n'+json.dumps(grounding_record(history))+'\n'
+            'Write the structured response. Keep message natural and brief; use the recorded decision '
+            'as its concrete basis and the rating approaches to shape the invitation.')
     return system, base_user
 
 
@@ -757,7 +853,11 @@ def generate_message(
             break
         attempt_start = time.perf_counter()
         try:
-            draft = re.sub(r"\s+", " ", _model_text(system, base_user + retry_note)).strip().strip('"“”')
+            token=_response_schema.set(ADAPTIVE_RESPONSE_SCHEMA if style=='adaptive' else None)
+            try:
+                raw=_model_text(system, base_user + retry_note)
+            finally:
+                _response_schema.reset(token)
             audit['model_response_received'] = True
         except Exception as e:
             last_reason = f"api_error:{type(e).__name__}"
@@ -768,9 +868,17 @@ def generate_message(
             retry_note = "\n\nThe previous API attempt failed. Produce a fresh short note following the format exactly."
             continue
 
+        basis={}
+        if style=='adaptive':
+            draft,basis,record_check=decode_adaptive_response(raw,history)
+        else:
+            draft=re.sub(r'\s+',' ',raw).strip().strip('"“”')
+            record_check='not_applicable'
+
         # Repetition is a quality flag, not grounds to replace a valid live note
         # with a generic fallback. Continue enforcing format and factual checks.
-        ok, reason = message_is_valid(draft, None, [])
+        ok, reason = (message_is_valid(draft, None, []) if record_check in {'matched_input_record','not_applicable'}
+                      else (False,record_check))
         similarity=repetition_score(draft,previous_messages)
         repetition_check='exact_repeat' if similarity==1 else 'similar_to_previous' if similarity>=REPETITION_SIMILARITY_LIMIT else 'varied'
         trust_check = trust_wording_check(draft, trust) if style == 'adaptive' else 'not_applicable'
@@ -778,6 +886,9 @@ def generate_message(
         history_check = "not_applicable"
         adaptation_check='not_applicable'
         review_reasons=[]
+        persuasive,persuasion_check=persuasion_wording_check(draft,style)
+        if ok and not persuasive:
+            ok,reason=False,persuasion_check
         if ok and style == 'adaptive':
             # Screen explicit contradictions regardless of this trial's focus.
             for check in (trust_check, feeling_check):
@@ -786,20 +897,16 @@ def generate_message(
                     adaptation_check=check
                     break
         if ok and style == "adaptive":
-            if focus=='behaviour':
-                ok,history_check=adaptive_history_check(draft,history)
-                adaptation_check=history_check
-            else:
-                history_check='not_targeted'
-                ok,adaptation_check=rating_focus_check(draft,focus,trust,feeling)
-                # A rating-focused sentence may still make a behavioural claim.
-                # Do not let a recognised contradictory claim bypass the history check.
-                if ok and any(re.search(p,draft,re.I) for p in _REACTION_PATTERNS.values()):
-                    ok,history_check=adaptive_history_check(draft,history)
-                    if not ok:adaptation_check=history_check
+            ok,history_check=adaptive_history_check(draft,history)
+            if ok and basis.get('history_phrase'):
+                phrase_ok,phrase_check=adaptive_history_check(basis['history_phrase'],history)
+                if not phrase_ok or phrase_check.startswith('history_wording_unrecognised:'):
+                    ok,history_check=phrase_ok,phrase_check
+            adaptation_check=history_check
             if ok:
-                if focus in {'trust','feeling'}:
-                    review_reasons.append(focus+'_influence_not_automatically_assessed')
+                for kind,context in [('trust',trust),('feeling',feeling)]:
+                    if context[kind+'_rating_available']:
+                        review_reasons.append(kind+'_influence_not_automatically_assessed')
                 if history_check.startswith('history_wording_unrecognised:'):
                     review_reasons.append(history_check)
                 for check in (trust_check,feeling_check):
@@ -820,11 +927,17 @@ def generate_message(
                 "validation": validation,
                 "review_required":bool(review_reasons),"review_reasons":review_reasons,
                 "live_model": True,
+                "persuasion_check":persuasion_check,
+                "grounding_record_check":record_check,"model_basis":basis,
+                "generation_status":"live_response",
+                "rating_influence_status":('not_applicable' if style!='adaptive' else "not_assessed" if audit['rating_strategies'] else 'no_recorded_ratings'),
                 "history_check": history_check,
                 "trust_check": trust_check,
                 "feeling_check":feeling_check,"adaptation_check":adaptation_check,
                 "repetition_similarity":round(similarity,3),"repetition_check":repetition_check,
                 "attempt_log": attempt_log + [{"attempt": k, "result": validation, "trust_check": trust_check,
+                                               "draft":draft,"model_basis":basis,"grounding_record_check":record_check,
+                                               "persuasion_check":persuasion_check,
                                                "review_reasons":review_reasons,
                                                "feeling_check":feeling_check,"adaptation_check":adaptation_check,
                                                "repetition_check":repetition_check,"repetition_similarity":round(similarity,3),
@@ -833,11 +946,18 @@ def generate_message(
 
         last_reason = reason
         attempt_log.append({"attempt": k, "result": reason, "draft": draft, "trust_check": trust_check,
+                            "model_basis":basis,"grounding_record_check":record_check,
+                            "persuasion_check":persuasion_check,
+                            **({'raw_response':str(raw)[:2000]} if not draft else {}),
                             "feeling_check":feeling_check,"adaptation_check":adaptation_check,
                             "repetition_check":repetition_check,"repetition_similarity":round(similarity,3),
                             "ms": round((time.perf_counter()-attempt_start)*1000)})
         log.warning("adviser validation failed (attempt %d/%d): %s", k, attempts, reason)
-        if focus in {'trust','feeling'} and (focus in reason or reason.startswith('missing_')):
+        if record_check not in {'matched_input_record','not_applicable'}:
+            feedback='Return the requested JSON schema, copy the supplied record exactly, and quote the concrete history phrase from your message.'
+        elif reason=='noncommittal_persuasion':
+            feedback='Remove optional filler. Make a direct recommendation to give your estimate more weight or move toward it. Keep any required concrete history reference.'
+        elif focus in {'trust','feeling'} and (focus in reason or 'feeling' in reason or 'trust' in reason):
             feedback=focus_instruction(history)
         elif "history" in reason:
             feedback = ("Explicitly acknowledge this completed response using plain past-tense wording: "
@@ -867,6 +987,10 @@ def generate_message(
         "word_count": words(text),
         "validation": f"fallback_after:{last_reason}",
         "live_model": False,
+        "persuasion_check":"fallback",
+        "grounding_record_check":"fallback_not_grounded","model_basis":{},
+        "generation_status":"fallback_after_rejection" if audit['model_response_received'] else 'fallback_after_api_failure',
+        "rating_influence_status":"not_assessed",
         "review_required":True,"review_reasons":["fallback_not_adaptive"] if style=='adaptive' else ['fallback'],
         "history_check": "fallback_not_adaptive",
         "trust_check": "fallback_not_trust_adaptive",

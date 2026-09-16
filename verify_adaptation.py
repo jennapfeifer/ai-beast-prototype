@@ -85,7 +85,7 @@ def run_probe(live=False, repetitions=1, contrast='behaviour'):
     return dict(created_at=dt.datetime.now(dt.timezone.utc).isoformat(), mode='live' if live else 'offline',
         model=adviser.resolved_model() if live else 'deterministic rehearsal', repetitions=repetitions, contrast=contrast,
         summary=dict(items=len(results), routing_passed=all(r['passed'] for r in routing),
-            live_messages=live_count, review_notes=sum(bool(r.get('review_required')) for r in results if r.get('live_model')), fallback_messages=sum(r['source'].startswith('fallback:') for r in results),
+            live_messages=live_count, record_matches=sum(r.get('grounding_record_check')=='matched_input_record' for r in results), review_notes=sum(bool(r.get('review_required')) for r in results if r.get('live_model')), fallback_messages=sum(r['source'].startswith('fallback:') for r in results),
             meaningfully_adaptive='NOT AUTOMATICALLY ASSESSED', trust_effect='NOT AUTOMATICALLY ASSESSED',
             feeling_effect='NOT AUTOMATICALLY ASSESSED',behavioural_effect='NOT TESTED'),
         routing=routing, results=results,
@@ -113,6 +113,7 @@ def write_report(report, folder):
     cards = ''.join(f'<article><small>{esc(r["item_id"])} · {esc(r["source"])} · {r["elapsed_ms"]} ms</small>'
         f'<blockquote>{esc(r["text"])}</blockquote><p>Validation: {esc(r["validation"])}; attempts: {r["attempts"]}; focus: {esc(r.get("adaptive_focus", "offline_demo"))}; trust: {esc(r.get("trust_check", "not_checked_offline"))}; feeling: {esc(r.get("feeling_check", "not_checked_offline"))}</p>'
         f'<p>Approach: {esc(r.get("adaptive_strategy", "offline_demo"))}; review reasons: {esc(str(r.get("review_reasons", [])))}</p>'
+        f'<details><summary>Model record (input matching only)</summary><pre>{esc(json.dumps(r.get("model_basis", {}), indent=2))}</pre></details>'
         f'<details><summary>History supplied to this prompt</summary><pre>{esc(json.dumps(r["history"], indent=2))}</pre></details></article>' for r in report['results'])
     document = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>BEAST adaptation probe</title><style>body{max-width:1000px;margin:40px auto;padding:20px;background:#f4f6ee;color:#233d34;font:16px/1.6 system-ui}article{background:white;padding:24px;margin:20px 0;border:1px solid #d8dfd0;border-radius:12px}h1{font-size:36px}small{color:#52685d}blockquote{font-size:21px;margin:12px 0}pre{overflow:auto;font-size:12px}</style>'
     comparison = {'trust':'low vs high reported trust, with behaviour held constant',

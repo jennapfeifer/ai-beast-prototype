@@ -8,7 +8,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.5-implicit-adaptation'
+APP_VERSION = 'fieldwork-2.6-grounded-adaptation'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -247,7 +247,7 @@ def prepared_advice(con,data,trial,initial):
             previous_messages=[r['advice_text'] for r in rows if r.get('advice_text')],
             key=f"{data['participant_index']}|{trial['condition_id']}|{trial['trial_position']}")
     diagnostic=dict(history_rows=len(history),expected_history_rows=trial['trial_position']-1 if style=='adaptive' else 0,
-        history_positions=[r['trial_position'] for r in history],source=msg['source'],attempts=msg['attempts'],
+        history_positions=[r['trial_position'] for r in history],displayed_message=msg['text'],source=msg['source'],attempts=msg['attempts'],
         validation=msg['validation'],word_count=msg['word_count'],live_model=msg.get('live_model',False),
         history_route=msg.get('history_route'),generation_ms=round((time.perf_counter()-t)*1000),
         history_check=msg.get('history_check'),prompt_version=msg.get('prompt_version'),
@@ -262,7 +262,8 @@ def prepared_advice(con,data,trial,initial):
     for field in ('trust_latest_rating','trust_latest_trial','trust_previous_rating','trust_change','trust_age_trials',
                   'feeling_latest_rating','feeling_latest_trial','feeling_previous_rating','feeling_change','feeling_age_trials',
                   'adaptive_focus','adaptive_strategy','adaptation_check','feeling_check','repetition_check','repetition_similarity',
-                  'review_required','review_reasons','rating_strategies'):
+                  'review_required','review_reasons','rating_strategies','grounding_record_check','model_basis',
+                  'generation_status','rating_influence_status','persuasion_check'):
         diagnostic[field]=msg.get(field)
     return advice,msg,diagnostic
 

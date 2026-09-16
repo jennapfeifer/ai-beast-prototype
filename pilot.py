@@ -33,6 +33,8 @@ def build_report(records,people):
             trust_reactions=sum(r.get('adaptation_check')=='trust_reference_screen_passed' and not r.get('review_required') for r in live),
             feeling_reactions=sum(r.get('adaptation_check')=='feeling_reference_screen_passed' and not r.get('review_required') for r in live),
             review_notes=sum(bool(r.get('review_required')) for r in live),
+            history_references=sum(r.get('history_check')=='history_wording_screen_passed' for r in live),
+            record_matches=sum(r.get('grounding_record_check')=='matched_input_record' for r in live),
             repeated_notes=sum(r.get('repetition_check') in {'exact_repeat','similar_to_previous'} for r in live),
             generation_p50_ms=quantile([r.get('generation_ms') for r in live],.5),
             generation_p90_ms=quantile([r.get('generation_ms') for r in live],.9),
