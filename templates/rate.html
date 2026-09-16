@@ -2,7 +2,7 @@
 {% block body %}
 <div class="wrap wide">
   <h1>Rate these messages</h1>
-  <p>Each short note below accompanied an AI estimate during a dot-estimation task. Rate each note on
+  <p>Each message below was shown to someone during a dot-estimation task. Rate each one on
   its own terms. You are not told who wrote it or what condition it came from.</p>
   <p class="small muted">Rater code: {{ rater }}</p>
 
@@ -18,7 +18,7 @@
   {% endfor %}
 </div>
 <script>
-const RATER = "{{ rater }}";
+const RATER = {{ rater|tojson }};
 const DIMS = [
   ["personalization","How personalized to this individual does it feel?","Not at all","Highly"],
   ["warmth","How warm is it?","Cold","Warm"],
@@ -41,7 +41,8 @@ document.querySelectorAll('.rate-item').forEach(item => {
   btn.onclick = async () => {
     const body = {rater_id: RATER, trial_id: +item.dataset.trial};
     DIMS.forEach(([k]) => body[k] = +item.querySelector(`input[name=${k}_${item.dataset.trial}]:checked`).value);
-    await fetch('/api/rate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const response = await fetch('/api/rate', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':{{ csrf_token|tojson }}}, body: JSON.stringify(body)});
+    if (!response.ok) { item.querySelector('.status').textContent = 'Could not save. Please retry.'; return; }
     btn.disabled = true; item.querySelector('.status').textContent = 'Saved';
   };
 });
