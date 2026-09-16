@@ -1,3 +1,4 @@
+from conftest import provider_reply
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from types import SimpleNamespace
@@ -53,7 +54,7 @@ def test_model_is_pinned_and_exported_through_prefetch(client,monkeypatch):
     captured=[]
     def fake(system,user):
         captured.append((adviser.resolved_provider(),adviser.resolved_model()))
-        return 'Consider giving my estimate some weight before deciding.'
+        return provider_reply(system,user,('Consider giving my estimate some weight before deciding.'))
     monkeypatch.setattr(adviser,'_model_text',fake)
     post(client,'/researcher',data={'token':'researcher-test'})
     assert post(client,'/start',data=dict(consent='yes',researcher_test='1',adviser_mode='live',

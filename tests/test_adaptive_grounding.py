@@ -1,4 +1,5 @@
 """Regression checks for generic successful API output and wrong-history reactions."""
+from conftest import provider_reply
 import pytest
 import adviser
 
@@ -26,7 +27,7 @@ def test_reaction_matches_completed_response(final, route, note):
 
 
 def test_successful_api_with_generic_note_is_not_accepted_as_adaptation(monkeypatch):
-    monkeypatch.setattr(adviser, '_model_text', lambda *args: GENERIC)
+    monkeypatch.setattr(adviser, '_model_text', lambda *args: provider_reply(*args,note=(GENERIC)))
     adaptive = adviser.generate_message('adaptive', None, 125, rows(100), attempts=1)
     static = adviser.generate_message('static', None, 125, rows(100), attempts=1)
     assert adaptive['source'].startswith('fallback:') and not adaptive['live_model']
@@ -40,7 +41,7 @@ def test_repair_receives_observed_response_and_logs_rejected_draft(monkeypatch):
     seen = []
     def fake(system, user):
         seen.append(user)
-        return GENERIC if len(seen) == 1 else 'You kept your estimate earlier; consider giving mine more weight.'
+        return provider_reply(system,user,(GENERIC if len(seen) == 1 else 'You kept your estimate earlier; consider giving mine more weight.'))
     monkeypatch.setattr(adviser, '_model_text', fake)
     result = adviser.generate_message('adaptive', None, 125, rows(100), attempts=2)
     assert result['live_model'] and result['attempts'] == 2
@@ -86,7 +87,7 @@ def test_first_trial_cannot_claim_previous_response():
 
 def test_repeated_live_note_is_retained_and_flagged(monkeypatch):
     note = 'You kept your estimate earlier; consider giving mine more weight.'
-    monkeypatch.setattr(adviser, '_model_text', lambda *args: note)
+    monkeypatch.setattr(adviser, '_model_text', lambda *args: provider_reply(*args,note=(note)))
     result = adviser.generate_message('adaptive', None, 125, rows(100), previous_messages=[note], attempts=1)
     assert result['live_model'] and result['text']==note
     assert result['repetition_check']=='exact_repeat'

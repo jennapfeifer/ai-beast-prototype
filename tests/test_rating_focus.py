@@ -1,4 +1,5 @@
 """Ratings shape the prompt; implicit influence is retained for human review."""
+from conftest import provider_reply
 from copy import deepcopy
 import pytest
 import adviser
@@ -10,8 +11,8 @@ from pilot import build_report
 
 NOTES={
     'behaviour':'Last time you moved away; please consider my estimate now.',
-    'trust':'You can weigh my estimate against your own before deciding.',
-    'feeling':'Take a moment to consider my estimate at your own pace.',
+    'trust':'You moved away earlier; could you give mine another look?',
+    'feeling':'You moved away earlier; take another look at my estimate.',
 }
 
 
@@ -30,20 +31,21 @@ def test_focus_gives_both_ratings_a_turn_and_retains_behaviour():
 @pytest.mark.parametrize('n,focus',[(2,'trust'),(3,'feeling'),(4,'behaviour'),(6,'feeling')])
 def test_focus_is_supplied_and_review_status_saved(n,focus,monkeypatch):
     seen=[]
-    def fake(system,user):seen.append(user);return NOTES[focus]
+    def fake(system,user):seen.append(user);return provider_reply(system,user,(NOTES[focus]))
     monkeypatch.setattr(adviser,'_model_text',fake)
     result=adviser.generate_message('adaptive',None,208,history(n),attempts=1)
     assert result['live_model'] and result['adaptive_focus']==focus
     assert result['trust_context_in_prompt'] and result['feeling_context_in_prompt']
     assert 'REQUIRED MESSAGE FOCUS:\n'+focus in seen[0]
-    assert result['adaptation_check']==('history_wording_screen_passed' if focus=='behaviour' else 'needs_review')
-    assert result['review_required']==(focus!='behaviour')
-    if focus!='behaviour':assert result['history_check']=='not_targeted'
+    assert result['adaptation_check']=='needs_review'
+    assert result['review_required']
+    assert result['history_check']=='history_wording_screen_passed'
+    assert result['grounding_record_check']=='matched_input_record'
 
 
 def test_user_duplicate_is_not_a_failure_when_it_matches_current_focus(monkeypatch):
     seen=[]
-    def fake(system,user):seen.append(user);return NOTES['behaviour']
+    def fake(system,user):seen.append(user);return provider_reply(system,user,(NOTES['behaviour']))
     monkeypatch.setattr(adviser,'_model_text',fake)
     # Same six completed decisions, no collected ratings: the behaviour focus applies.
     result=adviser.generate_message('adaptive',None,208,history(6,None,None),
@@ -55,7 +57,7 @@ def test_user_duplicate_is_not_a_failure_when_it_matches_current_focus(monkeypat
 
 
 def test_repetition_and_unverified_rating_influence_are_separate_flags(monkeypatch):
-    monkeypatch.setattr(adviser,'_model_text',lambda *args:NOTES['behaviour'])
+    monkeypatch.setattr(adviser,'_model_text',lambda *args:provider_reply(*args,note=(NOTES['behaviour'])))
     result=adviser.generate_message('adaptive',None,208,history(6),
                                     previous_messages=[NOTES['behaviour']],attempts=1)
     assert result['live_model'] and result['adaptive_focus']=='feeling'
@@ -69,7 +71,7 @@ def test_repetition_and_unverified_rating_influence_are_separate_flags(monkeypat
     (3,7,'You rated the advice negatively; consider this estimate on merit.'),
 ])
 def test_explicit_opposite_rating_is_rejected(n,rating,note,monkeypatch):
-    monkeypatch.setattr(adviser,'_model_text',lambda *args:note)
+    monkeypatch.setattr(adviser,'_model_text',lambda *args:provider_reply(*args,note=(note)))
     result=adviser.generate_message('adaptive',None,208,history(n,rating,rating),attempts=1)
     assert not result['live_model']
     assert 'conflicts_with_rating' in result['attempt_log'][0]['result']
@@ -77,7 +79,7 @@ def test_explicit_opposite_rating_is_rejected(n,rating,note,monkeypatch):
 
 def test_rating_focus_repair_receives_the_actual_rating_fact(monkeypatch):
     seen=[]
-    def fake(system,user):seen.append(user);return 'You rated the advice positively; consider this estimate on merit.' if len(seen)==1 else NOTES['feeling']
+    def fake(system,user):seen.append(user);return provider_reply(system,user,('You rated the advice positively; consider this estimate on merit.' if len(seen)==1 else NOTES['feeling']))
     monkeypatch.setattr(adviser,'_model_text',fake)
     result=adviser.generate_message('adaptive',None,208,history(),attempts=2)
     assert result['live_model'] and result['attempts']==2
@@ -94,7 +96,7 @@ def test_feeling_does_not_inherit_trust_or_treat_missing_as_neutral():
 
 
 def test_invented_specific_emotion_still_fails(monkeypatch):
-    monkeypatch.setattr(adviser,'_model_text',lambda *args:'You felt anxious earlier; consider giving my estimate some weight.')
+    monkeypatch.setattr(adviser,'_model_text',lambda *args:provider_reply(*args,note=('You felt anxious earlier; consider giving my estimate some weight.')))
     result=adviser.generate_message('adaptive',None,208,history(3),attempts=1)
     assert not result['live_model']
     assert result['attempt_log'][0]['result']=='feeling_claim_over_specific'
@@ -128,9 +130,9 @@ def test_live_prefetch_routes_and_exports_both_ratings_across_two_blocks(client,
     calls=[]
     def fake(system,user):
         calls.append(user)
-        if 'REQUIRED MESSAGE FOCUS:\ntrust' in user:return NOTES['trust']
-        if 'REQUIRED MESSAGE FOCUS:\nfeeling' in user:return NOTES['feeling']
-        return NOTES['behaviour'] if 'LATEST COMPLETED RESPONSE' in user else 'Consider giving my estimate some weight before deciding.'
+        if 'REQUIRED MESSAGE FOCUS:\ntrust' in user:return provider_reply(system,user,(NOTES['trust']))
+        if 'REQUIRED MESSAGE FOCUS:\nfeeling' in user:return provider_reply(system,user,(NOTES['feeling']))
+        return provider_reply(system,user,(NOTES['behaviour'] if 'LATEST COMPLETED RESPONSE' in user else 'Consider giving my estimate some weight before deciding.'))
     monkeypatch.setattr(adviser,'_model_text',fake)
     state=start(client,['C5','C8'],trials=4,skip=True,mode='live')
     with client.session_transaction() as sess:pid=sess['pid']

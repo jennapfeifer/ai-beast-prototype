@@ -5,7 +5,7 @@ import pytest
 import app as A
 import adviser,design,store
 from pilot import timing_projection
-from conftest import post,start,finish_trial,csrf
+from conftest import post,start,finish_trial,csrf,provider_reply
 
 def test_complete_105_trial_session_preserves_design_and_history(client):
     start(client);count=0;images=set()
@@ -129,10 +129,10 @@ def test_responses_boundary_gets_history_only_for_adaptive(monkeypatch):
     draft='Consider giving my estimate some weight before deciding.'
     def fake(system,user,timeout_seconds=None):
         received.append((system,user))
-        return 'You kept your estimate earlier; consider giving mine more weight.' if 'EXACT INTERNAL HISTORY' in user else draft
+        return provider_reply(system,user,'You kept your estimate earlier; consider giving mine more weight.' if 'EXACT INTERNAL HISTORY' in user else draft)
     monkeypatch.setattr(adviser,'_model_text',fake)
     for style in ['neutral','static','adaptive']:
-        msg=adviser.generate_message(style,100,125,history(100));assert msg['source']==adviser.resolved_provider()+':'+adviser.resolved_model() and msg['validation']=='passed'
+        msg=adviser.generate_message(style,100,125,history(100));assert msg['source']==adviser.resolved_provider()+':'+adviser.resolved_model() and msg['validation']==('accepted_for_review' if style=='adaptive' else 'passed')
     assert 'EXACT INTERNAL HISTORY' not in received[0][1] and 'EXACT INTERNAL HISTORY' not in received[1][1]
     assert 'EXACT INTERNAL HISTORY' in received[2][1]
 
@@ -150,7 +150,7 @@ def test_timeout_fallback_not_mislabeled_live_or_adaptive_success(monkeypatch):
     assert len(calls)==2 and msg['source'].startswith('fallback:') and not msg['live_model']
     assert msg['attempts']==2 and len(msg['attempt_log'])==2
     assert 'earlier' not in msg['text'].lower()
-    monkeypatch.setattr(adviser,'ADVISER_BUDGET_SECONDS',0)
+    monkeypatch.setattr(adviser,'ADVISER_TOTAL_BUDGET_SECONDS',0)
     before=len(calls);msg=adviser.generate_message('static',100,125)
     assert len(calls)==before and 'time_budget_exceeded' in msg['validation']
 
@@ -225,5 +225,5 @@ def test_gemini_client_sets_timeout_and_disables_sdk_retries(monkeypatch):
     monkeypatch.setattr(adviser,'_gemini_client',None)
     monkeypatch.setenv('GEMINI_API_KEY','unit-test-placeholder')
     adviser.get_gemini_client()
-    assert captured[0]['http_options']['timeout']==10000
+    assert captured[0]['http_options']['timeout']==int(adviser.ADVISER_REQUEST_TIMEOUT*1000)
     assert captured[0]['http_options']['retry_options']['attempts']==1

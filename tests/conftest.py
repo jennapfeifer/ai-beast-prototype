@@ -41,3 +41,12 @@ def finish_trial(client,state,initial=100,final=110):
     response=post(client,'/api/final',json=payload)
     assert response.status_code==200,response.get_json()
     return advice.get_json(),payload
+
+def provider_reply(system,user,note):
+    """Mock the new provider envelope while leaving the test's wording unchanged."""
+    import json
+    marker='SUPPLIED RECORD JSON:\n'
+    if marker not in user:return note
+    record=json.loads(user.split(marker,1)[1].splitlines()[0])
+    phrase='' if record['history_route'] in {'no_history','unusable'} else note.split(';',1)[0]
+    return json.dumps(dict(record,history_phrase=phrase,message=note))

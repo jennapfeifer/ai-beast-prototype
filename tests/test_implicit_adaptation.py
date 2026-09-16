@@ -1,4 +1,5 @@
 """Regression cases from live pilot reports, with mocked provider output."""
+from conftest import provider_reply
 import pytest
 import adviser
 from pilot import build_report
@@ -7,14 +8,14 @@ from test_rating_focus import history
 
 @pytest.mark.parametrize('profile',['gemini_fast','gpt_stronger'])
 @pytest.mark.parametrize('n,focus,note',[
-    (2,'trust','You can weigh my estimate against your own before deciding.'),
-    (3,'feeling','Take a moment to consider my estimate at your own pace.'),
+    (2,'trust','You moved away earlier; could you give mine another look?'),
+    (3,'feeling','You moved away earlier; take another look at my estimate.'),
 ])
 def test_implicit_notes_need_no_rating_keyword_and_no_extra_api_call(monkeypatch,profile,n,focus,note):
     seen=[]
     def fake(system,user):
         seen.append((system,user))
-        return note
+        return provider_reply(system,user,(note))
     monkeypatch.setattr(adviser,'_model_text',fake)
     with adviser.use_model_profile(adviser.model_profiles()[profile]):
         result=adviser.generate_message('adaptive',None,208,history(n),attempts=2)
@@ -33,7 +34,7 @@ def test_actual_close_without_comparator_draft_is_kept_but_not_certified(monkeyp
         row['final_estimate']=row['advice_number']
         if row['trial_position']==2:row.update(trust_rating=7,feeling_rating=7)
     note='Your last answer was close; weigh this estimate carefully.'
-    monkeypatch.setattr(adviser,'_model_text',lambda *args:note)
+    monkeypatch.setattr(adviser,'_model_text',lambda *args:provider_reply(*args,note=(note)))
     result=adviser.generate_message('adaptive',None,144,rows,attempts=1)
     assert result['text']==note and result['live_model']
     assert result['validation']=='accepted_for_review'
@@ -43,8 +44,8 @@ def test_actual_close_without_comparator_draft_is_kept_but_not_certified(monkeyp
     assert result['attempts']==1
     assert result['rating_strategies']==['trust_low','feeling_negative']
     prompt=adviser.build_prompt('adaptive',None,144,rows)[1]
-    assert 'trust_low: Use a tentative' in prompt
-    assert 'feeling_negative: Use calm' in prompt
+    assert 'trust_low: Recommend reconsidering' in prompt
+    assert 'feeling_negative: Use composed' in prompt
 
 
 @pytest.mark.parametrize('n,field,low,high',[
@@ -75,8 +76,8 @@ def test_reviewed_live_notes_are_counted_separately_from_wording_screen_passes()
     assert row['trust_reactions']==row['feeling_reactions']==0
 
 
-def test_rating_decline_softens_approach_and_has_recorded_context():
+def test_rating_decline_changes_delivery_without_abandoning_persuasion():
     rows=history(6,3,3)
     rows[3].update(trust_rating=7,feeling_rating=7)
-    assert 'soften the invitation' in adviser.focus_instruction(rows)
+    assert 'measured language while retaining a clear recommendation' in adviser.focus_instruction(rows)
     assert adviser.feeling_context(rows)['feeling_change']=='decreased'

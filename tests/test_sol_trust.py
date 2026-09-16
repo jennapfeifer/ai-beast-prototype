@@ -1,4 +1,5 @@
 """Real rejected Sol wording, trust isolation, and saved prefetch diagnostics."""
+from conftest import provider_reply
 from copy import deepcopy
 import csv
 import io
@@ -18,7 +19,7 @@ SOL_NOTE = 'Last time you followed closely; please consider this estimate too.'
 @pytest.mark.parametrize('initial,advice', [(100,120),(100,80)])
 def test_actual_sol_rejection_is_fixed_for_both_directions(monkeypatch,initial,advice):
     history=rows(advice,initial,advice)
-    monkeypatch.setattr(adviser,'_model_text',lambda *args:SOL_NOTE)
+    monkeypatch.setattr(adviser,'_model_text',lambda *args:provider_reply(*args,note=(SOL_NOTE)))
     with adviser.use_model_profile(adviser.model_profiles()['gpt_stronger']):
         result=adviser.generate_message('adaptive',None,74,history,attempts=1)
     assert result['text']==SOL_NOTE and result['live_model']
@@ -114,7 +115,7 @@ def test_trust_change_claims_use_two_checkins():
 def test_explicit_trust_contradiction_is_rejected_even_on_behaviour_focus(monkeypatch):
     history=rows(120);history[0]['trust_rating']=1
     note='Earlier you followed closely; your reported trust was high.'
-    monkeypatch.setattr(adviser,'_model_text',lambda *args:note)
+    monkeypatch.setattr(adviser,'_model_text',lambda *args:provider_reply(*args,note=(note)))
     result=adviser.generate_message('adaptive',None,74,history,attempts=1)
     assert not result['live_model'] and result['trust_context_in_prompt']
     assert result['trust_check']=='fallback_not_trust_adaptive'
@@ -123,14 +124,14 @@ def test_explicit_trust_contradiction_is_rejected_even_on_behaviour_focus(monkey
 
 def test_static_audit_does_not_claim_to_receive_trust(monkeypatch):
     history=rows(120);history[0]['trust_rating']=1
-    monkeypatch.setattr(adviser,'_model_text',lambda *args:'Consider giving my estimate some weight before deciding.')
+    monkeypatch.setattr(adviser,'_model_text',lambda *args:provider_reply(*args,note=('Consider giving my estimate some weight before deciding.')))
     result=adviser.generate_message('static',None,74,history,attempts=1)
     assert result['trust_context_in_prompt'] is False
     assert result['trust_latest_rating'] is None and result['trust_check']=='not_applicable'
 
 
 def test_received_but_rejected_is_distinct_from_api_failure(monkeypatch):
-    monkeypatch.setattr(adviser,'_model_text',lambda *args:'Consider blending your own perspective with this thoughtful suggestion.')
+    monkeypatch.setattr(adviser,'_model_text',lambda *args:provider_reply(*args,note=('Consider blending your own perspective with this thoughtful suggestion.')))
     result=adviser.generate_message('adaptive',None,74,rows(120),attempts=1)
     assert result['model_response_received'] and not result['live_model']
     assert result['trust_check']=='fallback_not_trust_adaptive'
@@ -145,8 +146,8 @@ def test_trust_rating_reaches_next_prefetch_and_resets_between_blocks(client,mon
     captured=[]
     def fake(system,user):
         captured.append(user)
-        if 'REQUIRED MESSAGE FOCUS:\ntrust' in user:return 'You reported moderate trust; consider this estimate on its merits.'
-        return SOL_NOTE if 'LATEST COMPLETED RESPONSE' in user else 'Consider giving my estimate some weight before deciding.'
+        if 'REQUIRED MESSAGE FOCUS:\ntrust' in user:return provider_reply(system,user,('You followed my estimate earlier; weigh this suggestion on its merits.'))
+        return provider_reply(system,user,(SOL_NOTE if 'LATEST COMPLETED RESPONSE' in user else 'Consider giving my estimate some weight before deciding.'))
     monkeypatch.setattr(adviser,'_model_text',fake)
     state=start(client,['C5','C8'],trials=3,skip=True,mode='live')
     with client.session_transaction() as sess:pid=sess['pid']
