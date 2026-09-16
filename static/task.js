@@ -14,7 +14,23 @@ function visibility(){const now=performance.now();if(document.hidden&&hiddenStar
 document.addEventListener('visibilitychange',visibility);visibility();
 async function visibleSleep(ms){const t=clock();while(elapsed(t).active<ms)await sleep(Math.min(40,Math.max(1,ms-elapsed(t).active)));return elapsed(t);}
 function phase(label){document.getElementById('phase-name').textContent=label;}
-function renderResearcher(extra){Object.assign(info,extra||{});const box=document.getElementById('rmode');if(box)box.textContent=Object.entries(info).map(([k,v])=>`${k}: ${typeof v==='object'?JSON.stringify(v):v}`).join('\n');}
+function renderResearcher(extra){
+  Object.assign(info,extra||{});
+  const box=document.getElementById('rmode');
+  if(box)box.textContent=Object.entries(info).map(([k,v])=>`${k}: ${typeof v==='object'?JSON.stringify(v):v}`).join('\n');
+  const status=document.getElementById('adviser-status');
+  if(!status)return;
+  if(!info.source){status.textContent='';return;}
+  const generation=info.fallback?'Fallback displayed':info.live_model?'Live response received':'Scripted note';
+  const history=info.history_check==='history_wording_screen_passed'?'history reference screened':
+    info.history_check==='no_history'?'first trial: no history':
+    info.history_check?.startsWith('history_wording_unrecognised:')?'history wording uncertain':'history not verified';
+  status.textContent=`${generation}${info.generation_ms!=null?' · '+info.generation_ms+' ms':''}.`;
+  if(info.style==='adaptive'&&info.live_model){
+    status.textContent+=` ${history}.`;
+    if(info.trust_context_in_prompt||info.feeling_context_in_prompt)status.textContent+=' Ratings supplied; their influence is not yet assessed.';
+  }
+}
 async function fetchJSON(path,body){const control=new AbortController(),timer=setTimeout(()=>control.abort(),45000);try{const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':CFG.csrf},body:body===undefined?undefined:JSON.stringify(body),signal:control.signal});let result;try{result=await response.json();}catch{throw Error('Your session may have expired. Reload to resume.');}if(!response.ok)throw Object.assign(Error(result.error||`Request failed (${response.status}).`),{status:response.status});return result;}finally{clearTimeout(timer);}}
 async function recover(action,description){for(;;){try{return await action();}catch(error){phase('CONNECTION CHECK');stage.innerHTML=`<div class="recovery"><span class="stage-symbol">↻</span><h2>${esc(description)}</h2><p>${esc(error.message)}</p><p class="helper">Your saved responses are safe.</p><div class="button-row"><button class="button primary" id="retry">Try again</button><button class="button" id="resume">Reload &amp; resume</button></div></div>`;document.getElementById('resume').onclick=()=>location.reload();await new Promise(r=>document.getElementById('retry').onclick=r);}}}
 function renderProgress(){document.getElementById('round-title').textContent=state.practice?'Practice':`Round ${state.block} of ${state.n_blocks}`;document.getElementById('meta').textContent=state.practice?'Practice':`${state.completed} / ${state.overall_total}`;const percent=100*state.completed/Math.max(1,state.overall_total);document.getElementById('bar').style.width=percent+'%';document.querySelector('[role=progressbar]').setAttribute('aria-valuenow',String(Math.round(percent)));}
