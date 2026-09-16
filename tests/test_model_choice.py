@@ -69,7 +69,7 @@ def test_model_is_pinned_and_exported_through_prefetch(client,monkeypatch):
     row=store.diagnostic_rows(pid)[0]
     assert captured==[('openai','gpt-5.6-sol')]
     assert row['model']=='gpt-5.6-sol' and row['reasoning']=='low' and row['prefetched']
-    assert row['request_timeout_s']==25 and row['prompt_version']=='adaptive-reaction-v4-ratings'
+    assert row['request_timeout_s']==25 and row['prompt_version']==adviser.PROMPT_VERSION
     assert client.get('/admin/export/model_comparison.csv').status_code==200
 
 

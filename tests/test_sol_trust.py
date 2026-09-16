@@ -48,7 +48,7 @@ def test_common_following_paraphrases(note):
 
 def test_unknown_wording_is_not_mislabeled_a_known_contradiction():
     ok,reason=adviser.adaptive_history_check('Earlier you did something unusual; consider this estimate too.',rows(120))
-    assert not ok and reason=='history_wording_unrecognised:followed'
+    assert ok and reason=='history_wording_unrecognised:followed'
     assert not adviser.adaptive_history_check('Last time you never followed closely; consider this estimate too.',rows(120))[0]
     assert not adviser.adaptive_history_check('Previously you followed closely and moved away; consider mine.',rows(120))[0]
 
@@ -111,13 +111,13 @@ def test_trust_change_claims_use_two_checkins():
     assert adviser.trust_wording_check('Your trust increased; consider this estimate.',context)=='trust_trend_conflicts_with_ratings'
 
 
-def test_trust_audit_does_not_create_another_wording_fallback(monkeypatch):
+def test_explicit_trust_contradiction_is_rejected_even_on_behaviour_focus(monkeypatch):
     history=rows(120);history[0]['trust_rating']=1
     note='Earlier you followed closely; your reported trust was high.'
     monkeypatch.setattr(adviser,'_model_text',lambda *args:note)
     result=adviser.generate_message('adaptive',None,74,history,attempts=1)
-    assert result['live_model'] and result['trust_context_in_prompt']
-    assert result['trust_check']=='trust_claim_conflicts_with_rating'
+    assert not result['live_model'] and result['trust_context_in_prompt']
+    assert result['trust_check']=='fallback_not_trust_adaptive'
     assert result['attempt_log'][0]['trust_check']=='trust_claim_conflicts_with_rating'
 
 

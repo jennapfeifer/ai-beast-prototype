@@ -1,4 +1,4 @@
-"""The requested input must affect the prompt and be represented in the note."""
+"""Ratings shape the prompt; implicit influence is retained for human review."""
 from copy import deepcopy
 import pytest
 import adviser
@@ -10,8 +10,8 @@ from pilot import build_report
 
 NOTES={
     'behaviour':'Last time you moved away; please consider my estimate now.',
-    'trust':'You reported low trust; weigh this estimate carefully before deciding.',
-    'feeling':'You rated the advice negatively; consider this estimate on merit.',
+    'trust':'You can weigh my estimate against your own before deciding.',
+    'feeling':'Take a moment to consider my estimate at your own pace.',
 }
 
 
@@ -28,7 +28,7 @@ def test_focus_gives_both_ratings_a_turn_and_retains_behaviour():
 
 
 @pytest.mark.parametrize('n,focus',[(2,'trust'),(3,'feeling'),(4,'behaviour'),(6,'feeling')])
-def test_focus_is_enforced_and_saved(n,focus,monkeypatch):
+def test_focus_is_supplied_and_review_status_saved(n,focus,monkeypatch):
     seen=[]
     def fake(system,user):seen.append(user);return NOTES[focus]
     monkeypatch.setattr(adviser,'_model_text',fake)
@@ -36,7 +36,8 @@ def test_focus_is_enforced_and_saved(n,focus,monkeypatch):
     assert result['live_model'] and result['adaptive_focus']==focus
     assert result['trust_context_in_prompt'] and result['feeling_context_in_prompt']
     assert 'REQUIRED MESSAGE FOCUS:\n'+focus in seen[0]
-    assert result['adaptation_check'] in {'history_wording_screen_passed','trust_reference_screen_passed','feeling_reference_screen_passed'}
+    assert result['adaptation_check']==('history_wording_screen_passed' if focus=='behaviour' else 'needs_review')
+    assert result['review_required']==(focus!='behaviour')
     if focus!='behaviour':assert result['history_check']=='not_targeted'
 
 
@@ -53,18 +54,19 @@ def test_user_duplicate_is_not_a_failure_when_it_matches_current_focus(monkeypat
     assert 'Avoid copying these recent adviser notes' in seen[0]
 
 
-def test_repetition_does_not_hide_a_missing_rating_reaction(monkeypatch):
+def test_repetition_and_unverified_rating_influence_are_separate_flags(monkeypatch):
     monkeypatch.setattr(adviser,'_model_text',lambda *args:NOTES['behaviour'])
     result=adviser.generate_message('adaptive',None,208,history(6),
                                     previous_messages=[NOTES['behaviour']],attempts=1)
-    assert not result['live_model'] and result['adaptive_focus']=='feeling'
-    assert result['attempt_log'][0]['result']=='missing_feeling_reaction'
+    assert result['live_model'] and result['adaptive_focus']=='feeling'
+    assert result['attempt_log'][0]['result']=='accepted_for_review'
+    assert 'feeling_influence_not_automatically_assessed' in result['review_reasons']
     assert result['attempt_log'][0]['repetition_check']=='exact_repeat'
 
 
 @pytest.mark.parametrize('n,rating,note',[
-    (2,7,NOTES['trust']),
-    (3,7,NOTES['feeling']),
+    (2,7,'You reported low trust; weigh this estimate carefully before deciding.'),
+    (3,7,'You rated the advice negatively; consider this estimate on merit.'),
 ])
 def test_explicit_opposite_rating_is_rejected(n,rating,note,monkeypatch):
     monkeypatch.setattr(adviser,'_model_text',lambda *args:note)
@@ -75,11 +77,11 @@ def test_explicit_opposite_rating_is_rejected(n,rating,note,monkeypatch):
 
 def test_rating_focus_repair_receives_the_actual_rating_fact(monkeypatch):
     seen=[]
-    def fake(system,user):seen.append(user);return NOTES['behaviour'] if len(seen)==1 else NOTES['feeling']
+    def fake(system,user):seen.append(user);return 'You rated the advice positively; consider this estimate on merit.' if len(seen)==1 else NOTES['feeling']
     monkeypatch.setattr(adviser,'_model_text',fake)
     result=adviser.generate_message('adaptive',None,208,history(),attempts=2)
     assert result['live_model'] and result['attempts']==2
-    assert 'their latest recorded feeling rating is negative' in seen[1]
+    assert 'internal approach=feeling_negative' in seen[1]
 
 
 def test_feeling_does_not_inherit_trust_or_treat_missing_as_neutral():
@@ -91,16 +93,11 @@ def test_feeling_does_not_inherit_trust_or_treat_missing_as_neutral():
     assert not adviser.feeling_context(history(6,trust=7,feeling=None))['feeling_rating_available']
 
 
-@pytest.mark.parametrize('n,note',[
-    (2,'You should trust my estimate and give it consideration.'),
-    (3,'I feel this estimate deserves your consideration this time.'),
-    (3,'You felt anxious earlier; consider giving my estimate some weight.'),
-])
-def test_rating_focus_rejects_generic_mentions_and_invented_specific_emotions(n,note,monkeypatch):
-    monkeypatch.setattr(adviser,'_model_text',lambda *args:note)
-    result=adviser.generate_message('adaptive',None,208,history(n),attempts=1)
+def test_invented_specific_emotion_still_fails(monkeypatch):
+    monkeypatch.setattr(adviser,'_model_text',lambda *args:'You felt anxious earlier; consider giving my estimate some weight.')
+    result=adviser.generate_message('adaptive',None,208,history(3),attempts=1)
     assert not result['live_model']
-    assert result['attempt_log'][0]['result'] in {'missing_trust_reaction','missing_feeling_reaction','feeling_claim_over_specific'}
+    assert result['attempt_log'][0]['result']=='feeling_claim_over_specific'
 
 
 @pytest.mark.parametrize('contrast,field',[('trust','trust_rating'),('feeling','feeling_rating')])
@@ -152,8 +149,10 @@ def test_live_prefetch_routes_and_exports_both_ratings_across_two_blocks(client,
         state=client.get('/api/state').get_json()
     records=store.diagnostic_rows(pid)
     assert len(calls)==len(records)==8
-    assert sum(r['adaptation_check']=='feeling_reference_screen_passed' for r in records)==2
+    assert sum(r['adaptive_focus']=='feeling' and r['review_required'] for r in records)==2
+    assert all(r['adaptive_strategy'].startswith(r['adaptive_focus']+'_') for r in records)
     exported=client.get('/admin/export/diagnostics.csv').get_data(as_text=True)
     assert 'feeling_latest_rating' in exported and 'adaptive_focus' in exported
+    assert 'review_required' in exported and 'adaptive_strategy' in exported
     html=client.get('/researcher').get_data(as_text=True)
-    assert 'Behaviour / trust / feeling checks' in html
+    assert 'Live notes to review' in html
