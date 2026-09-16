@@ -20,6 +20,7 @@ import hashlib
 import logging
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger("adviser")
@@ -33,6 +34,9 @@ ADVISER_REASONING_EFFORT = os.getenv("ADVISER_REASONING_EFFORT", "none").strip()
 ADVISER_MIN_WORDS = int(os.getenv("ADVISER_MIN_WORDS", "6"))
 ADVISER_MAX_WORDS = int(os.getenv("ADVISER_MAX_WORDS", "12"))
 ADVISER_VALIDATION_ATTEMPTS = int(os.getenv("ADVISER_VALIDATION_ATTEMPTS", "1"))
+ADVISER_REQUEST_TIMEOUT = float(os.getenv("ADVISER_REQUEST_TIMEOUT", "10"))
+ADVISER_BUDGET_SECONDS = float(os.getenv("ADVISER_BUDGET_SECONDS", "12"))
+
 REPETITION_SIMILARITY_LIMIT = float(os.getenv("REPETITION_SIMILARITY_LIMIT", "0.88"))
 
 
@@ -128,7 +132,7 @@ def get_openai_client():
         key = os.getenv("OPENAI_API_KEY")
         if not key:
             raise RuntimeError("OPENAI_API_KEY is not set")
-        _openai_client = OpenAI(api_key=key)
+        _openai_client = OpenAI(api_key=key, timeout=ADVISER_REQUEST_TIMEOUT, max_retries=0)
     return _openai_client
 
 
@@ -139,7 +143,7 @@ def get_gemini_client():
         key = os.getenv("GEMINI_API_KEY")
         if not key:
             raise RuntimeError("GEMINI_API_KEY is not set")
-        _gemini_client = genai.Client(api_key=key)
+        _gemini_client = genai.Client(api_key=key, http_options={"timeout": int(ADVISER_REQUEST_TIMEOUT * 1000), "retry_options": {"attempts": 1}})
     return _gemini_client
 
 
@@ -190,7 +194,7 @@ def message_is_valid(
     wc = words(text)
     if not (ADVISER_MIN_WORDS <= wc <= ADVISER_MAX_WORDS):
         return False, f"word_count={wc}"
-    if numeric_tokens(text):
+    if re.search(r"\d", text):
         return False, f"numeric_tokens={numeric_tokens(text)}"
     if _IMAGE_EVIDENCE_RE.search(text):
         return False, "image_specific_evidence"
@@ -333,7 +337,7 @@ def _fallback_message(
     history: List[Dict[str, Any]],
     previous_messages: List[str],
 ) -> Tuple[str, int]:
-    bank_style = "static" if style == "adaptive" and not history else style
+    bank_style = "static" if style == "adaptive" else style
     bank = FALLBACK_BANKS[bank_style]
     start = _stable_seed(f"fallback|{key}|{style}") % len(bank)
     for j in range(len(bank)):
@@ -345,24 +349,12 @@ def _fallback_message(
     return bank[start], start
 
 
-def generate_message(
-    style: str,
-    initial: Optional[int],
-    advice: int,
-    history: Optional[List[Dict[str, Any]]] = None,
-    previous_messages: Optional[List[str]] = None,
-    attempts: Optional[int] = None,
-    key: str = "",
-) -> Dict[str, Any]:
-    """Generate the short note shown beneath the separately displayed advice number."""
-    if style == "fixed":
-        return control_message(advice, key)
-    if style not in STRATEGY_PROMPTS:
-        raise KeyError(style)
+def has_api_key():
+    return bool(os.getenv("GEMINI_API_KEY" if resolved_provider() == "gemini" else "OPENAI_API_KEY"))
 
+
+def build_prompt(style, initial, advice, history=None):
     history = history or []
-    previous_messages = [m for m in (previous_messages or []) if m]
-    attempts = attempts or ADVISER_VALIDATION_ATTEMPTS
     context = full_history(history) if style == "adaptive" else "No earlier trials."
     if initial is None:
         relation = (
@@ -389,14 +381,46 @@ def generate_message(
         "Write only the short note shown beneath the displayed AI estimate."
     )
 
+    return system, base_user
+
+
+def generate_message(
+    style: str,
+    initial: Optional[int],
+    advice: int,
+    history: Optional[List[Dict[str, Any]]] = None,
+    previous_messages: Optional[List[str]] = None,
+    attempts: Optional[int] = None,
+    key: str = "",
+) -> Dict[str, Any]:
+    """Generate the short note shown beneath the separately displayed advice number."""
+    if style == "fixed":
+        return control_message(advice, key)
+    if style not in STRATEGY_PROMPTS:
+        raise KeyError(style)
+
+    history = history or []
+    previous_messages = [m for m in (previous_messages or []) if m]
+    attempts = attempts or ADVISER_VALIDATION_ATTEMPTS
+    system, base_user = build_prompt(style, initial, advice, history)
+
+    started = time.perf_counter()
+    attempt_log = []
     last_reason = "not_generated"
     retry_note = ""
     for k in range(1, attempts + 1):
+        if time.perf_counter()-started >= ADVISER_BUDGET_SECONDS:
+            last_reason = "time_budget_exceeded"
+            break
+        attempt_start = time.perf_counter()
         try:
             draft = re.sub(r"\s+", " ", _model_text(system, base_user + retry_note)).strip().strip('"“”')
         except Exception as e:
             last_reason = f"api_error:{type(e).__name__}"
+            attempt_log.append({"attempt": k, "result": last_reason, "ms": round((time.perf_counter()-attempt_start)*1000)})
             log.warning("adviser call failed (attempt %d/%d): %s", k, attempts, e)
+            if isinstance(e, RuntimeError) or type(e).__name__ in {"AuthenticationError", "PermissionDeniedError"}:
+                break
             retry_note = "\n\nThe previous API attempt failed. Produce a fresh short note following the format exactly."
             continue
 
@@ -408,9 +432,12 @@ def generate_message(
                 "attempts": k,
                 "word_count": words(draft),
                 "validation": "passed",
+                "live_model": True,
+                "attempt_log": attempt_log + [{"attempt": k, "result": "passed", "ms": round((time.perf_counter()-attempt_start)*1000)}],
             }
 
         last_reason = reason
+        attempt_log.append({"attempt": k, "result": reason, "ms": round((time.perf_counter()-attempt_start)*1000)})
         log.warning("adviser validation failed (attempt %d/%d): %s", k, attempts, reason)
         if reason.startswith("repetition_similarity"):
             feedback = "Use substantially different wording and sentence structure."
@@ -427,12 +454,34 @@ def generate_message(
     text, idx = _fallback_message(style, key, history, previous_messages)
     log.error(
         "adviser fell back after %d attempts: style=%s advice=%s reason=%s fallback=%d",
-        attempts, style, advice, last_reason, idx,
+        len(attempt_log), style, advice, last_reason, idx,
     )
     return {
         "text": text,
         "source": f"fallback:{style}:{idx:02d}",
-        "attempts": attempts,
+        "attempts": len(attempt_log),
         "word_count": words(text),
         "validation": f"fallback_after:{last_reason}",
+        "live_model": False,
+        "attempt_log": attempt_log,
     }
+
+
+
+def generate_offline_message(style, initial, advice, history=None, previous_messages=None, key="", **kwargs):
+    if style == "fixed":return control_message(advice,key)
+    route="current_trial_only"
+    if style=="adaptive" and history:
+        summary=history_behavior_summary(history)
+        if "mostly stayed close" in summary:
+            route="resistance";text="Your earlier choices stayed independent; consider giving my estimate weight."
+        elif "often moved" in summary:
+            route="uptake";text="You have followed earlier suggestions; consider this estimate too."
+        else:
+            route="mixed";text="Your earlier choices varied; weigh this estimate alongside your impression."
+    else:
+        route="no_history" if style=="adaptive" else route
+        text,_=_fallback_message(style,key,[],[])
+    ok,reason=message_is_valid(text)
+    return dict(text=text,source="offline_demo:"+style,attempts=0,word_count=words(text),
+        validation="offline:"+("passed" if ok else reason),history_route=route,live_model=False,attempt_log=[])

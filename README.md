@@ -1,122 +1,56 @@
-# AI-BEAST human study prototype — v6
+# BEAST Fieldwork · private Gemini pilot
 
-A Flask web app for the NEW25 AI-advice dot-estimation study. This version keeps the experimental numerical architecture intact while making the participant interaction quicker and more game-like.
+The v6.1 **number line, short Gemini notes and advice prefetch** are integrated with protected pilot controls, server-side sessions, timing diagnostics and recovery. Original NEW25 numbers, counterbalancing and 105 original PNGs are preserved.
 
 ## Participant flow
 
-1. Consent
-2. Short instructions
-3. One warm-up trial (unless skipped in researcher mode)
-4. Eight rounds of 13 experimental trials
-5. End-only estimation summary and debrief
+Image (5 s) → first estimate on a blank number line → AI number + 6–12-word note → final slider → occasional trust/feeling check-in. The final slider starts at the participant's first estimate, as in v6.1. You/AI use matched circular markers and cards. Progress milestones celebrate completion; scores appear only after finishing.
 
-Each trial is:
+C3–C8 notes are prefetched during image viewing. The model gets the fixed recommendation and, for C5/C8 only, every completed earlier trial in that block. **It never gets the current first estimate**, even if prefetch fails and synchronous generation is needed. This keeps the information supplied consistent. C1/C2 use fixed control notes and C2's number still depends on the current estimate.
 
-**dot image → click first estimate on a 1–400 line → AI estimate + very short note → revise/confirm on the same scale → occasional check-in**
+Default live provider: `gemini`, model `gemini-3.5-flash-lite`, thinking `minimal`, one application-level attempt, no artificial minimum wait. The Gemini SDK has a 10-second request timeout and one SDK attempt. Failure produces a labelled generic fallback. Short notes and prefetch can reduce waiting; effectiveness and live latency must be checked in the pilot. Mechanical validation is not a semantic guarantee.
 
-The participant never sees the true count or correctness feedback during the task.
+## Researcher workspace
 
-## Interface / gamification
+Unlock `/` with `ACCESS_CODE`, then sign in at `/researcher` with the separate `ADMIN_TOKEN`. Launch a short/full pilot with selected conditions, block length and counterbalance row. Offline mode uses labelled local templates; live mode requires the selected provider key. All researcher and pilot sessions are `TEST`, excluded from production allocation.
 
-- First estimates are made by clicking the number line; there is no visible default marker before the first click.
-- **You** and **AI** use matched circular markers and matched information cards; only colour differs.
-- The final-estimate handle is visually distinct.
-- The top display shows the current round plus an 8-round map and within-round estimate beads.
-- Round-complete screens provide completion feedback only.
-- Accuracy score remains locked until the task is finished.
-- There are no points for agreeing with AI, no streaks, no leaderboards, no speed reward, and no interim correctness feedback.
+Trial diagnostics include actual/expected history length, generation source, fallback/attempts, `prefetched`, and `initial_context_available`. Exports include estimates, errors, WOA, sparse ratings, messages, and phase timing. The display records **generation time separately from visible advice wait**, plus prefetch request and remaining wait, image exposure, response/check-in/break time, hidden-tab interruptions and resume flags.
 
-The debrief can show:
-- first-estimate score,
-- final-estimate score,
-- closest final estimate,
-- number of trials where the final estimate improved on the first.
+The duration calculator is an assumption-based planning aid. Use human pilot data to estimate total duration. With the shorter notes the previous package's 42-minute estimate is not a measurement of this version. Aggregate tables can pool offline/live modes; filter `adviser_mode`, `is_test` and `source` before interpretation.
 
-Scores are 100 minus mean absolute percentage error, clipped to 0–100. These are motivational end feedback, not analysis variables.
-
-## Adviser generation
-
-The numerical advice comes from `design.py`; the language model generates only the short note beneath the displayed AI estimate.
-
-Default visible-note length: **6–12 words**.
-
-`ADVISER_PROVIDER=auto` prefers Gemini when `GEMINI_API_KEY` exists and otherwise uses OpenAI. The Render blueprint is configured for Gemini Flash.
-
-The adviser validator rejects:
-- additional visible numerical values,
-- image-specific evidence such as invented claims about clusters or overlap,
-- jargon such as anchoring/calibration,
-- claims of verified/proven correctness,
-- highly repetitive wording.
-
-Adaptive conditions still receive the complete earlier history from the current block.
-
-## Core design retained
-
-- Study seed: `20260909`
-- 8 conditions × 13 experimental trials = 104 trials
-- 104 distinct experimental stimulus images per participant
-- C1 mean advice error: exactly 0%
-- C3/C4/C5 mean advice error: exactly +25%
-- C6/C7/C8 mean advice error: exactly -25%
-- C3=C4=C5 numerically for a given truth
-- C6=C7=C8 numerically for a given truth
-- 144-dot special case remains 144 in C1 and both fixed ±25 schedules
-- Ratings after trials 2, 4, 6, 8, 10, 12
-
-## Environment variables
-
-| Variable | Default | Purpose |
-|---|---:|---|
-| `ADVISER_PROVIDER` | `auto` | `gemini`, `openai`, or automatic key-based choice |
-| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini adviser model |
-| `OPENAI_MODEL` | `gpt-5.6-luna` | OpenAI fallback model |
-| `ADVISER_THINKING_LEVEL` | `low` | Gemini thinking level |
-| `ADVISER_REASONING_EFFORT` | `none` | OpenAI reasoning effort |
-| `ADVISER_MIN_WORDS` / `ADVISER_MAX_WORDS` | `6` / `12` | visible note length |
-| `ADVISER_VALIDATION_ATTEMPTS` | `3` | retries before fallback |
-| `ADVISER_MIN_DELAY_MS` | `700` | common minimum wait floor |
-| `STIMULUS_MS` | `5000` | dot-image display time; `0` = untimed debug mode |
-| `COLLECT_RATINGS` | `1` | collect trust/feeling check-ins |
-| `RATING_EVERY` | `2` | check-in cadence |
-| `SHOW_END_SCORE` | `1` | show performance summary only after task completion |
-| `RESEARCHER_MODE` | `0` | researcher controls and diagnostic overlay |
-
-### Gemini / Render
-
-Set the following in Render Environment:
-
-```text
-GEMINI_API_KEY = your key
-ADVISER_PROVIDER = gemini
-GEMINI_MODEL = gemini-3.5-flash-lite
-ADVISER_THINKING_LEVEL = minimal
-ADVISER_MIN_WORDS = 6
-ADVISER_MAX_WORDS = 12
-ADVISER_MIN_DELAY_MS = 0
-```
-
-For the supervisor/researcher deployment also set:
-
-```text
-RESEARCHER_MODE = 1
-```
+Reloading after the first answer is saved resumes advice without re-showing the image. Retries do not create duplicate trials or repeat generation. A reload before the initial answer is saved can repeat exposure; this remains a pilot limitation. Exposure pauses in hidden tabs and browser timing is not a calibrated visual trigger.
 
 ## Run locally
 
 ```bash
-pip install -r requirements.txt
-python setup_files.py
-python stimuli.py --size 512 --force
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+python smoke_test.py
+export ADMIN_TOKEN="choose-a-long-researcher-token"
+export ACCESS_CODE="choose-a-different-private-code"
 python app.py
 ```
 
-Researcher mode:
+The local default adviser mode is offline. To run Gemini live, set `GEMINI_API_KEY`, `ADVISER_PROVIDER=gemini` and `ADVISER_MODE=live` in the environment. `.env.example` is documentation, not automatically loaded. Never commit secrets or participant exports.
+
+Startup generates missing PNGs on the protected server using the repository’s existing deterministic `stimuli.py`; image files are not published to GitHub. `setup_files.py` validates rather than rewriting edited assets. `gunicorn.conf.py` preserves the required 1-worker/8-thread setup even when Render starts plain `gunicorn app:app`.
+
+## Adaptation checks
+
+`python smoke_test.py` checks the complete 105-trial session, schedules, history routing, prefetch idempotency, stale requests, privacy, ratings, fallbacks and end-only scores. The browser test in `tests/browser_smoke.cjs` covers desktop/mobile number lines, ratings, prefetch, reload and exports at normal display timings.
 
 ```bash
-RESEARCHER_MODE=1 ADMIN_TOKEN=test123 python app.py
+python verify_adaptation.py
+python verify_adaptation.py --live --repetitions 3 --out probe-results
 ```
 
-## Data
+Offline is API-free. `--live` makes 24 message generations and incurs usage. It contrasts resistance/following histories while holding the current advice fixed, with the current estimate unavailable as in prefetch. Reports include raw messages, prompt hashes, latency, source/fallback and shuffled blind review sheets. Static prompts must stay identical across histories; adaptive prompts must differ. Different live text alone does not prove adaptation; inspect whether history claims are supported. Behavioural effects require human data.
 
-The built-in admin page can export participants, trials, ratings, or all data as a ZIP. Keep the admin token private.
+## Deployment and data
+
+GitHub: `jennapfeifer/ai-beast-prototype`; Render service: `ai-beast-prototype`, auto-deploying `main`. The source repository remains public as authorised; the task and researcher data are gated by separate private codes. Codes grant access to their holders, not named accounts. The health endpoint reveals only OK/version.
+
+Set `SECRET_KEY`, `ACCESS_CODE` and `ADMIN_TOKEN` before deploying; on Render the app refuses to start without them. Preserve provider API keys and the existing database URL when editing environment settings. `DATABASE_URL` should point to persistent Postgres for retained data; a SQLite file on the free web service can disappear when it restarts. The build stays in pilot mode. Before recruitment, finalise participant information/contact/withdrawal terms, validate live manipulation and timings, and use durable storage.
+
+The original table schema is retained and diagnostic/session tables are additive. Old browser sessions from v6.1 cannot migrate; update between sessions. Retain a data export before deployment. Read the protected `/api/researcher/status` for the deployed model/configuration and database dialect without exposing keys.

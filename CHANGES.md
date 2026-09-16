@@ -1,46 +1,15 @@
-# v6 — engaging number-line prototype
+# Fieldwork 2.1 · v6.1 integration
 
-This revision keeps the NEW25 experimental architecture unchanged and redesigns the interaction around speed, clarity, and completion-based gamification.
+Retains the repository's number-line first estimates, final slider, short-note Gemini configuration, prefetch, and end-only scoring. Adds the field-map presentation and protected pilot workspace from the prepared build.
 
-## Interaction
-- First estimate is now made directly on a 1–400 number line.
-- No default marker is shown before the participant makes a choice, reducing visual anchoring from a pre-positioned handle.
-- Mouse/touch click places the estimate; dragging fine-tunes it. Keyboard number entry and arrow-key adjustment are also supported.
-- The final-estimate screen gives **You** and **AI** the same marker shape, size, layout, and typography; they differ only in colour.
-- The movable final-estimate handle has a third, distinct visual treatment.
-- The numerical recommendation is separated from the verbal persuasion note.
+- Prefetch is cached server-side by trial token; repeated requests do not generate again.
+- C5/C8 receive exact completed within-block history; static/neutral receive no previous trials. The current estimate is consistently withheld from model generation, including synchronous recovery.
+- Backend cursor, pending advice and prefetched notes move out of the browser cookie into transactional database state.
+- Duplicate initial/final submissions are safe; stale tokens cannot advance a different trial.
+- Adds separate task/researcher access, CSRF checks, opaque stimulus URLs and protected exports.
+- Records model generation, prefetch and visible wait separately, plus response/rating/break/exposure and interruption timing.
+- One Gemini SDK attempt with explicit timeout. Fallbacks remain labelled and do not claim to have used earlier history.
+- Generates PNGs privately at startup using the existing public stimulus code and stops template overwrite during setup.
+- Includes a contrastive history probe, complete-session tests and number-line browser validation.
 
-## Advice
-- Default generated note length reduced from 8–16 to **6–12 words**.
-- Gemini Flash remains the default Render adviser for faster generation.
-- Existing safeguards remain: no image-specific hallucinated evidence, no displayed extra numbers, no unsupported claims of verified accuracy, and adaptive behavioural claims must be grounded in the block history.
-
-## Engagement
-- 8-round map remains visible throughout the task.
-- A 13-dot micro-progress strip fills within each round.
-- Round-complete screens use small completion animations and a “score locked until the finish” cue.
-- No trial-by-trial or round-by-round accuracy feedback is given.
-- No rewards for following the AI, moving toward advice, speed, or agreement are used.
-- End-only summary now shows first-estimate score, final-estimate score, closest final estimate, and the number of trials on which the final estimate was closer to truth.
-
-## Study screens
-- Instructions frame the task as an estimation game with a simple accuracy goal.
-- Consent text is shorter and describes 8 rounds rather than foregrounding “104 images.”
-- Researcher controls and diagnostic overlay are unchanged.
-
-## Not changed
-- 8 conditions × 13 experimental trials.
-- NEW25 numerical advice schedules and exact +25% / -25% means.
-- Counterbalancing and stimulus assignment.
-- Adaptive adviser receives complete earlier within-block history.
-- Trust/feeling ratings remain after trials 2, 4, 6, 8, 10, and 12.
-- No correctness feedback occurs before the experiment is complete.
-
-
-## v6.1 — latency pass
-- Gemini default changed to `gemini-3.5-flash-lite` with `minimal` thinking.
-- Advice wording is prefetched while the dot image is on screen, hiding most model latency.
-- Validation uses one model attempt, then a safe fallback, instead of up to three sequential calls.
-- Gemini output cap reduced to 32 tokens.
-- Removed the artificial 700 ms minimum delay (`ADVISER_MIN_DELAY_MS=0`).
-- Adaptive prefetch still uses the complete completed history from the current block; it simply does not use the current trial's initial estimate before that estimate exists.
+Mechanical and browser tests establish routing/functionality, not a human adaptive-versus-static effect. Live latency/fallback and text quality are separate pilot checks. Legacy v6 deployment/migration documents are historical; README describes the current build.

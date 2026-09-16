@@ -11,6 +11,7 @@ import os
 import json
 import datetime as dt
 from typing import Any, Dict, List, Optional
+from contextlib import contextmanager
 
 from sqlalchemy import (
     create_engine, MetaData, Table, Column, Integer, String, Float, Text,
@@ -110,7 +111,7 @@ def create_participant(pid: str, participant_index: int, external_id: Optional[s
         con.execute(insert(participants).values(
             pid=pid, participant_index=participant_index, external_id=external_id,
             modality=modality, condition_order=json.dumps(condition_order),
-            consented=True, started_at=dt.datetime.utcnow(), notes=notes,
+            consented=True, started_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None), notes=notes,
         ))
 
 
@@ -119,26 +120,34 @@ def update_participant(pid: str, **fields: Any) -> None:
         con.execute(update(participants).where(participants.c.pid == pid).values(**fields))
 
 
-def save_trial(row: Dict[str, Any]) -> int:
+def save_trial(row: Dict[str, Any], connection=None) -> int:
     row = dict(row)
-    row["created_at"] = dt.datetime.utcnow()
+    row["created_at"] = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
     allowed = {c.name for c in trials.columns}
     row = {k: v for k, v in row.items() if k in allowed}
-    with engine.begin() as con:
-        res = con.execute(insert(trials).values(**row))
+    if connection is not None:
+        res = connection.execute(insert(trials).values(**row))
+    else:
+        with engine.begin() as con:
+            res = con.execute(insert(trials).values(**row))
     return int(res.inserted_primary_key[0])
 
 
-def block_history(pid: str, condition_id: str) -> List[Dict[str, Any]]:
+def block_history(pid: str, condition_id: str, connection=None) -> List[Dict[str, Any]]:
     """Completed trials in the current block, for the adaptive adviser."""
-    with engine.begin() as con:
-        rows = con.execute(
+    def read(con):
+        return con.execute(
             select(trials.c.trial_position, trials.c.initial_estimate, trials.c.advice_number,
                    trials.c.advice_text, trials.c.final_estimate,
                    trials.c.trust_rating, trials.c.feeling_rating)
             .where(trials.c.pid == pid, trials.c.condition_id == condition_id)
             .order_by(trials.c.trial_position)
         ).mappings().all()
+    if connection is not None:
+        rows = read(connection)
+    else:
+        with engine.begin() as con:
+            rows = read(con)
     return [dict(r) for r in rows]
 
 
@@ -163,9 +172,96 @@ def messages_for_rating(rater_id: str, limit: int = 40) -> List[Dict[str, Any]]:
 
 def save_rating(row: Dict[str, Any]) -> None:
     row = dict(row)
-    row["created_at"] = dt.datetime.utcnow()
+    row["created_at"] = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
     with engine.begin() as con:
         con.execute(insert(message_ratings).values(**row))
+
+
+# Additive pilot schema. Existing participant/trial tables are left intact.
+runtime_sessions = Table(
+    "runtime_sessions", meta, Column("pid", String(64), primary_key=True),
+    Column("payload", Text, nullable=False), Column("updated_at", DateTime),
+)
+trial_diagnostics = Table(
+    "trial_diagnostics", meta, Column("id", Integer, primary_key=True),
+    Column("pid", String(64), index=True), Column("global_trial", Integer),
+    Column("payload", Text, nullable=False), Column("created_at", DateTime),
+)
+study_counters = Table(
+    "study_counters", meta, Column("name", String(32), primary_key=True),
+    Column("value", Integer, nullable=False),
+)
+
+
+@contextmanager
+def write_transaction():
+    """Serialize SQLite writers; use row locks for Postgres session updates."""
+    with engine.connect() as con:
+        if engine.dialect.name == "sqlite":
+            con.exec_driver_sql("BEGIN IMMEDIATE")
+        else:
+            con.begin()
+        try:
+            yield con
+            con.commit()
+        except BaseException:
+            con.rollback()
+            raise
+
+
+def create_session(pid, config, external_id=None):
+    with write_transaction() as con:
+        if config["is_test"]:
+            index = config.get("test_index", 0)
+        else:
+            existing = con.execute(select(func.max(participants.c.participant_index)).where(participants.c.notes.is_(None))).scalar()
+            start = (existing + 1) if existing is not None else 0
+            if engine.dialect.name == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert as upsert
+            else:
+                from sqlalchemy.dialects.sqlite import insert as upsert
+            con.execute(upsert(study_counters).values(name="production", value=start).on_conflict_do_nothing(index_elements=["name"]))
+            index = con.execute(select(study_counters.c.value).where(study_counters.c.name == "production").with_for_update()).scalar_one()
+            con.execute(update(study_counters).where(study_counters.c.name == "production").values(value=index + 1))
+        import design
+        con.execute(insert(participants).values(pid=pid, participant_index=index, external_id=external_id,
+            modality="text", condition_order=json.dumps(design.balanced_condition_order(index)), consented=True,
+            started_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None), notes="TEST" if config["is_test"] else None))
+        payload = {"participant_index": index, "cursor": 0, "config": config, "pending": None,
+                   "token": None, "last_token": None, "last_payload": None, "complete": False}
+        con.execute(insert(runtime_sessions).values(pid=pid, payload=json.dumps(payload), updated_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)))
+    return index
+
+
+@contextmanager
+def session_transaction(pid):
+    with write_transaction() as con:
+        row = con.execute(select(runtime_sessions.c.payload).where(runtime_sessions.c.pid == pid).with_for_update()).scalar_one_or_none()
+        if row is None:
+            raise KeyError("Session not found")
+        payload = json.loads(row)
+        yield con, payload
+        con.execute(update(runtime_sessions).where(runtime_sessions.c.pid == pid).values(payload=json.dumps(payload), updated_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)))
+
+
+def session_data(pid):
+    with engine.connect() as con:
+        row = con.execute(select(runtime_sessions.c.payload).where(runtime_sessions.c.pid == pid)).scalar_one_or_none()
+    return json.loads(row) if row else None
+
+
+def save_diagnostics(con, pid, global_trial, payload):
+    con.execute(insert(trial_diagnostics).values(pid=pid, global_trial=global_trial,
+        payload=json.dumps(payload), created_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)))
+
+
+def diagnostic_rows(pid=None):
+    with engine.connect() as con:
+        query = select(trial_diagnostics)
+        if pid:
+            query = query.where(trial_diagnostics.c.pid == pid)
+        rows = con.execute(query).mappings().all()
+    return [dict(id=r["id"], pid=r["pid"], created_at=r["created_at"].isoformat(), **json.loads(r["payload"])) for r in rows]
 
 
 def participant_summary(pid: str) -> Optional[Dict[str, Any]]:
@@ -214,3 +310,4 @@ def participant_summary(pid: str) -> Optional[Dict[str, Any]]:
         "mean_abs_pct_error": round(mean_final, 1),
         "closest_dots": min(final_abs),
     }
+

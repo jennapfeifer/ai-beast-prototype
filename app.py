@@ -1,601 +1,453 @@
-"""
-AI-BEAST — human study web app.
-
-Flow: consent -> instructions -> 1 warm-up trial -> 8 rounds x 13 trials
-      (checkpoint/break between rounds) -> debrief.
-
-Per trial: image -> click-on-line initial estimate -> AI number + short note -> number-line final estimate ->
-           periodic trust + feeling ratings.
-
-The true count is never shown to the participant. Numerical advice follows NEW25;
-static/adaptive wording uses the historical broad-persuasion policy in adviser.py.
-"""
+"""BEAST Fieldwork: the human experiment, with separate protected pilot tools."""
 from __future__ import annotations
-
-import csv
-import io
-import logging
-import os
-import random
-import time
-import uuid
-
-from flask import (
-    Flask, Response, abort, jsonify, redirect, render_template, request, session, url_for,
-)
-
-import design
-import store
-from adviser import resolved_provider, resolved_model, generate_message
-
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("app")
+import csv, datetime as dt, hashlib, hmac, io, json, logging, math, os, secrets, time, uuid, zipfile
+from pathlib import Path
+from urllib.parse import urlsplit
+from flask import Flask, Response, abort, jsonify, redirect, render_template, request, session, url_for, send_file
+from sqlalchemy import update
+import adviser, design, store
+from pilot import build_report, timing_projection
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "dev-key-change-me")
-app.config.update(SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_HTTPONLY=True)
-
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
-ADVISER_MIN_DELAY_MS = int(os.getenv("ADVISER_MIN_DELAY_MS", "0"))
-STIMULUS_MS = int(os.getenv("STIMULUS_MS", "5000"))  # 0 = untimed
-COLLECT_RATINGS = os.getenv("COLLECT_RATINGS", "1") not in {"0", "false"}
-RATING_EVERY = max(1, int(os.getenv("RATING_EVERY", "2")))
-PREFILL_FINAL = os.getenv("PREFILL_FINAL", "0") not in {"0", "false"}
-RESEARCHER_MODE = os.getenv("RESEARCHER_MODE", "0") not in {"0", "false"}
-SHOW_END_SCORE = os.getenv("SHOW_END_SCORE", "1") not in {"0", "false"}
-
+app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
+ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
+ACCESS_CODE = os.getenv('ACCESS_CODE', '')
+ADMIN_TOKEN = os.getenv('ADMIN_TOKEN', '')
+if ON_RENDER and (not ACCESS_CODE or not ADMIN_TOKEN or not os.getenv('SECRET_KEY')):
+    raise RuntimeError('Private pilot requires ACCESS_CODE, ADMIN_TOKEN and SECRET_KEY in Render Environment.')
+app.config.update(SESSION_COOKIE_SAMESITE='Lax',SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=ON_RENDER,
+                  MAX_CONTENT_LENGTH=64*1024)
+STUDY_MODE = os.getenv('STUDY_MODE','pilot')
+ADVISER_MODE = os.getenv('ADVISER_MODE','offline')
+ADVISER_MIN_DELAY_MS = int(os.getenv('ADVISER_MIN_DELAY_MS','0'))
+STIMULUS_MS = int(os.getenv('STIMULUS_MS','5000'))
+FIXATION_MS = int(os.getenv('FIXATION_MS','450'))
+COLLECT_RATINGS = os.getenv('COLLECT_RATINGS','1').lower() not in {'0','false'}
+RATING_EVERY = max(1,int(os.getenv('RATING_EVERY','2')))
+PREFILL_FINAL = True  # The v6 final slider starts at the participant's initial estimate.
+SHOW_END_SCORE = os.getenv('SHOW_END_SCORE','1').lower() not in {'0','false'}
+STUDY_CONTACT = os.getenv('STUDY_CONTACT','')
+ETHICS_DETAILS = os.getenv('ETHICS_DETAILS','')
+logging.basicConfig(level=logging.INFO)
+from assets import ensure_stimuli
+ensure_stimuli()
 store.init_db()
 
 
-def _truthy(value):
-    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+def csrf():
+    if 'csrf' not in session: session['csrf'] = secrets.token_urlsafe(24)
+    return session['csrf']
 
 
-# --- session helpers --------------------------------------------------------
-
-def full_schedule(participant_index: int):
-    """Practice trials plus the participant's 104-trial schedule.
-
-    Researcher mode may filter conditions / shorten blocks for testing. The
-    underlying counterbalanced order is not changed; test sessions are flagged.
-    """
-    sched = design.build_schedule(participant_index)
-    only = session.get("only_conditions")
-    if only:
-        sched = [t for t in sched if t["condition_id"] in only]
-    n = session.get("trials_per_block")
-    if n:
-        sched = [t for t in sched if t["trial_position"] <= n]
-    practice = [] if session.get("skip_practice") else design.practice_schedule()
-    return practice + sched
+@app.context_processor
+def context():
+    return dict(csrf_token=csrf(), is_researcher=bool(session.get('researcher')), study_mode=STUDY_MODE,
+                contact=STUDY_CONTACT, ethics_details=ETHICS_DETAILS)
 
 
-def current_trial():
-    idx = session.get("cursor", 0)
-    sched = full_schedule(session["participant_index"])
-    if idx >= len(sched):
-        return None, sched
-    return sched[idx], sched
+@app.before_request
+def access():
+    if request.path.startswith('/static/stimuli/'):
+        abort(404)
+    if request.path == '/healthz': return
+    if ACCESS_CODE and not session.get('access') and request.endpoint not in {'unlock','static'} and not is_admin():
+        if request.path.startswith('/api/'): return jsonify(error='Unlock this private pilot first.'),403
+        return redirect(url_for('unlock'))
+    if request.method == 'POST':
+        origin = request.headers.get('Origin')
+        if origin and urlsplit(origin).netloc != request.host: abort(403)
+        token = request.headers.get('X-CSRF-Token') or request.form.get('csrf_token','')
+        if not session.get('csrf') or not hmac.compare_digest(str(token),session['csrf']):
+            return jsonify(error='Session expired. Reload the page and try again.'),403
+
+
+@app.after_request
+def headers(response):
+    response.headers['Cache-Control']='no-store'
+    response.headers['X-Content-Type-Options']='nosniff'
+    response.headers['Referrer-Policy']='same-origin'
+    response.headers['X-Frame-Options']='DENY'
+    return response
+
+
+@app.route('/unlock',methods=['GET','POST'])
+def unlock():
+    error=None
+    if request.method=='POST':
+        if ACCESS_CODE and hmac.compare_digest(request.form.get('code',''),ACCESS_CODE):
+            session['access']=True
+            return redirect(url_for('consent'))
+        error='That access code was not recognised.'
+    return render_template('unlock.html',error=error)
 
 
 def require_session():
-    if "pid" not in session:
-        abort(403, "No active session. Start from the beginning.")
+    pid=session.get('pid')
+    if not pid or not store.session_data(pid): abort(403,'No active session. Start from the beginning.')
+    return pid
 
 
-# --- pages ------------------------------------------------------------------
+def is_admin():
+    bearer=request.headers.get('Authorization','')
+    return bool(session.get('researcher') or (ADMIN_TOKEN and hmac.compare_digest(bearer,'Bearer '+ADMIN_TOKEN)))
 
-@app.route("/")
+
+def require_admin():
+    if not is_admin(): abort(403)
+
+
+def schedule(data):
+    conf=data['config']
+    rows=design.build_schedule(data['participant_index'])
+    if conf.get('conditions'): rows=[r for r in rows if r['condition_id'] in conf['conditions']]
+    if conf.get('trials_per_block'): rows=[r for r in rows if r['trial_position']<=conf['trials_per_block']]
+    return ([] if conf.get('skip_practice') else design.practice_schedule())+rows
+
+
+def ratings_due(trial):
+    return COLLECT_RATINGS and trial['condition_id']!='PRACTICE' and trial['trial_position']%RATING_EVERY==0
+
+
+def current(data):
+    sched=schedule(data)
+    return (sched[data['cursor']] if data['cursor']<len(sched) else None),sched
+
+
+def ensure_token(data):
+    if not data.get('token'): data['token']=secrets.token_urlsafe(24)
+    return data['token']
+
+
+def integer(value,minimum=1,maximum=design.MAX_ESTIMATE):
+    if isinstance(value,bool): raise ValueError('Enter a whole number.')
+    try: n=float(value)
+    except (ValueError,TypeError): raise ValueError('Enter a whole number.')
+    if not math.isfinite(n) or n!=int(n) or not minimum<=n<=maximum:
+        raise ValueError(f'Enter a whole number between {minimum} and {maximum}.')
+    return int(n)
+
+
+def milliseconds(value):
+    if value is None: return None
+    return integer(value,0,86400000)
+
+
+@app.route('/')
 def consent():
-    return render_template(
-        "consent.html",
-        external_id=request.args.get("PROLIFIC_PID", ""),
-        # Test-session parameters survive POST /start only in researcher mode.
-        researcher_mode=RESEARCHER_MODE,
-        conditions=request.args.get("conditions", "") if RESEARCHER_MODE else "",
-        trials=request.args.get("trials", "") if RESEARCHER_MODE else "",
-        skip_practice=request.args.get("skip_practice", "") if RESEARCHER_MODE else "",
-        test_index=request.args.get("test_index", "0") if RESEARCHER_MODE else "0",
-        condition_defs=design.CONDITIONS if RESEARCHER_MODE else {},
-    )
+    active=store.session_data(session['pid']) if session.get('pid') else None
+    return render_template('consent.html',external_id=request.args.get('PROLIFIC_PID',''),active=bool(active and not active['complete']),
+                           pilot=STUDY_MODE!='production',ratings=COLLECT_RATINGS,rating_every=RATING_EVERY)
 
 
-@app.post("/start")
+@app.post('/start')
 def start():
-    # Parse researcher-only test controls BEFORE assigning the participant index.
-    # Test sessions are marked TEST immediately and do not consume production
-    # counterbalancing rows.
-    picked = []
-    trials_per_block = None
-    skip_practice = False
-    test_index = 0
-    is_test = False
-
-    if RESEARCHER_MODE:
-        raw = (request.args.get("conditions") or request.form.get("conditions") or "").upper()
-        picked = [c.strip() for c in raw.replace(";", ",").split(",") if c.strip() in design.CONDITIONS]
-        try:
-            n = int(request.args.get("trials") or request.form.get("trials") or 0)
-            if 0 < n <= len(design.TRUE_COUNTS):
-                trials_per_block = n
-        except ValueError:
-            pass
-        skip_practice = _truthy(request.args.get("skip_practice") or request.form.get("skip_practice"))
-        try:
-            test_index = int(request.args.get("test_index") or request.form.get("test_index") or 0) % 8
-        except ValueError:
-            test_index = 0
-        is_test = bool(picked or trials_per_block or skip_practice or request.form.get("researcher_test"))
-
-    participant_index = test_index if is_test else store.next_participant_index()
-    pid = uuid.uuid4().hex[:12]
-    order = design.balanced_condition_order(participant_index)
-
-    store.create_participant(
-        pid=pid,
-        participant_index=participant_index,
-        external_id=request.form.get("external_id") or None,
-        modality="text",
-        condition_order=order,
-        notes="TEST" if is_test else None,
-    )
-    session.clear()
-
-    if is_test:
-        if picked:
-            session["only_conditions"] = picked
-        if trials_per_block and trials_per_block < len(design.TRUE_COUNTS):
-            session["trials_per_block"] = trials_per_block
-        if skip_practice:
-            session["skip_practice"] = True
-        session["test_index"] = test_index
-
-    session["pid"] = pid
-    session["participant_index"] = participant_index
-    session["cursor"] = 0
-    session["pending"] = None
-    session["prefetched"] = None
-    return redirect(url_for("instructions"))
+    if request.form.get('consent')!='yes': return 'Please confirm your consent before starting.',400
+    researcher=bool(session.get('researcher') and request.form.get('researcher_test')=='1')
+    mode=request.form.get('adviser_mode',ADVISER_MODE) if researcher else ADVISER_MODE
+    if mode not in {'offline','live'}: return 'Invalid adviser mode.',400
+    if mode=='live' and not adviser.has_api_key(): return 'Live adviser key is not configured. Use an offline pilot or configure the key on the server.',400
+    if STUDY_MODE=='production' and not researcher and (mode!='live' or not STUDY_CONTACT or not ETHICS_DETAILS):
+        return 'Production is not configured: live adviser, approved study information and contact details are required.',503
+    conditions=[]
+    n=13
+    if researcher:
+        conditions=[x for x in request.form.getlist('conditions') if x in design.CONDITIONS]
+        try: n=integer(request.form.get('trials','13'),1,13)
+        except ValueError as e: return str(e),400
+    conf=dict(conditions=conditions,trials_per_block=n,skip_practice=researcher and request.form.get('skip_practice')=='1',
+              test_index=integer(request.form.get('test_index','0'),0,7) if researcher else 0,
+              adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
+              ui_version='fieldwork-2.1-prefetch',started_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat())
+    pid=uuid.uuid4().hex[:12]
+    store.create_session(pid,conf,(request.form.get('external_id') or '')[:128] or None)
+    session['pid']=pid
+    return redirect(url_for('instructions'))
 
 
-@app.route("/instructions")
+@app.route('/instructions')
 def instructions():
-    require_session()
-    return render_template("instructions.html", skip_practice=bool(session.get("skip_practice")))
+    pid=require_session();data=store.session_data(pid);sched=schedule(data)
+    return render_template('instructions.html',n_trials=sum(r['condition_id']!='PRACTICE' for r in sched),
+      n_blocks=len({r['condition_id'] for r in sched if r['condition_id']!='PRACTICE'}),practice=not data['config']['skip_practice'],
+      stimulus_seconds=STIMULUS_MS/1000,ratings=COLLECT_RATINGS,rating_every=RATING_EVERY,pilot=data['config']['is_test'])
 
 
-@app.route("/task")
+@app.route('/task')
 def task():
-    require_session()
-    return render_template(
-        "task.html",
-        min_delay=ADVISER_MIN_DELAY_MS,
-        stimulus_ms=STIMULUS_MS,
-        collect_ratings=int(COLLECT_RATINGS),
-        rating_every=RATING_EVERY,
-        prefill_final=int(PREFILL_FINAL),
-        researcher_mode=int(RESEARCHER_MODE),
-        n_practice=len(design.PRACTICE_COUNTS),
-        n_trials=len(design.TRUE_COUNTS) * len(design.CONDITIONS),
-    )
+    pid=require_session();data=store.session_data(pid)
+    return render_template('task.html',config=dict(csrf=csrf(),min_delay_ms=ADVISER_MIN_DELAY_MS,stimulus_ms=STIMULUS_MS,
+        fixation_ms=FIXATION_MS,collect_ratings=COLLECT_RATINGS,rating_every=RATING_EVERY,prefill_final=PREFILL_FINAL,
+        researcher_mode=bool(session.get('researcher') and data['config'].get('researcher')),max_estimate=design.MAX_ESTIMATE,
+        pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline'))
 
 
-@app.route("/debrief")
-def debrief():
-    pid = session.get("pid")
-    summary = None
-    if pid:
-        store.update_participant(pid, debriefed=True)
-        if SHOW_END_SCORE:
-            summary = store.participant_summary(pid)
-    return render_template("debrief.html", summary=summary, show_end_score=SHOW_END_SCORE)
-
-
-# --- trial API --------------------------------------------------------------
-
-@app.get("/api/state")
+@app.get('/api/state')
 def api_state():
-    require_session()
-    trial, sched = current_trial()
-    if trial is None:
-        store.update_participant(
-            session["pid"],
-            finished_at=__import__("datetime").datetime.utcnow(),
-        )
-        return jsonify({"done": True})
-
-    n_practice = 0 if session.get("skip_practice") else len(design.PRACTICE_COUNTS)
-    idx = session["cursor"]
-    is_practice = trial["condition_id"] == "PRACTICE"
-
-    # Display round numbers follow the actually included blocks. In a full study
-    # this is 1..8; in researcher mode a single selected condition displays 1/1.
-    included_conditions = []
-    for x in sched:
-        cid = x["condition_id"]
-        if cid != "PRACTICE" and cid not in included_conditions:
-            included_conditions.append(cid)
-    display_block = (included_conditions.index(trial["condition_id"]) + 1) if not is_practice else 0
-    n_blocks_display = len(included_conditions)
-    n_in_block_display = (
-        sum(1 for x in sched if x["condition_id"] == trial["condition_id"])
-        if not is_practice else len(design.PRACTICE_COUNTS)
-    )
-    show_break = (not is_practice) and trial["trial_position"] == 1 and display_block > 1
-    ratings_due = bool(
-        COLLECT_RATINGS and (not is_practice) and trial["trial_position"] % RATING_EVERY == 0
-    )
-
-    return jsonify({
-        "done": False,
-        "practice": is_practice,
-        "break_due": show_break,
-        "ratings_due": ratings_due,
-        "block": display_block,
-        "n_blocks": n_blocks_display,
-        "trial_in_block": trial["trial_position"],
-        "n_in_block": n_in_block_display,
-        "overall": max(0, idx - n_practice) + 1,
-        "overall_total": len(sched) - n_practice,
-        "image": url_for("static", filename=f"stimuli/{trial['stimulus_id']}.png"),
-        "min_delay_ms": ADVISER_MIN_DELAY_MS,
-        "stimulus_ms": STIMULUS_MS,
-        "researcher": ({
-            "condition": trial["condition_id"],
-            "condition_label": trial["condition_label"],
-            "style": trial["adviser_style"],
-            "direction": trial["direction"],
-            "true_count": trial["true_count"],
-            "stimulus_id": trial["stimulus_id"],
-            "variant": trial["variant"],
-            "pid": session["pid"],
-            "participant_index": session["participant_index"],
-            "condition_order": design.balanced_condition_order(session["participant_index"]),
-            "original_condition_order_position": trial["condition_order_position"],
-            "filter": session.get("only_conditions"),
-            "test_index": session.get("test_index"),
-        } if RESEARCHER_MODE else None),
-    })
+    pid=require_session()
+    with store.session_transaction(pid) as (con,data):
+        trial,sched=current(data)
+        if trial is None: return jsonify(done=True)
+        token=ensure_token(data)
+        practice=trial['condition_id']=='PRACTICE'
+        conditions=list(dict.fromkeys(r['condition_id'] for r in sched if r['condition_id']!='PRACTICE'))
+        experimental=[r for r in sched if r['condition_id']!='PRACTICE']
+        completed=sum(r['condition_id']!='PRACTICE' for r in sched[:data['cursor']])
+        block=0 if practice else conditions.index(trial['condition_id'])+1
+        out=dict(done=False,trial_token=token,practice=practice,block=block,n_blocks=len(conditions),
+                 trial_in_block=trial['trial_position'],n_in_block=sum(r['condition_id']==trial['condition_id'] for r in sched),
+                 overall=completed+1,completed=completed,overall_total=len(experimental),
+                 image=url_for('stimulus',token=token),break_due=not practice and trial['trial_position']==1 and block>1,
+                 ratings_due=ratings_due(trial),rating_window=RATING_EVERY,pending=None,researcher=None)
+        if data['pending']:
+            out['pending']={k:data['pending'][k] for k in ['initial','text','rt_initial','latency_ms','advice']}
+        if session.get('researcher') and data['config'].get('researcher'):
+            out['researcher']=dict(condition=trial['condition_id'],style=trial['adviser_style'],direction=trial['direction'],
+                true_count=trial['true_count'],pid=pid,participant_index=data['participant_index'],mode=data['config']['adviser_mode'],
+                condition_order=conditions,**(data['pending'].get('diagnostic',{}) if data['pending'] else {}))
+        return jsonify(out)
 
 
-@app.post("/api/prefetch")
+@app.get('/stimulus/<token>')
+def stimulus(token):
+    pid=require_session();data=store.session_data(pid);trial,_=current(data)
+    if not trial or data.get('pending') or not data.get('token') or not hmac.compare_digest(token,data['token']):abort(404)
+    return send_file(Path(__file__).parent/'static'/'stimuli'/f"{trial['stimulus_id']}.png",mimetype='image/png',max_age=0)
+
+
+def advice_payload(pending,data):
+    result=dict(advice_text=pending['text'],advice_number=pending['advice'],latency_ms=pending['latency_ms'])
+    if session.get('researcher') and data['config'].get('researcher'):result['researcher']=pending['diagnostic']
+    return result
+
+
+def prepared_advice(con,data,trial,initial):
+    practice=trial['condition_id']=='PRACTICE'
+    style='fixed' if practice else trial['adviser_style']
+    advice=design.clamp_int(initial*1.05) if practice else design.advice_number(trial['condition_id'],trial['true_count'],initial or 100)
+    cached=data.get('prefetched')
+    if style!='fixed' and cached and cached.get('token')==data.get('token') and cached['advice']==advice:
+        return advice,cached['message'],dict(cached['diagnostic'],prefetched=True)
+    rows=[] if practice else store.block_history(data['_pid'],trial['condition_id'],con)
+    history=rows if style=='adaptive' else []
+    generator=adviser.generate_offline_message if data['config']['adviser_mode']=='offline' else adviser.generate_message
+    t=time.perf_counter()
+    # Keep information available to the model identical whether prefetch succeeded
+    # or synchronous generation is needed: current initial estimate is unavailable.
+    msg=generator(style=style,initial=initial if style=='fixed' else None,advice=advice,history=history,
+        previous_messages=[r['advice_text'] for r in rows if r.get('advice_text')],
+        key=f"{data['participant_index']}|{trial['condition_id']}|{trial['trial_position']}")
+    diagnostic=dict(history_rows=len(history),expected_history_rows=trial['trial_position']-1 if style=='adaptive' else 0,
+        history_positions=[r['trial_position'] for r in history],source=msg['source'],attempts=msg['attempts'],
+        validation=msg['validation'],word_count=msg['word_count'],live_model=msg.get('live_model',False),
+        history_route=msg.get('history_route'),generation_ms=round((time.perf_counter()-t)*1000),
+        attempt_log=msg.get('attempt_log',[]),fallback=msg['source'].startswith('fallback:'),
+        initial_context_available=style=='fixed',prefetched=False,provider=adviser.resolved_provider(),
+        model=adviser.resolved_model(),advice=advice)
+    return advice,msg,diagnostic
+
+
+@app.post('/api/prefetch')
 def api_prefetch():
-    """Generate the current trial's AI wording while the dot image is on screen.
-
-    C3-C8 use truth-relative fixed advice, so their advice number is known before
-    the participant enters the current estimate. C1/C2/practice use fixed local
-    wording and therefore need no model call. Adaptive wording may use the full
-    completed history from the current block, but never the current estimate.
-    """
-    require_session()
-    trial, _ = current_trial()
-    if trial is None:
-        return jsonify({"done": True}), 400
-
-    cursor = session.get("cursor", 0)
-    existing = session.get("prefetched")
-    if existing and existing.get("cursor") == cursor:
-        return jsonify({"ok": True, "prefetched": True, "latency_ms": existing.get("latency_ms", 0)})
-
-    cid = trial["condition_id"]
-    style = trial["adviser_style"]
-    if cid == "PRACTICE" or style == "fixed":
-        session["prefetched"] = {"cursor": cursor, "skip": True}
-        session.modified = True
-        return jsonify({"ok": True, "prefetched": False, "latency_ms": 0})
-
-    truth = trial["true_count"]
-    # For C3-C8 the schedule is truth-relative and independent of the current estimate.
-    advice = design.advice_number(cid, truth, truth)
-    block_rows = store.block_history(session["pid"], cid)
-    history = block_rows if style == "adaptive" else []
-    previous_messages = [r.get("advice_text") for r in block_rows if r.get("advice_text")]
-
-    t0 = time.time()
-    msg = generate_message(
-        style=style,
-        initial=None,
-        advice=advice,
-        history=history,
-        previous_messages=previous_messages,
-        key=f"{session['participant_index']}|{cid}|{trial['trial_position']}",
-    )
-    latency_ms = int((time.time() - t0) * 1000)
-    session["prefetched"] = {
-        "cursor": cursor,
-        "condition_id": cid,
-        "trial_position": trial["trial_position"],
-        "advice": advice,
-        "text": msg["text"],
-        "source": msg["source"],
-        "attempts": msg["attempts"],
-        "word_count": msg["word_count"],
-        "validation": msg.get("validation"),
-        "latency_ms": latency_ms,
-        "history_used": len(history),
-        "prior_messages_checked": len(previous_messages),
-    }
-    session.modified = True
-    return jsonify({"ok": True, "prefetched": True, "latency_ms": latency_ms})
+    pid=require_session();body=request.get_json(silent=True) or {}
+    with store.session_transaction(pid) as (con,data):
+        trial,_=current(data)
+        if trial is None or not data.get('token') or body.get('trial_token')!=data.get('token'):
+            return jsonify(error='This trial is no longer current.'),409
+        if data.get('pending') or trial['condition_id']=='PRACTICE' or trial['adviser_style']=='fixed':
+            return jsonify(ok=True,prefetched=False)
+        data['_pid']=pid
+        advice,msg,diagnostic=prepared_advice(con,data,trial,None)
+        data['prefetched']=dict(token=data['token'],advice=advice,message=msg,diagnostic=diagnostic)
+        return jsonify(ok=True,prefetched=True)
 
 
-@app.post("/api/initial")
+@app.post('/api/initial')
 def api_initial():
-    require_session()
-    trial, _ = current_trial()
-    if trial is None:
-        return jsonify({"done": True}), 400
-
-    data = request.get_json(force=True)
-    try:
-        initial = int(round(float(data["estimate"])))
-    except (KeyError, TypeError, ValueError):
-        return jsonify({"error": "Enter a whole number."}), 400
-    if not (1 <= initial <= design.MAX_ESTIMATE):
-        return jsonify({"error": f"Enter a number between 1 and {design.MAX_ESTIMATE}."}), 400
-
-    rt_initial = int(data.get("rt_ms") or 0)
-    truth = trial["true_count"]
-    style = trial["adviser_style"]
-    is_practice = trial["condition_id"] == "PRACTICE"
-
-    if is_practice:
-        advice = design.clamp_int(initial * random.uniform(0.9, 1.1))
-    else:
-        # NEW25 numerical architecture: truth-relative fixed schedules in C3-C8.
-        advice = design.advice_number(trial["condition_id"], truth, initial)
-
-    # Completed rows in this block are used in two different ways:
-    # - adaptive: ALL details are exposed to the adviser model as persuasion history;
-    # - neutral/static: prior note text is used only by the server-side
-    #   repetition validator and is never shown to the adviser model.
-    block_rows = [] if is_practice else store.block_history(session["pid"], trial["condition_id"])
-    history = block_rows if style == "adaptive" else []
-    previous_messages = [r.get("advice_text") for r in block_rows if r.get("advice_text")]
-
-    # If the wording was prefetched during stimulus viewing, reuse it here.
-    prefetched = session.get("prefetched") or {}
-    use_prefetch = bool(
-        prefetched.get("cursor") == session.get("cursor", 0)
-        and prefetched.get("condition_id") == trial["condition_id"]
-        and prefetched.get("trial_position") == trial["trial_position"]
-        and prefetched.get("advice") == advice
-        and prefetched.get("text")
-    )
-    if use_prefetch:
-        msg = {
-            "text": prefetched["text"],
-            "source": prefetched["source"],
-            "attempts": prefetched["attempts"],
-            "word_count": prefetched["word_count"],
-            "validation": prefetched.get("validation"),
-        }
-        latency_ms = int(prefetched.get("latency_ms") or 0)
-    else:
-        # Practice/C1/C2 are local. This is also a safe synchronous fallback if
-        # prefetch did not complete or was unavailable.
-        generation_style = "fixed" if is_practice else style
-        t0 = time.time()
-        msg = generate_message(
-            style=generation_style,
-            initial=initial,
-            advice=advice,
-            history=history,
-            previous_messages=previous_messages,
-            key=f"{session['participant_index']}|{trial['condition_id']}|{trial['trial_position']}",
-        )
-        latency_ms = int((time.time() - t0) * 1000)
-
-    session["prefetched"] = None
-
-    session["pending"] = {
-        "initial": initial,
-        "advice": advice,
-        "text": msg["text"],
-        "source": msg["source"],
-        "attempts": msg["attempts"],
-        "word_count": msg["word_count"],
-        "rt_initial": rt_initial,
-        "latency_ms": latency_ms,
-    }
-    session.modified = True
-
-    return jsonify({
-        "advice_text": msg["text"],
-        "advice_number": advice,
-        "latency_ms": latency_ms,
-        "researcher": ({
-            "initial": initial,
-            "advice": advice,
-            "true_count": truth,
-            "advice_error_pct": round(design.signed_pct(advice, truth), 1),
-            "initial_error_pct": round(design.signed_pct(initial, truth), 1),
-            "source": msg["source"],
-            "attempts": msg["attempts"],
-            "word_count": msg["word_count"],
-            "validation": msg.get("validation"),
-            "history_used": len(history),
-            "prior_messages_checked": len(previous_messages),
-        } if RESEARCHER_MODE else None),
-    })
+    pid=require_session();body=request.get_json(silent=True) or {}
+    try:initial=integer(body.get('estimate'));rt=milliseconds(body.get('rt_ms'))
+    except ValueError as e:return jsonify(error=str(e)),400
+    with store.session_transaction(pid) as (con,data):
+        trial,_=current(data)
+        if trial is None or body.get('trial_token')!=data.get('token'):return jsonify(error='This trial is no longer current. Reload to resume.'),409
+        if data['pending']:
+            if data['pending']['initial']!=initial:return jsonify(error='An initial answer is already recorded for this trial.'),409
+            return jsonify(advice_payload(data['pending'],data))
+        data['_pid']=pid
+        advice,msg,diagnostic=prepared_advice(con,data,trial,initial)
+        elapsed=diagnostic['generation_ms']
+        pending=dict(initial=initial,advice=advice,text=msg['text'],source=msg['source'],attempts=msg['attempts'],
+            word_count=msg['word_count'],rt_initial=rt,latency_ms=elapsed,diagnostic=diagnostic,
+            initial_telemetry=body.get('telemetry') if isinstance(body.get('telemetry'),dict) else {})
+        data['pending']=pending
+        return jsonify(advice_payload(pending,data))
 
 
-@app.post("/api/final")
+TIMING_FIELDS=['fixation_ms','stimulus_load_ms','stimulus_visible_ms','initial_active_ms','initial_wall_ms',
+    'advice_wait_ms','final_active_ms','final_wall_ms','rating_ms','break_ms','total_wall_ms','total_active_ms',
+    'hidden_ms','visibility_interruptions','resumed','viewport_width','viewport_height','device_pixel_ratio',
+    'stimulus_render_width','stimulus_render_height','prefetch_request_ms','prefetch_remaining_ms']
+
+
+def clean_timing(body):
+    if not isinstance(body,dict):return {}
+    result={}
+    for key in TIMING_FIELDS:
+        v=body.get(key)
+        if v is None:continue
+        if isinstance(v,bool):v=int(v)
+        try:v=float(v)
+        except (ValueError,TypeError):raise ValueError('Invalid timing value.')
+        if not math.isfinite(v) or not 0<=v<=86400000:raise ValueError('Invalid timing value.')
+        result[key]=round(v,3)
+    return result
+
+
+@app.post('/api/final')
 def api_final():
-    require_session()
-    trial, _ = current_trial()
-    pending = session.get("pending")
-    if trial is None or not pending:
-        return jsonify({"error": "No trial in progress."}), 400
-
-    data = request.get_json(force=True)
+    pid=require_session();body=request.get_json(silent=True) or {}
     try:
-        final = int(round(float(data["estimate"])))
-    except (KeyError, TypeError, ValueError):
-        return jsonify({"error": "Enter a whole number."}), 400
-    if not (1 <= final <= design.MAX_ESTIMATE):
-        return jsonify({"error": f"Enter a number between 1 and {design.MAX_ESTIMATE}."}), 400
-
-    trust = data.get("trust")
-    feeling = data.get("feeling")
-    trust = int(trust) if trust not in (None, "") else None
-    feeling = int(feeling) if feeling not in (None, "") else None
-
-    if trial["condition_id"] != "PRACTICE":
-        truth = trial["true_count"]
-        initial, advice = pending["initial"], pending["advice"]
-        store.save_trial({
-            "pid": session["pid"],
-            "participant_index": session["participant_index"],
-            "global_trial": trial["global_trial"],
-            "condition_id": trial["condition_id"],
-            "condition_label": trial["condition_label"],
-            "adviser_style": trial["adviser_style"],
-            "direction": trial["direction"],
-            "condition_order_position": trial["condition_order_position"],
-            "trial_position": trial["trial_position"],
-            "stimulus_id": trial["stimulus_id"],
-            "true_count": truth,
-            "variant": trial["variant"],
-            "initial_estimate": initial,
-            "advice_number": advice,
-            "advice_text": pending["text"],
-            "advice_source": pending["source"],
-            "advice_attempts": pending["attempts"],
-            "advice_word_count": pending["word_count"],
-            "final_estimate": final,
-            "trust_rating": trust,
-            "feeling_rating": feeling,
-            "initial_error_pct": design.signed_pct(initial, truth),
-            "final_error_pct": design.signed_pct(final, truth),
-            "advice_error_pct": design.signed_pct(advice, truth),
-            "woa": design.woa(initial, final, advice),
-            "rt_initial_ms": pending["rt_initial"],
-            "rt_final_ms": int(data.get("rt_ms") or 0),
-            "advice_latency_ms": pending["latency_ms"],
-            # Legacy schema fields retained for backwards-compatible exports.
-            "audio_played": False,
-            "modality": "text",
-        })
-
-    session["cursor"] = session.get("cursor", 0) + 1
-    session["pending"] = None
-    session["prefetched"] = None
-    session.modified = True
-    return jsonify({"ok": True})
+        final=integer(body.get('estimate'));rt=milliseconds(body.get('rt_ms'));timing=clean_timing(body.get('telemetry'))
+    except ValueError as e:return jsonify(error=str(e)),400
+    token=body.get('trial_token')
+    with store.session_transaction(pid) as (con,data):
+        signature={k:body.get(k) for k in ['estimate','trust','feeling']}
+        if token and token==data.get('last_token'):
+            if signature!=data.get('last_payload'):return jsonify(error='This trial was already saved with different responses.'),409
+            return jsonify(ok=True,already_saved=True)
+        trial,sched=current(data);pending=data.get('pending')
+        if trial is None or not pending or token!=data.get('token'):return jsonify(error='No matching trial in progress. Reload to resume.'),409
+        try:
+            trust=integer(body.get('trust'),1,7) if ratings_due(trial) else None
+            feeling=integer(body.get('feeling'),1,7) if ratings_due(trial) else None
+        except ValueError:return jsonify(error='Please answer both check-in questions from 1 to 7.'),400
+        timing={**clean_timing(pending.get('initial_telemetry')),**timing}
+        initial,advice=pending['initial'],pending['advice'];truth=trial['true_count'];practice=trial['condition_id']=='PRACTICE'
+        if not practice:
+            row=dict(trial,pid=pid,participant_index=data['participant_index'],initial_estimate=initial,advice_number=advice,
+                advice_text=pending['text'],advice_source=pending['source'],advice_attempts=pending['attempts'],
+                advice_word_count=pending['word_count'],final_estimate=final,trust_rating=trust,feeling_rating=feeling,
+                initial_error_pct=design.signed_pct(initial,truth),final_error_pct=design.signed_pct(final,truth),
+                advice_error_pct=design.signed_pct(advice,truth),woa=design.woa(initial,final,advice),
+                rt_initial_ms=pending['rt_initial'],rt_final_ms=rt,advice_latency_ms=pending['latency_ms'],audio_played=False,modality='text')
+            store.save_trial(row,con)
+        diagnostic=dict(pending['diagnostic'],**timing,condition_id=trial['condition_id'],trial_position=trial['trial_position'],
+            global_trial=trial['global_trial'],practice=practice,is_test=data['config']['is_test'],
+            adviser_mode=data['config']['adviser_mode'],target_stimulus_ms=STIMULUS_MS,target_wait_ms=ADVISER_MIN_DELAY_MS,
+            ratings_due=ratings_due(trial),timing_complete=all(k in timing for k in ['total_wall_ms','advice_wait_ms','stimulus_visible_ms','rating_ms']))
+        store.save_diagnostics(con,pid,trial['global_trial'],diagnostic)
+        data['cursor']+=1;data['pending']=None;data['prefetched']=None;data['last_token']=token;data['last_payload']=signature;data['token']=None
+        if data['cursor']>=len(sched):
+            data['complete']=True
+            con.execute(update(store.participants).where(store.participants.c.pid==pid).values(finished_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)))
+        return jsonify(ok=True)
 
 
-@app.post("/api/demographics")
-def api_demographics():
-    require_session()
-    d = request.get_json(force=True)
-    age = d.get("age")
-    store.update_participant(
-        session["pid"],
-        age=int(age) if str(age).isdigit() else None,
-        gender=(d.get("gender") or None),
-    )
-    return jsonify({"ok": True})
+@app.route('/debrief')
+def debrief():
+    pid=require_session();data=store.session_data(pid)
+    if not data['complete']:return redirect(url_for('task'))
+    store.update_participant(pid,debriefed=True)
+    return render_template('debrief.html',pid=pid,pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline',
+        completed=sum(not r['practice'] for r in store.diagnostic_rows(pid)),summary=store.participant_summary(pid) if SHOW_END_SCORE else None)
 
 
-# --- blind message rating ---------------------------------------------------
-
-@app.route("/rate")
-def rate():
-    if not COLLECT_RATINGS:
-        abort(404)
-    rater = request.args.get("rater") or uuid.uuid4().hex[:8]
-    items = store.messages_for_rating(rater, limit=40)
-    return render_template("rate.html", rater=rater, items=items)
-
-
-@app.post("/api/rate")
-def api_rate():
-    d = request.get_json(force=True)
-    store.save_rating({
-        "rater_id": d["rater_id"],
-        "trial_id": int(d["trial_id"]),
-        "personalization": int(d["personalization"]),
-        "warmth": int(d["warmth"]),
-        "valence": int(d["valence"]),
-        "directiveness": int(d["directiveness"]),
-        "convincingness": int(d["convincingness"]),
-    })
-    return jsonify({"ok": True})
+@app.route('/researcher',methods=['GET','POST'])
+def researcher():
+    error=None
+    if request.method=='POST':
+        if ADMIN_TOKEN and hmac.compare_digest(request.form.get('token',''),ADMIN_TOKEN):session['researcher']=True
+        else:error='Researcher token not recognised.'
+    if not session.get('researcher'):return render_template('researcher_login.html',error=error,configured=bool(ADMIN_TOKEN))
+    records=store.diagnostic_rows();people=store.export_rows(store.participants)
+    return render_template('researcher.html',conditions=design.CONDITIONS,report=build_report(records,people),
+        has_key=adviser.has_api_key(),model=adviser.ADVISER_MODEL,stimulus_ms=STIMULUS_MS,
+        delay_ms=ADVISER_MIN_DELAY_MS,rating_every=RATING_EVERY,projection=timing_projection(
+            wait_s=ADVISER_MIN_DELAY_MS/1000,stimulus_s=STIMULUS_MS/1000,fixation_s=FIXATION_MS/1000,
+            rating_every=RATING_EVERY,collect_ratings=COLLECT_RATINGS))
 
 
-# --- export -----------------------------------------------------------------
-
-def _csv_text(rows):
-    if not rows:
-        return ""
-    buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
-    w.writeheader()
-    w.writerows(rows)
-    return buf.getvalue()
-
-
-def _csv_response(rows, name):
-    return Response(
-        _csv_text(rows), mimetype="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={name}"},
-    )
-
-
-def _admin_authorized():
-    return bool(ADMIN_TOKEN and request.args.get("token") == ADMIN_TOKEN)
-
-
-@app.get("/admin")
+@app.route('/admin')
 def admin_downloads():
-    if not _admin_authorized():
-        abort(403)
-    token = request.args.get("token")
-    # Small built-in page: avoids another template just for researcher downloads.
-    return f"""<!doctype html><html><head><meta charset='utf-8'><title>AI-BEAST downloads</title>
-    <style>body{{font-family:system-ui;max-width:720px;margin:3rem auto;padding:0 1rem;line-height:1.5}}
-    a{{display:inline-block;margin:.35rem .5rem .35rem 0;padding:.6rem .9rem;border:1px solid #ccc;border-radius:6px;text-decoration:none;color:#111}}</style>
-    </head><body><h1>AI-BEAST data downloads</h1>
-    <p><a href='/admin/export/all.zip?token={token}'>Download everything (.zip)</a></p>
-    <p><a href='/admin/export/trials.csv?token={token}'>Trial-level results</a>
-    <a href='/admin/export/participants.csv?token={token}'>Participant table</a>
-    <a href='/admin/export/ratings.csv?token={token}'>Blind message ratings</a></p>
-    <p><small>TEST sessions are marked in participants.csv (notes=TEST). Exclude those from the real analysis.</small></p>
-    </body></html>"""
+    return redirect(url_for('researcher'))
 
 
-@app.get("/admin/export/all.zip")
-def export_all_zip():
-    if not _admin_authorized():
-        abort(403)
-    mem = io.BytesIO()
-    with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("trials.csv", _csv_text(store.export_rows(store.trials)))
-        z.writestr("participants.csv", _csv_text(store.export_rows(store.participants)))
-        z.writestr("ratings.csv", _csv_text(store.export_rows(store.message_ratings)))
-    mem.seek(0)
-    return send_file(mem, mimetype="application/zip", as_attachment=True, download_name="ai_beast_results.zip")
+@app.get('/api/researcher/status')
+def researcher_status():
+    require_admin()
+    return jsonify(version='fieldwork-2.1-prefetch',provider=adviser.resolved_provider(),model=adviser.resolved_model(),
+        has_key=adviser.has_api_key(),database_dialect=store.engine.dialect.name,study_mode=STUDY_MODE,
+        adviser_mode=ADVISER_MODE,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
+        minimum_wait_ms=ADVISER_MIN_DELAY_MS,stimulus_ms=STIMULUS_MS,private_gate=bool(ACCESS_CODE))
 
 
-@app.get("/admin/export/<what>.csv")
+@app.get('/api/researcher/report')
+def researcher_report():
+    require_admin()
+    return jsonify(build_report(store.diagnostic_rows(),store.export_rows(store.participants)))
+
+
+def csv_text(rows):
+    if not rows:return ''
+    fields=list(dict.fromkeys(k for r in rows for k in r))
+    out=io.StringIO();writer=csv.DictWriter(out,fieldnames=fields);writer.writeheader()
+    for row in rows:
+        cleaned={k:json.dumps(v) if isinstance(v,(dict,list)) else v for k,v in row.items()}
+        # Avoid spreadsheet formula execution when opening free-text exports.
+        cleaned={k:("'"+v if isinstance(v,str) and v.startswith(('=','+','-','@','\t','\r')) else v) for k,v in cleaned.items()}
+        writer.writerow(cleaned)
+    return out.getvalue()
+
+
+def export_tables():
+    diagnostics=store.diagnostic_rows();people=store.export_rows(store.participants)
+    return dict(trials=store.export_rows(store.trials),participants=people,ratings=store.export_rows(store.message_ratings),
+                diagnostics=diagnostics,timing_summary=build_report(diagnostics,people)['conditions'])
+
+
+@app.get('/admin/export/<what>.csv')
 def export(what):
-    if not _admin_authorized():
-        abort(403)
-    table = {
-        "trials": store.trials,
-        "participants": store.participants,
-        "ratings": store.message_ratings,
-    }.get(what)
-    if table is None:
-        abort(404)
-    return _csv_response(store.export_rows(table), f"{what}.csv")
+    require_admin();tables=export_tables()
+    if what not in tables:abort(404)
+    return Response(csv_text(tables[what]),mimetype='text/csv',headers={'Content-Disposition':f'attachment; filename={what}.csv'})
 
 
-@app.get("/healthz")
-def healthz():
-    return jsonify({"ok": True, "adviser_provider": resolved_provider(), "adviser_model": resolved_model(), "delivery": "text-only", "rating_every": RATING_EVERY})
+@app.get('/admin/export/all.zip')
+def export_all_zip():
+    require_admin();tables=export_tables();memory=io.BytesIO()
+    with zipfile.ZipFile(memory,'w',zipfile.ZIP_DEFLATED) as z:
+        for name,rows in tables.items():z.writestr(name+'.csv',csv_text(rows))
+        z.writestr('pilot_report.json',json.dumps(build_report(tables['diagnostics'],tables['participants']),default=str,indent=2))
+        z.writestr('run_metadata.json',json.dumps(dict(ui_version='fieldwork-2.1-prefetch',study_seed=design.STUDY_SEED,
+            adviser_model=adviser.resolved_model(),adviser_provider=adviser.resolved_provider(),study_mode=STUDY_MODE,default_adviser_mode=ADVISER_MODE,
+            stimulus_ms=STIMULUS_MS,fixation_ms=FIXATION_MS,minimum_advice_wait_ms=ADVISER_MIN_DELAY_MS,
+            rating_every=RATING_EVERY,prefill_final=PREFILL_FINAL,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
+            conditions=design.CONDITIONS,limits=['Offline rehearsals do not validate live model behaviour.',
+            'Timing is browser instrumentation, not an eye-tracker trigger.',
+            'Mechanical validity does not certify persuasive content or historical claims.']),indent=2))
+    memory.seek(0)
+    return send_file(memory,mimetype='application/zip',as_attachment=True,download_name='beast_pilot_results.zip')
 
 
-if __name__ == "__main__":
-    app.run(debug=True, port=int(os.getenv("PORT", 5000)))
+@app.route('/rate')
+def rate():
+    require_admin();rater=session.setdefault('rater',uuid.uuid4().hex[:8])
+    return render_template('rate.html',rater=rater,items=store.messages_for_rating(rater,40))
+
+
+@app.post('/api/rate')
+def api_rate():
+    require_admin();body=request.get_json(silent=True) or {}
+    try:
+        row={k:integer(body.get(k),1,7) for k in ['personalization','warmth','valence','directiveness','convincingness']}
+        row['trial_id']=integer(body.get('trial_id'),1,2147483647)
+    except ValueError as e:return jsonify(error=str(e)),400
+    row.update(rater_id=session.setdefault('rater',uuid.uuid4().hex[:8]))
+    store.save_rating(row);return jsonify(ok=True)
+
+
+@app.get('/healthz')
+def healthz():return jsonify(ok=True,version='fieldwork-2.1-prefetch')
+
+
+if __name__=='__main__':
+    app.run(host=os.getenv('HOST','127.0.0.1'),port=int(os.getenv('PORT','5000')),debug=False,threaded=True)

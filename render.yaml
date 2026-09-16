@@ -1,50 +1,53 @@
+# Existing service. Updating this file alone does not change a manually configured service.
 services:
   - type: web
-    name: ai-beast
+    name: ai-beast-prototype
     runtime: python
-    plan: starter
-    buildCommand: "pip install -r requirements.txt && python setup_files.py && python stimuli.py --size 512 --force"
-    startCommand: "gunicorn app:app --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT"
+    plan: free
+    region: ohio
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    healthCheckPath: /healthz
     envVars:
-      - key: GEMINI_API_KEY
-        sync: false
       - key: SECRET_KEY
+        generateValue: true
+      - key: ACCESS_CODE
         generateValue: true
       - key: ADMIN_TOKEN
         generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: STUDY_MODE
+        value: pilot
+      - key: ADVISER_MODE
+        value: live
       - key: ADVISER_PROVIDER
         value: gemini
       - key: GEMINI_MODEL
         value: gemini-3.5-flash-lite
-      - key: OPENAI_MODEL
-        value: gpt-5.6-luna
       - key: ADVISER_THINKING_LEVEL
         value: minimal
-      - key: ADVISER_VALIDATION_ATTEMPTS
-        value: "1"
       - key: ADVISER_MIN_WORDS
         value: "6"
       - key: ADVISER_MAX_WORDS
+        value: "12"
+      - key: ADVISER_VALIDATION_ATTEMPTS
+        value: "1"
+      - key: ADVISER_REQUEST_TIMEOUT
+        value: "10"
+      - key: ADVISER_BUDGET_SECONDS
         value: "12"
       - key: ADVISER_MIN_DELAY_MS
         value: "0"
       - key: STIMULUS_MS
         value: "5000"
-      - key: PREFILL_FINAL
-        value: "0"
+      - key: FIXATION_MS
+        value: "450"
       - key: COLLECT_RATINGS
         value: "1"
       - key: RATING_EVERY
         value: "2"
       - key: SHOW_END_SCORE
         value: "1"
-      - key: RESEARCHER_MODE
-        value: "0"
-      - key: DATABASE_URL
-        fromDatabase:
-          name: ai-beast-db
-          property: connectionString
-
-databases:
-  - name: ai-beast-db
-    plan: basic-256mb
