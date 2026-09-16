@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#ffffff"><title>{% block title %}BEAST{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static',filename='style.css',v=ui_version) }}"></head><body>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="{% block theme_colour %}#ffffff{% endblock %}"><title>{% block title %}BEAST{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static',filename='style.css',v=ui_version) }}"></head><body class="{% block body_class %}{% endblock %}">
 <header class="site-header"><a href="/" class="brand"><b>BEAST</b></a><div class="header-right">{% if study_mode!='production' %}<span class="chip">Private pilot</span>{% endif %}{% if is_researcher %}<a href="/researcher">Researcher workspace ↗</a>{% endif %}</div></header>
 {% block body %}{% endblock %}
 </body></html>

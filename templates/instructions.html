@@ -4,8 +4,8 @@
   <p class="lead">{{n_trials}} images · {{n_blocks}} rounds</p>
   <div class="step-cards">
     <div class="card"><span class="step-number">01</span><h3>Look</h3><p>{% if stimulus_seconds %}The dots appear for {{'%g'|format(stimulus_seconds)}} seconds.{% else %}View the dots, then continue.{% endif %} Estimate rather than count.</p></div>
-    <div class="card"><span class="step-number">02</span><h3>Estimate</h3><p>Click the number line or type your estimate. Drag or use the arrow keys to adjust.</p></div>
-    <div class="card"><span class="step-number">03</span><h3>Decide</h3><p>Read the AI advice, then keep or change your estimate.</p></div>
+    <div class="card"><span class="step-number">02</span><h3>Estimate</h3><p>Click the line or type your estimate. Your first estimate appears in a grey square.</p></div>
+    <div class="card"><span class="step-number">03</span><h3>Decide</h3><p>The cyan pointer marks the AI advice. Move the red square to set your final estimate, then confirm. You can click, drag, type, or use the arrow keys.</p></div>
   </div>
   {% if ratings %}<p>Every {{rating_every}} trials, rate your trust and how the advice made you feel.</p>{% endif %}
   <p>There is no speed bonus or accuracy feedback during the task. Keep this tab visible; you can rest between rounds.</p>
