@@ -22,14 +22,17 @@ def build_report(records,people):
         if not row.get('practice'):
             grouped[row['condition_id']].append(row)
             model_groups[(row['condition_id'],row.get('provider','unknown'),row.get('model','unknown'),
-                          row.get('reasoning','unknown'),row.get('adviser_mode','unknown'))].append(row)
+                          row.get('reasoning','unknown'),row.get('adviser_mode','unknown'),row.get('prompt_version') or 'unknown')].append(row)
     model_conditions=[]
-    for (cid,provider,model,reasoning,mode),rows in sorted(model_groups.items()):
+    for (cid,provider,model,reasoning,mode,prompt_version),rows in sorted(model_groups.items()):
         timed=[r for r in rows if r.get('timing_complete')]
         live=[r for r in rows if r.get('live_model')]
-        model_conditions.append(dict(condition=cid,provider=provider,model=model,reasoning=reasoning,mode=mode,
+        model_conditions.append(dict(condition=cid,provider=provider,model=model,reasoning=reasoning,mode=mode,prompt_version=prompt_version,
             trials=len(rows),live_messages=len(live),fallbacks=sum(bool(r.get('fallback')) for r in rows),
             history_reactions=sum(r.get('history_check')=='history_wording_screen_passed' for r in live),
+            trust_reactions=sum(r.get('adaptation_check')=='trust_reference_screen_passed' for r in live),
+            feeling_reactions=sum(r.get('adaptation_check')=='feeling_reference_screen_passed' for r in live),
+            repeated_notes=sum(r.get('repetition_check') in {'exact_repeat','similar_to_previous'} for r in live),
             generation_p50_ms=quantile([r.get('generation_ms') for r in live],.5),
             generation_p90_ms=quantile([r.get('generation_ms') for r in live],.9),
             wait_p50_ms=quantile([r.get('advice_wait_ms') for r in timed],.5),

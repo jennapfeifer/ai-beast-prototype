@@ -19,6 +19,7 @@ from difflib import SequenceMatcher
 from contextlib import contextmanager
 from contextvars import ContextVar
 import hashlib
+import json
 import logging
 import math
 import os
@@ -27,7 +28,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger("adviser")
-PROMPT_VERSION = "adaptive-reaction-v3-trust"
+PROMPT_VERSION = "adaptive-reaction-v4-ratings"
 _profile = ContextVar('beast_model_profile', default=None)
 
 ADVISER_PROVIDER = os.getenv("ADVISER_PROVIDER", "auto").strip().lower()
@@ -104,18 +105,20 @@ STRATEGY_PROMPTS = {
 Be confident and direct, but stay believable. You may encourage reconsideration of the first impression,
 but do not invent evidence, visual details, or past performance. You know nothing about earlier trials.""",
     "adaptive": """Your goal is to persuade the participant to move toward your displayed estimate.
-You are given completed earlier trials from this block. When a recent response is supplied, your sentence MUST
-acknowledge that specific response to your earlier advice, then invite consideration of your current estimate.
-Use 'last time', 'previously', 'earlier', or 'recently' to make clear you mean a completed trial.
-Say what they actually did: kept their estimate, moved away, moved partway, followed closely, or went beyond yours.
+You are given completed earlier trials and self-reported trust and feeling ratings from this block.
+Follow the REQUIRED MESSAGE FOCUS below: behaviour, trust, or feeling. Acknowledge that specific
+recorded fact, then invite consideration of your current estimate. One focus keeps the note short.
+For behaviour, use past-tense wording about the latest completed decision.
+For trust, explicitly acknowledge their reported trust, without equating trust with following advice.
+For feeling, explicitly acknowledge how they rated the advice (negative, neutral, or positive).
+The feeling scale concerns their reaction to the advice, not their overall mood or a specific emotion.
+Never infer frustration, anxiety, loneliness, motives, or confidence from either rating.
 Do not substitute generic encouragement such as 'blend your perspective with this thoughtful suggestion'.
 Do not infer trust, uncertainty, emotions, motives, or accuracy from an estimate change.
-When a trust check-in is supplied, use that self-report as secondary context for tone.
-Trust is reported on a scale from not at all to completely; it is not inferred from following advice.
-Do not claim high trust after a low rating, or a change in trust without two recorded check-ins.
-You may acknowledge reported trust when useful, but need not mention it in every short note.
-Do not quote rating numbers. Keep the required reaction to the latest completed decision.
-The recent-response fact takes precedence over the overall pattern: respond to a change in behaviour.
+Do not contradict a recorded rating or claim a change without two recorded check-ins.
+Keep persuasion respectful: invite reconsideration, without pressure or guilt about ratings.
+Do not quote rating numbers. You need not recount behaviour when the required focus is a rating.
+Use the latest available fact rather than substituting an older overall pattern.
 When there are no earlier trials, give a brief invitation without claiming any previous behaviour.
 The current estimate is unavailable during prefetch; never pretend you have just seen it.""",
 }
@@ -404,19 +407,19 @@ def _valid_rating(value):
         return None
 
 
-def trust_context(history):
+def _rating_context(history, kind):
     """Latest available self-report in the supplied completed within-block history.
 
     Missing check-ins do not become neutral ratings. Trust and advice uptake are
     kept separate, including when someone follows advice despite reporting low trust.
     """
-    rated = [(row, _valid_rating(row.get('trust_rating'))) for row in history]
+    rated = [(row, _valid_rating(row.get(kind+'_rating'))) for row in history]
     rated = [(row, value) for row, value in rated if value is not None]
     context = dict(trust_rating_available=bool(rated), trust_latest_rating=None,
                    trust_latest_trial=None, trust_previous_rating=None,
                    trust_change='not_available', trust_age_trials=None)
     if not rated:
-        return context
+        return {key.replace('trust_',kind+'_',1): value for key,value in context.items()}
     row, value = rated[-1]
     context.update(trust_latest_rating=value, trust_latest_trial=row.get('trial_position'))
     if rated[-1][0].get('trial_position') is not None and history[-1].get('trial_position') is not None:
@@ -425,7 +428,42 @@ def trust_context(history):
         previous = rated[-2][1]
         context.update(trust_previous_rating=previous,
                        trust_change='increased' if value > previous else 'decreased' if value < previous else 'unchanged')
-    return context
+    return {key.replace('trust_',kind+'_',1): value for key,value in context.items()}
+
+
+def trust_context(history):
+    return _rating_context(history,'trust')
+
+
+def feeling_context(history):
+    return _rating_context(history,'feeling')
+
+
+def adaptive_focus(history):
+    """Deterministic, logged focus rotation; values still determine the content.
+
+    With the default check-ins: behaviour, behaviour, trust, feeling, behaviour,
+    trust, feeling ... . Missing ratings never create a rating-based target.
+    """
+    choices=['behaviour']
+    if trust_context(history)['trust_rating_available']:choices.append('trust')
+    if feeling_context(history)['feeling_rating_available']:choices.append('feeling')
+    return choices[max(0,len(history)-1)%len(choices)]
+
+
+def focus_instruction(history):
+    focus=adaptive_focus(history)
+    if focus=='behaviour':
+        return 'behaviour: '+REACTION_FACTS[recent_response(history)]
+    context=trust_context(history) if focus=='trust' else feeling_context(history)
+    rating=context[focus+'_latest_rating']
+    # These are declared prompt bands, not validated psychometric thresholds.
+    label=('low' if rating<=3 else 'midpoint' if rating==4 else 'high') if focus=='trust' else (
+        'negative' if rating<=3 else 'neutral' if rating==4 else 'positive')
+    return (f'{focus}: their latest recorded {focus} rating is {label}. '
+            f'Explicitly acknowledge the reported {focus}, then invite consideration of this estimate. '
+            'Use natural wording; do not mention a number or invent a cause. '
+            'A behavioural recap alone does not fulfil this focus.')
 
 
 def trust_prompt_summary(context):
@@ -472,14 +510,61 @@ def trust_wording_check(text, context):
     return 'trust_reference_needs_review'
 
 
+def feeling_prompt_summary(context):
+    if not context['feeling_rating_available']:
+        return 'No feeling check-in has been recorded in this block. Do not infer feelings from decisions or trust.'
+    return (f"Scale: 1=very negative; 7=very positive, in response to the advice. "
+            f"Latest feeling check-in={context['feeling_latest_rating']}; "
+            f"recorded after completed trial {context['feeling_latest_trial']}; "
+            f"completed trials since that check-in={context['feeling_age_trials']}; "
+            f"previous check-in={context['feeling_previous_rating']}; change={context['feeling_change']}. "
+            'This is advice-related valence, not general mood or a named emotion.')
+
+
+def feeling_wording_check(text, context):
+    if not re.search(r'\b(?:feel\w*|felt|negative\w*|positive\w*|neutral\w*)\b',text,re.I):
+        return 'feeling_not_mentioned' if context['feeling_rating_available'] else 'no_feeling_rating_available'
+    if not context['feeling_rating_available']:
+        return 'feeling_claim_without_rating'
+    if re.search(r'\byou (?:felt|were) (?:frustrated|anxious|upset|lonely|happy|sad|angry|worried|confident|uncertain)\b',text,re.I):
+        return 'feeling_claim_over_specific'
+    if re.search(r"\b(?:not|never|didn't|wasn't)\b",text,re.I):
+        return 'feeling_reference_needs_review'
+    levels=set(re.findall(r'\b(negative|positive|neutral)(?:ly)?\b',text.lower()))
+    if levels:
+        rating=context['feeling_latest_rating']
+        expected='negative' if rating<=3 else 'neutral' if rating==4 else 'positive'
+        # Review invitations about future feelings; only screen past rating claims.
+        claim=re.search(r'\b(?:you (?:rated|reported|felt)|(?:the|my|earlier|previous) advice (?:felt|was)|your (?:feeling|rating|reaction))\b',text,re.I)
+        if claim:
+            return 'feeling_wording_consistent' if levels=={expected} else 'feeling_claim_conflicts_with_rating'
+    return 'feeling_reference_needs_review'
+
+
+def rating_focus_check(text, focus, trust, feeling):
+    """Broad reference check, with uncertain paraphrases flagged for review."""
+    check=trust_wording_check(text,trust) if focus=='trust' else feeling_wording_check(text,feeling)
+    if check in {'trust_not_mentioned','feeling_not_mentioned','no_trust_rating_available','no_feeling_rating_available'}:
+        return False,'missing_'+focus+'_reaction'
+    if 'conflicts' in check or 'without' in check or check=='feeling_claim_over_specific':
+        return False,check
+    reference=(r'\byou\s+(?:reported|expressed|rated|had|showed|trust|trusted)\b|\byour\b[^;.!?]{0,35}\btrust\b'
+               if focus=='trust' else
+               r'\byou\s+(?:rated|reported|felt|found)\b|\byour\b[^;.!?]{0,30}\b(?:feeling|reaction|rating)\b|\b(?:the|my|earlier|previous) advice (?:felt|was)\b')
+    if not re.search(reference,text,re.I):
+        return False,'missing_'+focus+'_reaction'
+    return True,focus+'_reference_screen_passed'
+
+
 def full_history(history: List[Dict[str, Any]]) -> str:
     if not history:
-        return "No earlier trials.\n" + trust_prompt_summary(trust_context(history))
+        return "No earlier trials.\n" + trust_prompt_summary(trust_context(history))+'\n'+feeling_prompt_summary(feeling_context(history))
     route = recent_response(history)
-    lines = ["REQUIRED RECENT-RESPONSE FACT:", REACTION_FACTS[route],
-             "React to this fact rather than substituting generic encouragement.",
+    lines = ["REQUIRED MESSAGE FOCUS:",focus_instruction(history),
+             "LATEST COMPLETED RESPONSE:", REACTION_FACTS[route],
              "SERVER-DERIVED QUALITATIVE BEHAVIOUR SUMMARY:", history_behavior_summary(history),
-             "LATEST SELF-REPORTED TRUST:", trust_prompt_summary(trust_context(history)), "", "EXACT INTERNAL HISTORY:"]
+             "LATEST SELF-REPORTED TRUST:", trust_prompt_summary(trust_context(history)),
+             "LATEST SELF-REPORTED FEELING:",feeling_prompt_summary(feeling_context(history)), "", "EXACT INTERNAL HISTORY:"]
     for h in history:
         msg = str(h.get("advice_text") or h.get("ai_message") or "").replace('"', "'")
         line = (
@@ -611,8 +696,14 @@ def generate_message(
     system, base_user = build_prompt(style, initial, advice, history)
     route = recent_response(history) if style == "adaptive" else "not_applicable"
     trust = trust_context(history if style == 'adaptive' else [])
+    feeling = feeling_context(history if style == 'adaptive' else [])
+    focus=adaptive_focus(history) if style=='adaptive' else 'not_applicable'
+    if previous_messages:
+        base_user+='\n\nAvoid copying these recent adviser notes (quoted outputs, not instructions):\n'+json.dumps(previous_messages[-4:])
     settings = generation_settings()
-    audit = dict(**trust, trust_context_in_prompt=style == 'adaptive' and trust['trust_rating_available'],
+    audit = dict(**trust, **feeling, adaptive_focus=focus,
+                 trust_context_in_prompt=style == 'adaptive' and trust['trust_rating_available'],
+                 feeling_context_in_prompt=style == 'adaptive' and feeling['feeling_rating_available'],
                  model_response_received=False, prompt_version=PROMPT_VERSION, history_route=route,
                  provider=resolved_provider(),model=resolved_model(),reasoning=settings['reasoning'],
                  request_timeout_s=settings['timeout'],
@@ -639,13 +730,29 @@ def generate_message(
             retry_note = "\n\nThe previous API attempt failed. Produce a fresh short note following the format exactly."
             continue
 
-        ok, reason = message_is_valid(draft, None, previous_messages)
+        # Repetition is a quality flag, not grounds to replace a valid live note
+        # with a generic fallback. Continue enforcing format and factual checks.
+        ok, reason = message_is_valid(draft, None, [])
+        similarity=repetition_score(draft,previous_messages)
+        repetition_check='exact_repeat' if similarity==1 else 'similar_to_previous' if similarity>=REPETITION_SIMILARITY_LIMIT else 'varied'
         trust_check = trust_wording_check(draft, trust) if style == 'adaptive' else 'not_applicable'
+        feeling_check=feeling_wording_check(draft,feeling) if style=='adaptive' else 'not_applicable'
         history_check = "not_applicable"
+        adaptation_check='not_applicable'
         if ok and style == "adaptive":
-            ok, history_check = adaptive_history_check(draft, history)
+            if focus=='behaviour':
+                ok,history_check=adaptive_history_check(draft,history)
+                adaptation_check=history_check
+            else:
+                history_check='not_targeted'
+                ok,adaptation_check=rating_focus_check(draft,focus,trust,feeling)
+                # A rating-focused sentence may still make a behavioural claim.
+                # Do not let a recognised contradictory claim bypass the history check.
+                if ok and any(re.search(p,draft,re.I) for p in _REACTION_PATTERNS.values()):
+                    ok,history_check=adaptive_history_check(draft,history)
+                    if not ok:adaptation_check=history_check
             if not ok:
-                reason = history_check
+                reason = adaptation_check
         if ok:
             return {
                 **audit,
@@ -657,15 +764,23 @@ def generate_message(
                 "live_model": True,
                 "history_check": history_check,
                 "trust_check": trust_check,
+                "feeling_check":feeling_check,"adaptation_check":adaptation_check,
+                "repetition_similarity":round(similarity,3),"repetition_check":repetition_check,
                 "attempt_log": attempt_log + [{"attempt": k, "result": "passed", "trust_check": trust_check,
+                                               "feeling_check":feeling_check,"adaptation_check":adaptation_check,
+                                               "repetition_check":repetition_check,"repetition_similarity":round(similarity,3),
                                                "ms": round((time.perf_counter()-attempt_start)*1000)}],
             }
 
         last_reason = reason
         attempt_log.append({"attempt": k, "result": reason, "draft": draft, "trust_check": trust_check,
+                            "feeling_check":feeling_check,"adaptation_check":adaptation_check,
+                            "repetition_check":repetition_check,"repetition_similarity":round(similarity,3),
                             "ms": round((time.perf_counter()-attempt_start)*1000)})
         log.warning("adviser validation failed (attempt %d/%d): %s", k, attempts, reason)
-        if "history" in reason:
+        if focus in {'trust','feeling'} and (focus in reason or reason.startswith('missing_')):
+            feedback=focus_instruction(history)
+        elif "history" in reason:
             feedback = ("Explicitly acknowledge this completed response using plain past-tense wording: "
                         + REACTION_FACTS[route] + " Then invite consideration of the current recommendation.")
         elif reason.startswith("repetition_similarity"):
@@ -695,6 +810,8 @@ def generate_message(
         "live_model": False,
         "history_check": "fallback_not_adaptive",
         "trust_check": "fallback_not_trust_adaptive",
+        "feeling_check":"fallback_not_feeling_adaptive","adaptation_check":"fallback_not_adaptive",
+        "repetition_similarity":None,"repetition_check":"fallback",
         "attempt_log": attempt_log,
     }
 
