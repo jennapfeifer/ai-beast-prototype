@@ -34,8 +34,7 @@ def histories(direction, contrast='behaviour'):
                 feeling_rating=4 if position == 2 else None))
         result[scenario] = rows
     if contrast in {'trust','feeling'}:
-        # Only trust changes: estimates, advice, notes, feelings and positions
-        # are byte-for-byte equivalent between these paired synthetic histories.
+        # Only the selected rating changes; all other inputs are held constant.
         target=contrast+'_rating'
         scenarios=[('low_trust',1),('high_trust',7)] if contrast=='trust' else [('negative_feeling',1),('positive_feeling',7)]
         # End the trust comparison at trial 2 and the feeling comparison at trial
@@ -86,7 +85,7 @@ def run_probe(live=False, repetitions=1, contrast='behaviour'):
     return dict(created_at=dt.datetime.now(dt.timezone.utc).isoformat(), mode='live' if live else 'offline',
         model=adviser.resolved_model() if live else 'deterministic rehearsal', repetitions=repetitions, contrast=contrast,
         summary=dict(items=len(results), routing_passed=all(r['passed'] for r in routing),
-            live_messages=live_count, fallback_messages=sum(r['source'].startswith('fallback:') for r in results),
+            live_messages=live_count, review_notes=sum(bool(r.get('review_required')) for r in results if r.get('live_model')), fallback_messages=sum(r['source'].startswith('fallback:') for r in results),
             meaningfully_adaptive='NOT AUTOMATICALLY ASSESSED', trust_effect='NOT AUTOMATICALLY ASSESSED',
             feeling_effect='NOT AUTOMATICALLY ASSESSED',behavioural_effect='NOT TESTED'),
         routing=routing, results=results,
@@ -94,7 +93,8 @@ def run_probe(live=False, repetitions=1, contrast='behaviour'):
           'Review whether each history claim is supported and whether wording uses that history persuasively.',
           'Static prompts must be identical between histories; static outputs need not be identical.',
           'The trust contrast holds behaviour and feelings constant; inspect repeated live samples for a systematic response to trust.',
-          'Trust wording flags are non-blocking lexical screens, not proof that a rating affected generation.',
+          'Rating-focused notes use implicit approaches: rating keywords are neither required nor evidence of use.',
+          'Review tone and invitation across matched rating contrasts; accepted_for_review is not a failed API call or verified adaptation.',
           'Offline branches are illustrative code paths, not evidence about GPT.',
           'A behavioural effect requires human pilot data; this probe uses synthetic histories.',
           'Retry budget is checked between requests; SDK timeouts are not an exact wall-clock deadline.'])
@@ -112,6 +112,7 @@ def write_report(report, folder):
     esc = html.escape
     cards = ''.join(f'<article><small>{esc(r["item_id"])} · {esc(r["source"])} · {r["elapsed_ms"]} ms</small>'
         f'<blockquote>{esc(r["text"])}</blockquote><p>Validation: {esc(r["validation"])}; attempts: {r["attempts"]}; focus: {esc(r.get("adaptive_focus", "offline_demo"))}; trust: {esc(r.get("trust_check", "not_checked_offline"))}; feeling: {esc(r.get("feeling_check", "not_checked_offline"))}</p>'
+        f'<p>Approach: {esc(r.get("adaptive_strategy", "offline_demo"))}; review reasons: {esc(str(r.get("review_reasons", [])))}</p>'
         f'<details><summary>History supplied to this prompt</summary><pre>{esc(json.dumps(r["history"], indent=2))}</pre></details></article>' for r in report['results'])
     document = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>BEAST adaptation probe</title><style>body{max-width:1000px;margin:40px auto;padding:20px;background:#f4f6ee;color:#233d34;font:16px/1.6 system-ui}article{background:white;padding:24px;margin:20px 0;border:1px solid #d8dfd0;border-radius:12px}h1{font-size:36px}small{color:#52685d}blockquote{font-size:21px;margin:12px 0}pre{overflow:auto;font-size:12px}</style>'
     comparison = {'trust':'low vs high reported trust, with behaviour held constant',

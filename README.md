@@ -1,10 +1,22 @@
-# BEAST Fieldwork · private Gemini pilot
+# BEAST · private AI adviser pilot
 
 The v6.1 **number line, short Gemini notes and advice prefetch** are integrated with protected pilot controls, server-side sessions, timing diagnostics and recovery. Original NEW25 numbers, counterbalancing and 105 original PNGs are preserved.
 
+
+Current update: **v2.5, implicit adaptation** (`fieldwork-2.5-implicit-adaptation`).
+See [IMPLICIT_ADAPTATION_UPDATE.md](IMPLICIT_ADAPTATION_UPDATE.md) for installation,
+validation scope, changed prompts, and how to interpret review flags. This supersedes
+the mandatory rating-acknowledgement checks described in the v2.4 update.
+
+Trust means trust in the AI adviser. Feeling means the reported reaction to its advice.
+These inputs now supply internal persuasion approaches rather than requiring the model
+to repeat the ratings. Both available approaches inform adaptive tone; the existing
+behaviour/trust/feeling cycle selects emphasis. Implicit influence needs comparison and
+human review. A lexical mention is not evidence of adaptation.
+
 ## Participant flow
 
-Image (5 s) → first estimate on a blank number line → AI number + 6–12-word note → final slider → occasional trust/feeling check-in. The final slider starts at the participant's first estimate, as in v6.1. You/AI use matched circular markers and cards. Progress milestones celebrate completion; scores appear only after finishing.
+Image (5 s) → first estimate on a blank number line → AI number + 6–12-word note → final slider → occasional trust/feeling check-in. The final slider starts at the participant's first estimate, as in v6.1. You/AI use matched circular markers and cards. A plain progress bar shows completion; scores appear only after finishing.
 
 C3–C8 notes are prefetched during image viewing. The model gets the fixed recommendation and, for C5/C8 only, every completed earlier trial in that block. **It never gets the current first estimate**, even if prefetch fails and synchronous generation is needed. This keeps the information supplied consistent. C1/C2 use fixed control notes and C2's number still depends on the current estimate.
 
@@ -42,10 +54,11 @@ Startup generates missing PNGs on the protected server using the repository’s 
 
 ```bash
 python verify_adaptation.py
-python verify_adaptation.py --live --repetitions 3 --out probe-results
+python verify_adaptation.py --live --model-profile gemini_fast --contrast trust --repetitions 3 --out probe-trust
+python verify_adaptation.py --live --model-profile gpt_stronger --contrast feeling --repetitions 3 --out probe-feeling
 ```
 
-Offline is API-free. `--live` makes 24 message generations and incurs usage. It contrasts resistance/following histories while holding the current advice fixed, with the current estimate unavailable as in prefetch. Reports include raw messages, prompt hashes, latency, source/fallback and shuffled blind review sheets. Static prompts must stay identical across histories; adaptive prompts must differ. Different live text alone does not prove adaptation; inspect whether history claims are supported. Behavioural effects require human data.
+Offline is API-free. Each example `--live` command makes 24 message generations and incurs usage. It contrasts resistance/following histories while holding the current advice fixed, with the current estimate unavailable as in prefetch. Reports include raw messages, prompt hashes, latency, source/fallback and shuffled blind review sheets. Static prompts must stay identical across histories; adaptive prompts must differ. Different live text alone does not prove adaptation; inspect whether history claims are supported. Behavioural effects require human data.
 
 ## Deployment and data
 

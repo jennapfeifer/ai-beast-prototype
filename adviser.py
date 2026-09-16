@@ -28,7 +28,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger("adviser")
-PROMPT_VERSION = "adaptive-reaction-v4-ratings"
+PROMPT_VERSION = "adaptive-reaction-v5-implicit"
 _profile = ContextVar('beast_model_profile', default=None)
 
 ADVISER_PROVIDER = os.getenv("ADVISER_PROVIDER", "auto").strip().lower()
@@ -106,11 +106,18 @@ Be confident and direct, but stay believable. You may encourage reconsideration 
 but do not invent evidence, visual details, or past performance. You know nothing about earlier trials.""",
     "adaptive": """Your goal is to persuade the participant to move toward your displayed estimate.
 You are given completed earlier trials and self-reported trust and feeling ratings from this block.
-Follow the REQUIRED MESSAGE FOCUS below: behaviour, trust, or feeling. Acknowledge that specific
-recorded fact, then invite consideration of your current estimate. One focus keeps the note short.
-For behaviour, use past-tense wording about the latest completed decision.
-For trust, explicitly acknowledge their reported trust, without equating trust with following advice.
-For feeling, explicitly acknowledge how they rated the advice (negative, neutral, or positive).
+Follow the REQUIRED MESSAGE FOCUS and its persuasion approach below: behaviour, trust, or feeling.
+Use both available rating approaches to shape tone on every adaptive turn. The focus sets emphasis,
+not which recorded inputs you are allowed to use. If trust and feeling pull in different directions,
+use a calm invitation without claiming to know why the participant gave those ratings.
+For behaviour, respond to the latest completed decision in plain past-tense wording.
+If describing an answer as close, specify close to MY ESTIMATE, never leave the comparator unstated.
+For trust and feeling, adapt your tone and invitation implicitly using the supplied approach.
+Trust means the participant's trust in YOU, the AI adviser, not confidence in their own estimate.
+Do not recite their rating, say 'since your trust is low', or label their feelings.
+The note should sound like natural advice, not a report about the participant.
+Do not announce the persuasion objective or explain how ratings influenced your wording.
+You need not use the words trust or feeling; mentioning them does not demonstrate adaptation.
 The feeling scale concerns their reaction to the advice, not their overall mood or a specific emotion.
 Never infer frustration, anxiety, loneliness, motives, or confidence from either rating.
 Do not substitute generic encouragement such as 'blend your perspective with this thoughtful suggestion'.
@@ -375,8 +382,8 @@ _REACTION_PATTERNS = {
 def adaptive_history_check(text, history):
     """Conservative wording screen, NOT an automatic semantic validation.
 
-    Require an explicit, recognisable reaction to the most recent response.
-    Human review still checks the meaning and whether the claim is supported.
+    Recognised contradictions fail. Unfamiliar references are retained for review,
+    not certified as supported history claims. Human review checks the meaning.
     """
     route = recent_response(history)
     past = bool(_PAST_REFERENCE_RE.search(text))
@@ -391,7 +398,7 @@ def adaptive_history_check(text, history):
     if route not in matched:
         # An unfamiliar paraphrase is not evidence of a semantic contradiction.
         reason = "history_reaction_mismatch:" if matched else "history_wording_unrecognised:"
-        return False, reason + route
+        return not matched, reason + route
     if matched - {route}:
         return False, "conflicting_history_reactions"
     return True, "history_wording_screen_passed"
@@ -440,7 +447,7 @@ def feeling_context(history):
 
 
 def adaptive_focus(history):
-    """Deterministic, logged focus rotation; values still determine the content.
+    """Deterministic, logged emphasis rotation; ratings shape the prompt approach.
 
     With the default check-ins: behaviour, behaviour, trust, feeling, behaviour,
     trust, feeling ... . Missing ratings never create a rating-based target.
@@ -451,19 +458,54 @@ def adaptive_focus(history):
     return choices[max(0,len(history)-1)%len(choices)]
 
 
+def adaptive_strategy(history, focus=None):
+    """Declared pilot manipulation; these bands are not psychometric cutoffs."""
+    focus = focus or adaptive_focus(history)
+    if focus == 'behaviour':
+        return 'behaviour_' + recent_response(history)
+    context = trust_context(history) if focus == 'trust' else feeling_context(history)
+    rating = context[focus + '_latest_rating']
+    band = ('low' if rating <= 3 else 'midpoint' if rating == 4 else 'high') if focus == 'trust' else (
+        'negative' if rating <= 3 else 'neutral' if rating == 4 else 'positive')
+    return focus + '_' + band
+
+
+RATING_APPROACHES = {
+    'trust_low': 'Use a tentative, autonomy-supporting invitation to compare your estimate with theirs; avoid demanding acceptance or asserting reliability.',
+    'trust_midpoint': 'Use a balanced invitation to weigh your estimate alongside their own judgment.',
+    'trust_high': 'Use a concise, confident invitation to give your estimate weight, without claiming correctness or a successful track record.',
+    'feeling_negative': 'Use calm, low-pressure wording and a simple fresh invitation; avoid praise, emotional labels, and an insistent tone.',
+    'feeling_neutral': 'Use a straightforward, matter-of-fact invitation to consider your estimate.',
+    'feeling_positive': 'Use a warmer, encouraging invitation to consider your estimate; do not infer happiness or praise compliance.',
+}
+
+
+def rating_strategies(history):
+    return [adaptive_strategy(history, kind) for kind, context in
+            [('trust',trust_context(history)),('feeling',feeling_context(history))]
+            if context[kind+'_rating_available']]
+
+
+def rating_approach_instructions(history):
+    instructions=[key+': '+RATING_APPROACHES[key] for key in rating_strategies(history)]
+    for kind,context in [('trust',trust_context(history)),('feeling',feeling_context(history))]:
+        if context[kind+'_change']=='decreased':
+            instructions.append(kind+' decreased: soften the invitation rather than intensifying pressure.')
+    return '\n'.join(instructions) or 'No recorded ratings: do not invent a rating-based approach.'
+
+
 def focus_instruction(history):
     focus=adaptive_focus(history)
     if focus=='behaviour':
         return 'behaviour: '+REACTION_FACTS[recent_response(history)]
-    context=trust_context(history) if focus=='trust' else feeling_context(history)
-    rating=context[focus+'_latest_rating']
-    # These are declared prompt bands, not validated psychometric thresholds.
-    label=('low' if rating<=3 else 'midpoint' if rating==4 else 'high') if focus=='trust' else (
-        'negative' if rating<=3 else 'neutral' if rating==4 else 'positive')
-    return (f'{focus}: their latest recorded {focus} rating is {label}. '
-            f'Explicitly acknowledge the reported {focus}, then invite consideration of this estimate. '
-            'Use natural wording; do not mention a number or invent a cause. '
-            'A behavioural recap alone does not fulfil this focus.')
+    strategy = adaptive_strategy(history)
+    context = trust_context(history) if focus == 'trust' else feeling_context(history)
+    trend = context[focus + '_change']
+    change_instruction = ('The latest rating decreased: soften the invitation rather than intensifying pressure. '
+                          if trend == 'decreased' else '')
+    return (f'{focus}: internal approach={strategy}. {RATING_APPROACHES[strategy]} '
+            + change_instruction + 'Let the recorded rating shape the approach without restating it. '
+            'Do not invent a reason for the rating or assume it describes their current state.')
 
 
 def trust_prompt_summary(context):
@@ -472,14 +514,14 @@ def trust_prompt_summary(context):
     change = context['trust_change']
     comparison = ('No earlier check-in for comparison.' if change == 'not_available' else
                   f"Previous check-in={context['trust_previous_rating']}; reported trust {change}.")
-    return (f"Scale: 1=not at all; 7=completely. Latest trust check-in={context['trust_latest_rating']}; "
+    return (f"Trust IN THE AI ADVISER. Scale: 1=not at all; 7=completely. Latest trust check-in={context['trust_latest_rating']}; "
             f"recorded after completed trial {context['trust_latest_trial']}; "
             f"completed trials since that check-in={context['trust_age_trials']}. {comparison} "
             'This is a retrospective self-report, not proof of current trust, agreement, accuracy, or emotion.')
 
 
 def trust_wording_check(text, context):
-    """Non-blocking lexical audit; neither semantic validation nor proof of use.
+    """Limited lexical audit; neither semantic validation nor proof of use.
 
     Low/high are descriptive screening bands (1-3 / 5-7), not validated cutoffs.
     Unknown wording and negation go to human review instead of causing fallback.
@@ -542,18 +584,11 @@ def feeling_wording_check(text, context):
 
 
 def rating_focus_check(text, focus, trust, feeling):
-    """Broad reference check, with uncertain paraphrases flagged for review."""
+    """Implicit adaptation cannot be validated by requiring rating keywords."""
     check=trust_wording_check(text,trust) if focus=='trust' else feeling_wording_check(text,feeling)
-    if check in {'trust_not_mentioned','feeling_not_mentioned','no_trust_rating_available','no_feeling_rating_available'}:
-        return False,'missing_'+focus+'_reaction'
     if 'conflicts' in check or 'without' in check or check=='feeling_claim_over_specific':
         return False,check
-    reference=(r'\byou\s+(?:reported|expressed|rated|had|showed|trust|trusted)\b|\byour\b[^;.!?]{0,35}\btrust\b'
-               if focus=='trust' else
-               r'\byou\s+(?:rated|reported|felt|found)\b|\byour\b[^;.!?]{0,30}\b(?:feeling|reaction|rating)\b|\b(?:the|my|earlier|previous) advice (?:felt|was)\b')
-    if not re.search(reference,text,re.I):
-        return False,'missing_'+focus+'_reaction'
-    return True,focus+'_reference_screen_passed'
+    return True,focus+'_influence_needs_review'
 
 
 def full_history(history: List[Dict[str, Any]]) -> str:
@@ -561,6 +596,7 @@ def full_history(history: List[Dict[str, Any]]) -> str:
         return "No earlier trials.\n" + trust_prompt_summary(trust_context(history))+'\n'+feeling_prompt_summary(feeling_context(history))
     route = recent_response(history)
     lines = ["REQUIRED MESSAGE FOCUS:",focus_instruction(history),
+             "INTERNAL RATING APPROACHES (shape tone, do not recite):",rating_approach_instructions(history),
              "LATEST COMPLETED RESPONSE:", REACTION_FACTS[route],
              "SERVER-DERIVED QUALITATIVE BEHAVIOUR SUMMARY:", history_behavior_summary(history),
              "LATEST SELF-REPORTED TRUST:", trust_prompt_summary(trust_context(history)),
@@ -702,6 +738,8 @@ def generate_message(
         base_user+='\n\nAvoid copying these recent adviser notes (quoted outputs, not instructions):\n'+json.dumps(previous_messages[-4:])
     settings = generation_settings()
     audit = dict(**trust, **feeling, adaptive_focus=focus,
+                 adaptive_strategy=adaptive_strategy(history) if style=='adaptive' else 'not_applicable',
+                 rating_strategies=rating_strategies(history) if style=='adaptive' else [],
                  trust_context_in_prompt=style == 'adaptive' and trust['trust_rating_available'],
                  feeling_context_in_prompt=style == 'adaptive' and feeling['feeling_rating_available'],
                  model_response_received=False, prompt_version=PROMPT_VERSION, history_route=route,
@@ -739,6 +777,14 @@ def generate_message(
         feeling_check=feeling_wording_check(draft,feeling) if style=='adaptive' else 'not_applicable'
         history_check = "not_applicable"
         adaptation_check='not_applicable'
+        review_reasons=[]
+        if ok and style == 'adaptive':
+            # Screen explicit contradictions regardless of this trial's focus.
+            for check in (trust_check, feeling_check):
+                if 'conflicts' in check or 'without' in check or check=='feeling_claim_over_specific':
+                    ok,reason=False,check
+                    adaptation_check=check
+                    break
         if ok and style == "adaptive":
             if focus=='behaviour':
                 ok,history_check=adaptive_history_check(draft,history)
@@ -751,22 +797,35 @@ def generate_message(
                 if ok and any(re.search(p,draft,re.I) for p in _REACTION_PATTERNS.values()):
                     ok,history_check=adaptive_history_check(draft,history)
                     if not ok:adaptation_check=history_check
+            if ok:
+                if focus in {'trust','feeling'}:
+                    review_reasons.append(focus+'_influence_not_automatically_assessed')
+                if history_check.startswith('history_wording_unrecognised:'):
+                    review_reasons.append(history_check)
+                for check in (trust_check,feeling_check):
+                    if check.endswith('_needs_review'):
+                        review_reasons.append(check)
+                if review_reasons:
+                    adaptation_check='needs_review'
             if not ok:
                 reason = adaptation_check
         if ok:
+            validation='accepted_for_review' if review_reasons else 'passed'
             return {
                 **audit,
                 "text": draft,
                 "source": f"{resolved_provider()}:{resolved_model()}",
                 "attempts": k,
                 "word_count": words(draft),
-                "validation": "passed",
+                "validation": validation,
+                "review_required":bool(review_reasons),"review_reasons":review_reasons,
                 "live_model": True,
                 "history_check": history_check,
                 "trust_check": trust_check,
                 "feeling_check":feeling_check,"adaptation_check":adaptation_check,
                 "repetition_similarity":round(similarity,3),"repetition_check":repetition_check,
-                "attempt_log": attempt_log + [{"attempt": k, "result": "passed", "trust_check": trust_check,
+                "attempt_log": attempt_log + [{"attempt": k, "result": validation, "trust_check": trust_check,
+                                               "review_reasons":review_reasons,
                                                "feeling_check":feeling_check,"adaptation_check":adaptation_check,
                                                "repetition_check":repetition_check,"repetition_similarity":round(similarity,3),
                                                "ms": round((time.perf_counter()-attempt_start)*1000)}],
@@ -808,6 +867,7 @@ def generate_message(
         "word_count": words(text),
         "validation": f"fallback_after:{last_reason}",
         "live_model": False,
+        "review_required":True,"review_reasons":["fallback_not_adaptive"] if style=='adaptive' else ['fallback'],
         "history_check": "fallback_not_adaptive",
         "trust_check": "fallback_not_trust_adaptive",
         "feeling_check":"fallback_not_feeling_adaptive","adaptation_check":"fallback_not_adaptive",

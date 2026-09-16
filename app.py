@@ -8,6 +8,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
+APP_VERSION = 'fieldwork-2.5-implicit-adaptation'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -42,7 +43,7 @@ def csrf():
 @app.context_processor
 def context():
     return dict(csrf_token=csrf(), is_researcher=bool(session.get('researcher')), study_mode=STUDY_MODE,
-                contact=STUDY_CONTACT, ethics_details=ETHICS_DETAILS)
+                contact=STUDY_CONTACT, ethics_details=ETHICS_DETAILS, ui_version=APP_VERSION)
 
 
 @app.before_request
@@ -164,7 +165,7 @@ def start():
               test_index=integer(request.form.get('test_index','0'),0,7) if researcher else 0,
               adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
               model_profile_id=profile_id,model_profile=profile,
-              ui_version='fieldwork-2.4-rating-focus',started_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat())
+              ui_version=APP_VERSION,started_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat())
     pid=uuid.uuid4().hex[:12]
     store.create_session(pid,conf,(request.form.get('external_id') or '')[:128] or None)
     session['pid']=pid
@@ -260,7 +261,8 @@ def prepared_advice(con,data,trial,initial):
         trust_check=msg.get('trust_check','not_checked_offline' if data['config']['adviser_mode']=='offline' else 'not_applicable'))
     for field in ('trust_latest_rating','trust_latest_trial','trust_previous_rating','trust_change','trust_age_trials',
                   'feeling_latest_rating','feeling_latest_trial','feeling_previous_rating','feeling_change','feeling_age_trials',
-                  'adaptive_focus','adaptation_check','feeling_check','repetition_check','repetition_similarity'):
+                  'adaptive_focus','adaptive_strategy','adaptation_check','feeling_check','repetition_check','repetition_similarity',
+                  'review_required','review_reasons','rating_strategies'):
         diagnostic[field]=msg.get(field)
     return advice,msg,diagnostic
 
@@ -396,7 +398,7 @@ def admin_downloads():
 @app.get('/api/researcher/status')
 def researcher_status():
     require_admin()
-    return jsonify(version='fieldwork-2.4-rating-focus',provider=adviser.resolved_provider(),model=adviser.resolved_model(),
+    return jsonify(version=APP_VERSION,provider=adviser.resolved_provider(),model=adviser.resolved_model(),
         has_key=adviser.has_api_key(),database_dialect=store.engine.dialect.name,study_mode=STUDY_MODE,
         adviser_mode=ADVISER_MODE,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
         minimum_wait_ms=ADVISER_MIN_DELAY_MS,stimulus_ms=STIMULUS_MS,private_gate=bool(ACCESS_CODE))
@@ -440,7 +442,7 @@ def export_all_zip():
     with zipfile.ZipFile(memory,'w',zipfile.ZIP_DEFLATED) as z:
         for name,rows in tables.items():z.writestr(name+'.csv',csv_text(rows))
         z.writestr('pilot_report.json',json.dumps(build_report(tables['diagnostics'],tables['participants']),default=str,indent=2))
-        z.writestr('run_metadata.json',json.dumps(dict(ui_version='fieldwork-2.4-rating-focus',study_seed=design.STUDY_SEED,
+        z.writestr('run_metadata.json',json.dumps(dict(ui_version=APP_VERSION,study_seed=design.STUDY_SEED,
             adviser_model=adviser.resolved_model(),adviser_provider=adviser.resolved_provider(),study_mode=STUDY_MODE,default_adviser_mode=ADVISER_MODE,
             stimulus_ms=STIMULUS_MS,fixation_ms=FIXATION_MS,minimum_advice_wait_ms=ADVISER_MIN_DELAY_MS,
             rating_every=RATING_EVERY,prefill_final=PREFILL_FINAL,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
@@ -469,7 +471,7 @@ def api_rate():
 
 
 @app.get('/healthz')
-def healthz():return jsonify(ok=True,version='fieldwork-2.4-rating-focus')
+def healthz():return jsonify(ok=True,version=APP_VERSION)
 
 
 if __name__=='__main__':

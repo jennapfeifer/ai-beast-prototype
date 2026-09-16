@@ -29,9 +29,10 @@ def build_report(records,people):
         live=[r for r in rows if r.get('live_model')]
         model_conditions.append(dict(condition=cid,provider=provider,model=model,reasoning=reasoning,mode=mode,prompt_version=prompt_version,
             trials=len(rows),live_messages=len(live),fallbacks=sum(bool(r.get('fallback')) for r in rows),
-            history_reactions=sum(r.get('history_check')=='history_wording_screen_passed' for r in live),
-            trust_reactions=sum(r.get('adaptation_check')=='trust_reference_screen_passed' for r in live),
-            feeling_reactions=sum(r.get('adaptation_check')=='feeling_reference_screen_passed' for r in live),
+            history_reactions=sum(r.get('history_check')=='history_wording_screen_passed' and not r.get('review_required') for r in live),
+            trust_reactions=sum(r.get('adaptation_check')=='trust_reference_screen_passed' and not r.get('review_required') for r in live),
+            feeling_reactions=sum(r.get('adaptation_check')=='feeling_reference_screen_passed' and not r.get('review_required') for r in live),
+            review_notes=sum(bool(r.get('review_required')) for r in live),
             repeated_notes=sum(r.get('repetition_check') in {'exact_repeat','similar_to_previous'} for r in live),
             generation_p50_ms=quantile([r.get('generation_ms') for r in live],.5),
             generation_p90_ms=quantile([r.get('generation_ms') for r in live],.9),
