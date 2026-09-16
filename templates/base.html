@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f5f6f0"><title>{% block title %}BEAST · Fieldwork{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}"></head><body>
-<header class="site-header"><a href="/" class="brand"><span class="brand-icon" aria-hidden="true">⁙</span><b>BEAST</b><span class="slash">/</span><span>fieldwork</span></a><div class="header-right">{% if study_mode!='production' %}<span class="chip">Private pilot</span>{% endif %}{% if is_researcher %}<a href="/researcher">Researcher workspace ↗</a>{% endif %}</div></header>
-{% block body %}{% endblock %}<footer class="site-footer">BEAST · A study of estimates and advice<span>Take your time. Make your own judgement.</span></footer>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#ffffff"><title>{% block title %}BEAST{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static',filename='style.css',v=ui_version) }}"></head><body>
+<header class="site-header"><a href="/" class="brand"><b>BEAST</b></a><div class="header-right">{% if study_mode!='production' %}<span class="chip">Private pilot</span>{% endif %}{% if is_researcher %}<a href="/researcher">Researcher workspace ↗</a>{% endif %}</div></header>
+{% block body %}{% endblock %}
 </body></html>
