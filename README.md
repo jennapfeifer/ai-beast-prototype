@@ -1,3 +1,7 @@
+# Latest: v2.13 flexible current-trial advice
+
+Read FLEXIBLE_ADVICE_UPDATE.md. New sessions use 10–20-word target prompts, the current first estimate, and no prefetch. Earlier sections below describe historical versions.
+
 # Latest: v2.11
 
 See ADVICE_READING_UPDATE.md for consistent advice typography and the five-second default (with 0/3/4/5-second options).
