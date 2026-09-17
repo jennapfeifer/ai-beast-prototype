@@ -114,7 +114,7 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 .previous-marker:after{content:"";position:absolute;left:8px;top:18px;width:2px;height:28px;background:var(--previous);z-index:-1}
 .advice-marker{position:absolute;top:56px;transform:translateX(-50%);width:24px;height:22px;background:var(--advice);clip-path:polygon(50% 0,100% 100%,0 100%);z-index:4;pointer-events:none}
 .value-marker{position:absolute;top:54px;width:0;height:98px;pointer-events:none}
-.value-stem{position:absolute;top:0;left:-1px;height:34px;width:2px;background:currentColor;z-index:2}
+.value-stem{position:absolute;top:0;left:-1px;height:38px;width:2px;background:currentColor;z-index:2}
 .value-square{position:absolute;top:34px;left:0;transform:translateX(-50%);display:grid;place-items:center;width:64px;height:64px;border-radius:4px;background:currentColor;box-shadow:0 0 0 3px var(--paper);font-size:32px;font-weight:700;font-variant-numeric:tabular-nums;z-index:5}
 .initial-marker{color:var(--previous)}.final-marker{color:var(--choice)}
 .initial-marker .value-square{background:var(--previous);color:#101418}
@@ -155,3 +155,15 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 .advice-only{max-width:780px;margin:auto;text-align:center}
 .advice-only p{color:var(--advice);font-size:26px}
 .advice-only h1{color:var(--advice);font-size:clamp(28px,4vw,40px);line-height:1.5;letter-spacing:0}
+
+/* Single reading column and quiet transitions. */
+.info-surface .participant-page{max-width:780px}
+.info-surface .welcome-grid{display:block}
+.instruction-copy ol{padding-left:1.4em;margin:0}
+.instruction-copy li{font-size:22px;line-height:1.5;margin:0 0 20px}
+.rating-stage legend{font-size:26px;line-height:1.4;margin-bottom:24px}
+
+/* Keep the selected estimate and its connector above the advice pointer. */
+.final-marker{z-index:6}
+.final-marker .value-stem{z-index:6}
+.final-marker .value-square{z-index:5}

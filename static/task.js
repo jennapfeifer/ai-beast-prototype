@@ -80,9 +80,26 @@ async function showAdvice(initial,advice) {
 }
 
 function scale(name,label,low,high){return `<fieldset class="scale"><legend>${esc(label)}</legend><div class="scale-options">${Array.from({length:7},(_,i)=>`<label><input type="radio" name="${name}" value="${i+1}" required><span>${i+1}</span></label>`).join('')}</div><div class="scale-anchors"><span>${low}</span><span>${high}</span></div></fieldset>`;}
-async function ratings(){timing.rating_ms=0;if(!state.ratings_due)return {};phase('CHECK-IN');stage.innerHTML=`<div class="rating-stage"><h2>Check-in</h2><p class="helper">Over the last ${state.rating_window} trials:</p><form id="rating-form">${scale('trust','How much did you trust the AI?','Not at all','Completely')}${scale('feeling','How did the AI advice make you feel?','Very negative','Very positive')}<button class="button primary" type="submit">Continue</button></form></div>`;const t=clock();return await new Promise(r=>{const form=document.getElementById('rating-form');form.onsubmit=e=>{e.preventDefault();const trust=form.querySelector('[name=trust]:checked'),feeling=form.querySelector('[name=feeling]:checked');if(!trust||!feeling)return;form.querySelector('button').disabled=true;timing.rating_ms=elapsed(t).active;r({trust:Number(trust.value),feeling:Number(feeling.value)});};});}
+async function ratings(){
+  timing.rating_ms=0;if(!state.ratings_due)return {};
+  phase('AI TRUST');
+  const paired=CFG.rating_items==='trust_and_feeling';
+  stage.innerHTML=`<div class="rating-stage"><form id="rating-form">${scale('trust',`How much did you trust the AI over the last ${state.rating_window} trials?`,'Not at all','Completely')}${paired?scale('feeling','How did the AI advice make you feel?','Very negative','Very positive'):''}</form></div>`;
+  const t=clock();return await new Promise(resolve=>{
+    const form=document.getElementById('rating-form');let submitted=false;
+    form.onsubmit=e=>e.preventDefault();
+    form.onchange=()=>{
+      if(submitted)return;
+      const trust=form.querySelector('[name=trust]:checked'),feeling=form.querySelector('[name=feeling]:checked');
+      if(!trust||(paired&&!feeling))return;
+      submitted=true;form.querySelectorAll('input').forEach(input=>input.disabled=true);
+      timing.rating_ms=elapsed(t).active;
+      resolve({trust:Number(trust.value),...(paired?{feeling:Number(feeling.value)}:{})});
+    };
+  });
+}
 async function run(){let finishedWarmup=false;for(;;){state=await recover(()=>fetchJSON('/api/state'),'We couldn’t load the next trial.');if(state.done){location.href='/debrief';return;}info={};renderResearcher(state.researcher);renderProgress();const start=clock();timing={rating_ms:0,break_ms:0,resumed:state.pending?1:0,viewport_width:innerWidth,viewport_height:innerHeight,device_pixel_ratio:devicePixelRatio};let initial,advice;
 if(state.pending){phase('WELCOME BACK');stage.innerHTML=`<div class="checkpoint-card"><h2>Your last answer is saved.</h2><p>Continue with the advice for that trial.</p><button class="button primary" id="resume-advice">Continue →</button></div>`;await new Promise(r=>document.getElementById('resume-advice').onclick=r);initial={estimate:state.pending.initial,active:state.pending.rt_initial,wall:0};advice={advice_text:state.pending.text,advice_number:state.pending.advice};}
-else{if(state.break_due||finishedWarmup){await checkpoint(finishedWarmup);finishedWarmup=false;}stimulusPromise=prepareStimulus();phase('GET READY');stage.innerHTML='<div class="fixation" aria-label="Focus on the centre">+</div>';timing.fixation_ms=(await visibleSleep(CFG.fixation_ms)).active;initial=await recover(()=>showStimulus(),'We couldn’t load the dot image.');timing.initial_active_ms=initial.active;timing.initial_wall_ms=initial.wall;advice=await getAdvice(initial);}
-const final=await showAdvice(initial,advice);timing.final_active_ms=final.active;timing.final_wall_ms=final.wall;const checkin=await ratings();timing.total_wall_ms=elapsed(start).wall;timing.total_active_ms=elapsed(start).active;timing.hidden_ms=Math.round(totalHidden()-start.hidden);timing.visibility_interruptions=interruptions-start.interruptions;phase('RECORDING YOUR RESPONSE');stage.innerHTML='<div class="saved-state"><span>✓</span><p>Saving…</p></div>';await recover(()=>fetchJSON('/api/final',{trial_token:state.trial_token,estimate:final.estimate,rt_ms:final.active,trust:checkin.trust??null,feeling:checkin.feeling??null,telemetry:timing}),'We couldn’t confirm that your response was saved.');finishedWarmup=state.practice;}}
+else{if(state.break_due||finishedWarmup){await checkpoint(finishedWarmup);finishedWarmup=false;}stimulusPromise=prepareStimulus();timing.fixation_ms=0;initial=await recover(()=>showStimulus(),'We couldn’t load the dot image.');timing.initial_active_ms=initial.active;timing.initial_wall_ms=initial.wall;advice=await getAdvice(initial);}
+const final=await showAdvice(initial,advice);timing.final_active_ms=final.active;timing.final_wall_ms=final.wall;const checkin=await ratings();timing.total_wall_ms=elapsed(start).wall;timing.total_active_ms=elapsed(start).active;timing.hidden_ms=Math.round(totalHidden()-start.hidden);timing.visibility_interruptions=interruptions-start.interruptions;await recover(()=>fetchJSON('/api/final',{trial_token:state.trial_token,estimate:final.estimate,rt_ms:final.active,trust:checkin.trust??null,feeling:checkin.feeling??null,telemetry:timing}),'We couldn’t confirm that your response was saved.');finishedWarmup=state.practice;}}
 run().catch(error=>{stage.innerHTML=`<div class="recovery"><h2>Session interrupted</h2><p>${esc(error.message)}</p><button class="button primary" onclick="location.reload()">Reload this session</button></div>`;});

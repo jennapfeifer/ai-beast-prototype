@@ -16,11 +16,11 @@ window.BEASTEstimate = (() => {
     const ai = Number(advice?.advice_number);
     return `<div class="estimate-card ${final?'decision-card':'initial-card'}">
       <h1 class="estimate-question ${final?'final-colour':'previous-colour'}" id="estimate-title">Enter your ${final?'final ':'first '}estimate</h1>
-      ${final?'':'<p class="estimate-instruction" id="estimate-help">Select your estimate on the line.</p>'}
+      
       <div class="estimate-scale">
         ${final?`<div class="reference-lane previous-lane"><p class="reference-copy previous-colour" id="previous-copy">YOUR FIRST ESTIMATE: <strong>${first}</strong></p></div>
         `:''}
-        <div class="estimate-axis" id="${final?'final-line':'initial-line'}" ${final?'':'tabindex="0" role="group" aria-labelledby="estimate-title" aria-describedby="estimate-help"'}>
+        <div class="estimate-axis" id="${final?'final-line':'initial-line'}" ${final?'':'tabindex="0" role="group" aria-labelledby="estimate-title"'}>
           <div class="estimate-rail" aria-hidden="true"></div>
           ${final?`<span class="previous-marker" style="left:${percent(first,max)}%" aria-hidden="true"></span>
           <span class="advice-marker" style="left:${percent(ai,max)}%" aria-hidden="true"></span>
@@ -123,7 +123,6 @@ window.BEASTEstimate = (() => {
         if (event.key==='Home' || event.key==='End') {event.preventDefault();resetTyping();update(event.key==='Home'?1:max);return;}
         if (event.key==='Enter') {event.preventDefault();submit();}
       };
-      keyboard.focus({preventScroll:true});
     });
   }
   return {render,markup,percent,pointerValue,labelLeft};
