@@ -58,7 +58,7 @@ def test_versioned_images_stay_protected_and_filename_does_not_reveal_count(clie
     state=start(client,['C5'],trials=1,skip=True)
     response=client.get(state['image'])
     assert response.status_code==200
-    assert response.headers['Content-Disposition']=='inline; filename=dot-field.png'
+    assert response.headers['Content-Disposition']=='inline; filename=dot-field.webp'
     assert Image.open(io.BytesIO(response.data)).size==(1024,1024)
     assert client.get('/static/stimuli/'+STIMULUS_RENDER_VERSION+'/N256_V1.png').status_code==404
     assert client.get('/stimulus/not-the-current-token').status_code==404
@@ -66,7 +66,7 @@ def test_versioned_images_stay_protected_and_filename_does_not_reveal_count(clie
     assert client.get(state['image']).status_code==404
     row=store.diagnostic_rows()[0]
     assert row['ui_version']==A.APP_VERSION and row['stimulus_render_version']==STIMULUS_RENDER_VERSION
-    assert A.APP_VERSION=='fieldwork-2.8-clear-estimates'
+    assert A.APP_VERSION=='fieldwork-2.9-advice-layout'
     assert b'stimulus_render_version' in client.get('/admin/export/diagnostics.csv').data
 
 
