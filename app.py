@@ -8,7 +8,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.9-advice-layout'
+APP_VERSION = 'fieldwork-2.10.1-marker-layer'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -22,12 +22,12 @@ STUDY_MODE = os.getenv('STUDY_MODE','pilot')
 ADVISER_MODE = os.getenv('ADVISER_MODE','offline')
 ADVISER_MIN_DELAY_MS = int(os.getenv('ADVISER_MIN_DELAY_MS','0'))
 STIMULUS_MS = int(os.getenv('STIMULUS_MS','5000'))
-FIXATION_MS = int(os.getenv('FIXATION_MS','450'))
+FIXATION_MS = 0
 COLLECT_RATINGS = os.getenv('COLLECT_RATINGS','1').lower() not in {'0','false'}
 RATING_EVERY = max(1,int(os.getenv('RATING_EVERY','2')))
 PREFILL_FINAL = True  # The v6 final slider starts at the participant's initial estimate.
 SHOW_END_SCORE = os.getenv('SHOW_END_SCORE','1').lower() not in {'0','false'}
-ADVICE_PREVIEW_MS = 3000 if os.getenv('ADVICE_PREVIEW_MS','0')=='3000' else 0
+ADVICE_PREVIEW_MS = 3000 if os.getenv('ADVICE_PREVIEW_MS','3000')=='3000' else 0
 STUDY_CONTACT = os.getenv('STUDY_CONTACT','')
 ETHICS_DETAILS = os.getenv('ETHICS_DETAILS','')
 logging.basicConfig(level=logging.INFO)
@@ -166,7 +166,7 @@ def start():
     except ValueError:return 'Invalid advice display setting.',400
     if preview_ms not in {0,3000}:return 'Invalid advice display setting.',400
     conf=dict(conditions=conditions,trials_per_block=n,skip_practice=researcher and request.form.get('skip_practice')=='1',
-              advice_preview_ms=preview_ms,
+              advice_preview_ms=preview_ms,rating_items='trust_only',
               test_index=integer(request.form.get('test_index','0'),0,7) if researcher else 0,
               adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
               model_profile_id=profile_id,model_profile=profile,
@@ -184,7 +184,7 @@ def instructions():
     return render_template('instructions.html',n_trials=sum(r['condition_id']!='PRACTICE' for r in sched),
       n_blocks=len({r['condition_id'] for r in sched if r['condition_id']!='PRACTICE'}),practice=not data['config']['skip_practice'],
       stimulus_seconds=STIMULUS_MS/1000,ratings=COLLECT_RATINGS,rating_every=RATING_EVERY,pilot=data['config']['is_test'],
-      advice_preview_ms=data['config'].get('advice_preview_ms',0))
+      advice_preview_ms=data['config'].get('advice_preview_ms',0),rating_items=data['config'].get('rating_items','trust_and_feeling'))
 
 
 @app.route('/task')
@@ -194,7 +194,7 @@ def task():
         fixation_ms=FIXATION_MS,collect_ratings=COLLECT_RATINGS,rating_every=RATING_EVERY,prefill_final=PREFILL_FINAL,
         researcher_mode=bool(session.get('researcher') and data['config'].get('researcher')),max_estimate=design.MAX_ESTIMATE,
         pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline',request_timeout_ms=90000,
-        advice_preview_ms=data['config'].get('advice_preview_ms',0)))
+        advice_preview_ms=data['config'].get('advice_preview_ms',0),rating_items=data['config'].get('rating_items','trust_and_feeling')))
 
 
 @app.get('/api/state')
@@ -352,8 +352,8 @@ def api_final():
         if trial is None or not pending or token!=data.get('token'):return jsonify(error='No matching trial in progress. Reload to resume.'),409
         try:
             trust=integer(body.get('trust'),1,7) if ratings_due(trial) else None
-            feeling=integer(body.get('feeling'),1,7) if ratings_due(trial) else None
-        except ValueError:return jsonify(error='Please answer both check-in questions from 1 to 7.'),400
+            feeling=integer(body.get('feeling'),1,7) if ratings_due(trial) and data['config'].get('rating_items','trust_and_feeling')=='trust_and_feeling' else None
+        except ValueError:return jsonify(error='Please select a rating from 1 to 7 for each question.'),400
         timing={**clean_timing(pending.get('initial_telemetry')),**timing}
         initial,advice=pending['initial'],pending['advice'];truth=trial['true_count'];practice=trial['condition_id']=='PRACTICE'
         if not practice:
@@ -365,7 +365,7 @@ def api_final():
                 rt_initial_ms=pending['rt_initial'],rt_final_ms=rt,advice_latency_ms=pending['latency_ms'],audio_played=False,modality='text')
             store.save_trial(row,con)
         diagnostic=dict(pending['diagnostic'],**timing,ui_version=APP_VERSION,stimulus_render_version=STIMULUS_RENDER_VERSION,
-            stimulus_format='webp_lossless',advice_preview_target_ms=data['config'].get('advice_preview_ms',0),
+            stimulus_format='webp_lossless',advice_preview_target_ms=data['config'].get('advice_preview_ms',0),rating_items=data['config'].get('rating_items','trust_and_feeling'),
             condition_id=trial['condition_id'],trial_position=trial['trial_position'],
             global_trial=trial['global_trial'],practice=practice,is_test=data['config']['is_test'],
             adviser_mode=data['config']['adviser_mode'],target_stimulus_ms=STIMULUS_MS,target_wait_ms=ADVISER_MIN_DELAY_MS,
@@ -384,7 +384,7 @@ def debrief():
     if not data['complete']:return redirect(url_for('task'))
     store.update_participant(pid,debriefed=True)
     return render_template('debrief.html',pid=pid,pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline',
-        completed=sum(not r['practice'] for r in store.diagnostic_rows(pid)),summary=store.participant_summary(pid) if SHOW_END_SCORE else None)
+        rating_items=data['config'].get('rating_items','trust_and_feeling'),completed=sum(not r['practice'] for r in store.diagnostic_rows(pid)),summary=store.participant_summary(pid) if SHOW_END_SCORE else None)
 
 
 @app.route('/researcher',methods=['GET','POST'])

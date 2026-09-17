@@ -3,10 +3,11 @@
 The v6.1 **number line, short Gemini notes and advice prefetch** are integrated with protected pilot controls, server-side sessions, timing diagnostics and recovery. Original NEW25 numerical advice, counterbalancing and deterministic dot positions/counts are retained; visual and delivery versions are recorded.
 
 
-Current update: **v2.9, advice layout and image loading** (`fieldwork-2.9-advice-layout`).
-See [ADVICE_LAYOUT_UPDATE.md](ADVICE_LAYOUT_UPDATE.md) for the grey/blue/red layout,
-lossless image compression, simpler introduction, optional three-second advice
-screen and installation. The v2.7 adviser repair/retry policy remains in place.
+Current update: **v2.10.1, simpler participant flow and marker layering** (`fieldwork-2.10.1-marker-layer`).
+See [SIMPLE_FLOW_UPDATE.md](SIMPLE_FLOW_UPDATE.md) for installation and protocol changes.
+
+New sessions collect trust only; feeling stays null. Old sessions retain both questions.
+The following adviser description also covers historical two-rating sessions and probe tools.
 
 Trust means trust in the AI adviser. Feeling means the reported reaction to its advice.
 These inputs now supply internal persuasion approaches rather than requiring the model
@@ -16,9 +17,9 @@ human review. Every adaptive note with usable history must now reference the pre
 
 ## Participant flow
 
-Image (5 s) → first estimate on a blank number line → AI number + short note (target 6–12 words, tolerance up to 15) → final slider → occasional trust/feeling check-in. The final slider starts at the participant's first estimate, as in v6.1. The first estimate uses a grey square, AI advice a bright-blue pointer below the white line, and the final choice a red square. Direct labels replace the cards and legend. A plain progress bar shows completion; scores appear only after finishing.
+Image (5 s) → first estimate on a blank number line → AI number + short note (target 6–12 words, tolerance up to 15) → final slider → occasional trust rating (selection advances immediately). The final slider starts at the participant's first estimate, as in v6.1. The first estimate uses a grey square, AI advice a bright-blue pointer below the white line, and the final choice a red square. Direct labels replace the cards and legend. A plain progress bar shows completion; scores appear only after finishing.
 
-C3–C8 notes are prefetched after the image is displayed. Images preload during fixation. An optional researcher setting shows the advice alone for three visible seconds before the final-estimate line; it applies to all selected conditions and does not prove reading. The model gets the fixed recommendation and, for C5/C8 only, every completed earlier trial in that block. **It never gets the current first estimate**, even if prefetch fails and synchronous generation is needed. This keeps the information supplied consistent. C1/C2 use fixed control notes and C2's number still depends on the current estimate.
+C3–C8 notes are prefetched after the image is displayed. The fixation screen is removed. By default the task shows the advice alone for three visible seconds before the final-estimate line (the researcher can restore simultaneous display); it applies to all selected conditions and does not prove reading. The model gets the fixed recommendation and, for C5/C8 only, every completed earlier trial in that block. **It never gets the current first estimate**, even if prefetch fails and synchronous generation is needed. This keeps the information supplied consistent. C1/C2 use fixed control notes and C2's number still depends on the current estimate.
 
 Default live provider: `gemini`, model `gemini-3.5-flash-lite`, thinking `minimal`, up to three application-level attempts, no artificial minimum wait. All model profiles default to a 60-second total generation allowance, with per-request timeouts clipped to the remaining time. Gemini Fast uses 15 seconds per request; the server-default profile respects `ADVISER_REQUEST_TIMEOUT`. SDK retries are disabled. Recoverable failures retry; permanent API errors stop immediately. Exhausted failures produce a labelled generic fallback. Live recovery, latency and cost must be measured in the pilot.
 

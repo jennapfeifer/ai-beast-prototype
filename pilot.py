@@ -9,10 +9,10 @@ def quantile(values,p):
     index=(len(values)-1)*p;lo=int(index);hi=min(lo+1,len(values)-1)
     return round(values[lo]+(values[hi]-values[lo])*(index-lo),1)
 
-def timing_projection(initial_s=4,final_s=7,wait_s=2.5,rating_s=6,break_s=20,instructions_s=90,stimulus_s=5,fixation_s=.6,rating_every=2,collect_ratings=True,advice_preview_s=0):
+def timing_projection(initial_s=4,final_s=7,wait_s=2.5,rating_s=3,break_s=20,instructions_s=90,stimulus_s=5,fixation_s=0,rating_every=2,collect_ratings=True,advice_preview_s=0):
     checks=8*(13//max(1,rating_every)) if collect_ratings else 0
     total=105*(initial_s+final_s+wait_s+stimulus_s+fixation_s+advice_preview_s)+checks*rating_s+7*break_s+instructions_s
-    return dict(minutes=round(total/60,1),assumption_only=True,checkins=checks,formula=f'105 trial cycles + {checks} check-ins + 7 breaks + instructions',
+    return dict(minutes=round(total/60,1),assumption_only=True,checkins=checks,formula=f'105 trial cycles + {checks} rating screens + 7 breaks + instructions',
                 inputs=dict(advice_preview_s=advice_preview_s,initial_s=initial_s,final_s=final_s,wait_s=wait_s,rating_s=rating_s,break_s=break_s,instructions_s=instructions_s,stimulus_s=stimulus_s,fixation_s=fixation_s))
 
 def build_report(records,people):
