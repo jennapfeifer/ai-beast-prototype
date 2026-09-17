@@ -16,10 +16,10 @@ def build(out):
 .preview-tools span{font-size:14px;color:#bac2cc;margin-right:auto}
 .advice-focus .preview-tools,.advice-focus #preview-result{display:none}\n#preview-result{color:#bac2cc;text-align:center;font-size:16px;padding:12px}
 </style><body class="task-surface"><nav class="preview-tools" aria-label="Preview controls">
-<span>Preview · synthetic values · nothing saved</span><button data-mode="first">First estimate</button><button data-mode="final">Final estimate</button><button data-mode="equal">Same values</button><button data-mode="timed">3-second advice</button></nav>
+<span>Preview · synthetic values · nothing saved</span><button data-mode="first">First estimate</button><button data-mode="final">Final estimate</button><button data-mode="equal">Same values</button><button data-mode="timed">5-second advice</button></nav>
 <div id="phase-name" class="sr-only"></div><div id="visibility-cover" class="visibility-cover" hidden><p>Return to this tab to continue.</p></div><main class="task-page"><section class="card trial-card"><div id="stage"></div></section><p id="preview-result" role="status"></p></main>
 <script>'''+js+'''
-window.BEAST_CFG={max_estimate:400,advice_preview_ms:location.hash==='#timed'?3000:0};
+window.BEAST_CFG={max_estimate:400,advice_preview_ms:location.hash==='#timed'?5000:0};
 window.fetch=()=>Promise.reject(Error('This offline preview cannot make API requests.'));
 '''+runner+'''
 const previewMode=location.hash.slice(1)||'final';

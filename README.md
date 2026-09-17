@@ -1,3 +1,7 @@
+# Latest: v2.11
+
+See ADVICE_READING_UPDATE.md for consistent advice typography and the five-second default (with 0/3/4/5-second options).
+
 # BEAST · private AI adviser pilot
 
 The v6.1 **number line, short Gemini notes and advice prefetch** are integrated with protected pilot controls, server-side sessions, timing diagnostics and recovery. Original NEW25 numerical advice, counterbalancing and deterministic dot positions/counts are retained; visual and delivery versions are recorded.
