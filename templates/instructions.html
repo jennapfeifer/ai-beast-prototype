@@ -2,12 +2,13 @@
 {% block theme_colour %}#101418{% endblock %}{% block body_class %}task-surface info-surface{% endblock %}
 {% block body %}<main class="page narrow">
 <h1>How it works</h1><p class="lead">{{n_trials}} images · {{n_blocks}} rounds</p>
-<div class="step-cards">
-<section class="card"><span class="step-number">01</span><h3>Look</h3><p>{% if stimulus_seconds %}Look at the dots for {{'%g'|format(stimulus_seconds)}} seconds.{% else %}Look at the dots, then continue.{% endif %}</p></section>
-<section class="card"><span class="step-number">02</span><h3>First estimate</h3><p>Select how many dots you saw on the line. Your first estimate is grey.</p></section>
-<section class="card"><span class="step-number">03</span><h3>Final estimate</h3><p>Read the blue AI advice. Move the red square to choose your final estimate, then confirm.</p>{% if advice_preview_ms %}<p>The AI advice appears alone for {{advice_preview_ms//1000}} seconds before the line.</p>{% endif %}</section>
-</div>
-{% if ratings %}<p>Every {{rating_every}} trials, answer two questions about the AI advice.</p>{% endif %}
-<p>You can take breaks between rounds. If you switch tabs or minimise this window, timed displays pause until you return.</p>
+<section class="card instruction-copy"><ol>
+<li>{% if stimulus_seconds %}Look at the dots for {{'%g'|format(stimulus_seconds)}} seconds.{% else %}Look at the dots.{% endif %}</li>
+<li>Enter your first estimate.</li>
+<li>Read the blue AI advice.{% if advice_preview_ms %} It appears alone for {{advice_preview_ms//1000}} seconds.{% endif %}</li>
+<li>Choose your final estimate with the red square, then confirm.</li>
+</ol>
+{% if ratings %}<p>Every {{rating_every}} trials, {% if rating_items=='trust_and_feeling' %}answer the trust and feeling questions.{% else %}rate your trust in the AI.{% endif %} Selecting {% if rating_items=='trust_and_feeling' %}both ratings{% else %}a rating{% endif %} continues the task.</p>{% endif %}
+<p>You can rest between rounds. Timed displays pause if you leave this tab.</p></section>
 <a class="button primary" href="/task">{% if practice %}Start practice{% else %}Start{% endif %}</a>
 </main>{% endblock %}
