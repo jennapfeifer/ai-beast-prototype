@@ -6,7 +6,7 @@ from conftest import start,post,finish_trial
 def test_default_advice_and_trust_only_are_pinned(client):
     state=start(client,['C5'],trials=3,skip=True)
     with client.session_transaction() as cookie:pid=cookie['pid']
-    assert A.ADVICE_PREVIEW_MS==3000
+    assert A.ADVICE_PREVIEW_MS==5000
     assert store.session_data(pid)['config']['rating_items']=='trust_only'
     finish_trial(client,state)
     state=client.get('/api/state').get_json()

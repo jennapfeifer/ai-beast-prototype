@@ -66,7 +66,7 @@ def test_versioned_images_stay_protected_and_filename_does_not_reveal_count(clie
     assert client.get(state['image']).status_code==404
     row=store.diagnostic_rows()[0]
     assert row['ui_version']==A.APP_VERSION and row['stimulus_render_version']==STIMULUS_RENDER_VERSION
-    assert A.APP_VERSION=='fieldwork-2.10.1-marker-layer'
+    assert A.APP_VERSION=='fieldwork-2.11.1-quoted-advice'
     assert b'stimulus_render_version' in client.get('/admin/export/diagnostics.csv').data
 
 
