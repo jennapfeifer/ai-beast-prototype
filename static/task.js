@@ -68,7 +68,7 @@ async function showAdvice(initial,advice) {
   timing.advice_preview_ms=0;timing.advice_preview_wall_ms=0;
   if(CFG.advice_preview_ms>0){
     phase('AI ADVICE');document.body.classList.add('advice-focus');
-    stage.innerHTML=`<section class="advice-only ai-colour"><p>AI ADVICE: <strong>${esc(advice.advice_number)}</strong></p><h1>${esc(advice.advice_text)}</h1></section>`;
+    stage.innerHTML=`<section class="advice-only ai-colour"><p>AI ADVICE: <strong>${esc(advice.advice_number)}</strong></p><h1>“${esc(advice.advice_text)}”</h1></section>`;
     try{
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
       const exposure=await visibleSleep(CFG.advice_preview_ms);

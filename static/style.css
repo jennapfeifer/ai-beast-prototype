@@ -167,3 +167,7 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 .final-marker{z-index:6}
 .final-marker .value-stem{z-index:6}
 .final-marker .value-square{z-index:5}
+
+/* Equal-size advice label, number and sentence. */
+.advice-only p,.advice-only h1,.advice-only strong{font-size:clamp(28px,4vw,36px);line-height:1.5;font-weight:500;letter-spacing:0}
+.advice-lane .reference-copy strong{font-size:inherit}
