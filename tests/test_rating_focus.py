@@ -136,6 +136,8 @@ def test_live_prefetch_routes_and_exports_both_ratings_across_two_blocks(client,
     monkeypatch.setattr(adviser,'_model_text',fake)
     state=start(client,['C5','C8'],trials=4,skip=True,mode='live')
     with client.session_transaction() as sess:pid=sess['pid']
+    # A pre-v2.10 session retains both questions after deployment.
+    with store.session_transaction(pid) as (con,data):data['config']['rating_items']='trust_and_feeling'
     while not state['done']:
         post(client,'/api/prefetch',json={'trial_token':state['trial_token']})
         advice=post(client,'/api/initial',json={'trial_token':state['trial_token'],'estimate':100}).get_json()

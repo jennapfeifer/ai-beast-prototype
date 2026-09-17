@@ -165,7 +165,7 @@ def test_setup_does_not_overwrite_interface():
     p=Path(__file__).resolve().parents[1]/'templates'/'task.html';before=p.read_bytes();setup_files.main();assert p.read_bytes()==before
 
 def test_duration_estimate_is_labelled_assumption():
-    report=timing_projection();assert report['assumption_only'] and report['minutes']==42.1
+    report=timing_projection();assert report['assumption_only'] and report['minutes']==38.6
 
 def test_contrastive_probe_is_offline_and_keeps_static_prompt_constant(tmp_path,monkeypatch):
     import verify_adaptation as probe

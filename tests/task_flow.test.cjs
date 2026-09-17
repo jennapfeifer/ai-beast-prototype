@@ -55,3 +55,18 @@ test('the preloaded image is reused and displayed before AI prefetch starts',asy
  assert.equal(timing().stimulus_fetch_ms,250);
  assert.equal(images[0].fetchPriority,'high');
 });
+
+test('one trust selection advances immediately, locks choices, and invents no feeling',async()=>{
+ const {ctx,document}=setup();
+ vm.runInContext("state={ratings_due:true,rating_window:2};",ctx);
+ const pending=ctx.ratings();
+ assert.equal(document.querySelectorAll('fieldset').length,1);
+ assert.equal(document.querySelector('button'),null);
+ assert(!document.body.textContent.includes('Check-in'));
+ const input=document.querySelector('[name=trust][value="6"]');
+ input.setAttribute('checked','');
+ document.getElementById('rating-form').onchange();
+ const result=await pending;
+ assert.equal(result.trust,6);assert.equal(result.feeling,undefined);
+ assert([...document.querySelectorAll('input')].every(input=>input.disabled));
+});

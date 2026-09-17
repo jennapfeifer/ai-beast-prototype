@@ -74,6 +74,6 @@ def test_intro_consistent_and_end_summary_copy_matches_setting(client,monkeypatc
         assert 'measuring the study duration' not in html and 'assistant’s recommendations' not in html
     start(client,['C5'],skip=True,trials=1)
     html=client.get('/instructions').get_data(as_text=True)
-    assert 'First estimate' in html and 'Final estimate' in html and 'blue AI advice' in html
+    assert 'first estimate' in html and 'final estimate' in html and 'blue AI advice' in html
     assert 'keep this tab visible' not in html.lower() and 'type your' not in html
-    assert 'switch tabs or minimise' in html
+    assert 'Timed displays pause if you leave this tab' in html

@@ -18,7 +18,7 @@ function setup(options={}){
   vm.runInNewContext(source,context);
   const stage=document.getElementById('stage');
   const result=window.BEASTEstimate.render({stage,max:400,clock:()=>0,elapsed:()=>({wall:25,active:25}),...options});
-  const key=(key,props={})=>{let prevented=false;focused.onkeydown({key,preventDefault(){prevented=true;},...props});return prevented;};
+  const key=(key,props={})=>{let prevented=false;if(!focused)stage.querySelector('#est,#initial-line').focus();focused.onkeydown({key,preventDefault(){prevented=true;},...props});return prevented;};
   return {api:window.BEASTEstimate,stage,result,key,get focused(){return focused;},get disconnected(){return disconnected;}};
 }
 
@@ -107,3 +107,7 @@ test('erasing an initial typed answer restores the blank state',async()=>{
   assert.equal(ui.focused.hasAttribute('aria-valuenow'),false);
   ui.key('Home');ui.key('Enter');await ui.result;
 });
+
+ test('initial render has one instruction and does not autofocus the practice line',()=>{
+ const ui=setup();assert.equal(ui.focused,null);assert.equal(ui.stage.querySelectorAll('h1').length,1);assert.equal(ui.stage.querySelector('.estimate-instruction'),null);
+ });
