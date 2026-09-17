@@ -28,7 +28,7 @@ window.BEASTEstimate = (() => {
           <div class="value-marker ${final?'final-marker':'initial-marker'}" id="${final?'final-pin':'initial-pin'}" ${final?`style="left:${percent(first,max)}%"`:'hidden'} aria-hidden="true"><span class="value-stem"></span><span class="value-square" id="${final?'revised-value':'initial-pin-value'}">${final?first:''}</span></div>
           <span class="scale-end scale-start" aria-hidden="true">1</span><span class="scale-end scale-finish" aria-hidden="true">${max}</span>
         </div>
-        ${final?`<div class="reference-lane advice-lane"><p class="reference-copy ai-colour" id="advice-copy"><span class="advice-intro">AI ADVICE: <strong>${ai}</strong></span><span class="advice-words"> — “${escape(advice.advice_text)}”</span></p></div>`:''}
+        ${final?`<div class="reference-lane advice-lane"><p class="reference-copy ai-colour" id="advice-copy"><span class="advice-intro">${escape(advice.adviser_name && advice.adviser_name!=='AI' ? advice.adviser_name+' · AI ADVICE' : 'AI ADVICE')}: <strong>${ai}</strong></span><span class="advice-words"> — “${escape(advice.advice_text)}”</span></p></div>`:''}
       </div>
       <div class="center"><button class="button estimate-confirm ${final?'confirm-final':'confirm-initial'}" id="go" ${final?'':'disabled'}>${final?'Confirm':'Continue'}</button></div>
     </div>`;
