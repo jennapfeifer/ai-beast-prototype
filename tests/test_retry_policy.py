@@ -180,6 +180,8 @@ def test_prefetch_saves_recovery_and_reuses_result_without_regeneration(client,m
     monkeypatch.setattr(adviser,'_model_text',fake)
     state=start(client,['C5'],trials=1,skip=True,mode='live')
     with client.session_transaction() as session:pid=session['pid']
+    # This regression exercises a session started under the legacy prefetch protocol.
+    with store.session_transaction(pid) as (con,data):data['config'].pop('adviser_protocol',None)
     profile=store.session_data(pid)['config']['model_profile']
     assert profile['attempts']==3 and profile['budget']==60
     # New defaults cannot change this already launched session's retry policy.

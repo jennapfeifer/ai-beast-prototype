@@ -70,3 +70,10 @@ test('one trust selection advances immediately, locks choices, and invents no fe
  assert.equal(result.trust,6);assert.equal(result.feeling,undefined);
  assert([...document.querySelectorAll('input')].every(input=>input.disabled));
 });
+
+test('v8 displays image without starting advice before the first estimate',async()=>{
+ const {ctx,order}=setup();ctx.BEAST_CFG.prefetch_enabled=false;
+ vm.runInContext("state={image:'/stimulus/token',trial_token:'token'};",ctx);
+ ctx.initialEstimator=async()=>({estimate:151,active:10,wall:10});
+ await ctx.showStimulus();assert(!order.includes('prefetch'));
+});
