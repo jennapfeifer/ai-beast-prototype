@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import random
+import os
+import tempfile
 from pathlib import Path
 from typing import List, Tuple
 
@@ -53,7 +55,12 @@ def generate_dot_stimulus(path: Path, n_dots: int, seed: int, size: int = 512, f
         raise ValueError('Supersample must be a positive multiple of pixel ratio.')
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and not force:
-        return
+        try:
+            with Image.open(path) as existing:
+                valid=existing.size==(size*pixel_ratio,size*pixel_ratio)
+                existing.verify()
+            if valid:return
+        except (OSError,ValueError):pass
     points=dot_positions(n_dots,seed,size)
     radius=5
     image=Image.new('RGB',(size*supersample,size*supersample),'white')
@@ -63,7 +70,19 @@ def generate_dot_stimulus(path: Path, n_dots: int, seed: int, size: int = 512, f
         draw.ellipse(tuple(value*supersample for value in (x-radius,y-radius,x+radius,y+radius)),fill='black')
     if supersample!=pixel_ratio:
         image=image.resize((size*pixel_ratio,size*pixel_ratio),Image.Resampling.LANCZOS)
-    image.save(path, format="PNG", optimize=True)
+    atomic_image_save(image,path,format='PNG',optimize=True)
+
+
+def atomic_image_save(image,path,**options):
+    """An interrupted startup cannot leave a partial stimulus at its final path."""
+    path=Path(path)
+    fd,temp=tempfile.mkstemp(prefix=path.name+'.',suffix='.tmp',dir=path.parent)
+    os.close(fd)
+    try:
+        image.save(temp,**options)
+        os.replace(temp,path)
+    finally:
+        if os.path.exists(temp):os.unlink(temp)
 
 
 def main() -> None:

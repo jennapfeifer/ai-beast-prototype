@@ -9,11 +9,11 @@ def quantile(values,p):
     index=(len(values)-1)*p;lo=int(index);hi=min(lo+1,len(values)-1)
     return round(values[lo]+(values[hi]-values[lo])*(index-lo),1)
 
-def timing_projection(initial_s=4,final_s=7,wait_s=2.5,rating_s=6,break_s=20,instructions_s=90,stimulus_s=5,fixation_s=.6,rating_every=2,collect_ratings=True):
+def timing_projection(initial_s=4,final_s=7,wait_s=2.5,rating_s=6,break_s=20,instructions_s=90,stimulus_s=5,fixation_s=.6,rating_every=2,collect_ratings=True,advice_preview_s=0):
     checks=8*(13//max(1,rating_every)) if collect_ratings else 0
-    total=105*(initial_s+final_s+wait_s+stimulus_s+fixation_s)+checks*rating_s+7*break_s+instructions_s
+    total=105*(initial_s+final_s+wait_s+stimulus_s+fixation_s+advice_preview_s)+checks*rating_s+7*break_s+instructions_s
     return dict(minutes=round(total/60,1),assumption_only=True,checkins=checks,formula=f'105 trial cycles + {checks} check-ins + 7 breaks + instructions',
-                inputs=dict(initial_s=initial_s,final_s=final_s,wait_s=wait_s,rating_s=rating_s,break_s=break_s,instructions_s=instructions_s,stimulus_s=stimulus_s,fixation_s=fixation_s))
+                inputs=dict(advice_preview_s=advice_preview_s,initial_s=initial_s,final_s=final_s,wait_s=wait_s,rating_s=rating_s,break_s=break_s,instructions_s=instructions_s,stimulus_s=stimulus_s,fixation_s=fixation_s))
 
 def build_report(records,people):
     grouped=defaultdict(list)
@@ -25,14 +25,14 @@ def build_report(records,people):
                           row.get('reasoning','unknown'),row.get('adviser_mode','unknown'),row.get('prompt_version') or 'unknown',
                           row.get('retry_policy_version') or 'unknown',row.get('max_attempts') or 0,
                           row.get('total_budget_s') or 0,row.get('ui_version') or 'unknown',
-                          row.get('stimulus_render_version') or 'unknown')].append(row)
+                          row.get('stimulus_render_version') or 'unknown',row.get('advice_preview_target_ms') or 0)].append(row)
     model_conditions=[]
-    for (cid,provider,model,reasoning,mode,prompt_version,retry_policy,max_attempts,budget,ui_version,stimulus_version),rows in sorted(model_groups.items()):
+    for (cid,provider,model,reasoning,mode,prompt_version,retry_policy,max_attempts,budget,ui_version,stimulus_version,preview_ms),rows in sorted(model_groups.items()):
         timed=[r for r in rows if r.get('timing_complete')]
         live=[r for r in rows if r.get('live_model')]
         model_conditions.append(dict(condition=cid,provider=provider,model=model,reasoning=reasoning,mode=mode,prompt_version=prompt_version,
             retry_policy_version=retry_policy,max_attempts=max_attempts or None,total_budget_s=budget or None,
-            ui_version=ui_version,stimulus_render_version=stimulus_version,
+            ui_version=ui_version,stimulus_render_version=stimulus_version,advice_preview_target_ms=preview_ms,
             trials=len(rows),live_messages=len(live),fallbacks=sum(bool(r.get('fallback')) for r in rows),
             retried_trials=sum((r.get('retry_count') or 0)>0 for r in rows),
             recovered_trials=sum(bool(r.get('recovered_after_retry')) for r in rows),
