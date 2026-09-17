@@ -1,13 +1,13 @@
-{% extends "base.html" %}{% block body %}
-<main class="page narrow">
-  <h1>How it works</h1>
-  <p class="lead">{{n_trials}} images · {{n_blocks}} rounds</p>
-  <div class="step-cards">
-    <div class="card"><span class="step-number">01</span><h3>Look</h3><p>{% if stimulus_seconds %}The dots appear for {{'%g'|format(stimulus_seconds)}} seconds.{% else %}View the dots, then continue.{% endif %} Estimate rather than count.</p></div>
-    <div class="card"><span class="step-number">02</span><h3>Estimate</h3><p>Click the line or type your estimate. Your first estimate appears in a grey square.</p></div>
-    <div class="card"><span class="step-number">03</span><h3>Decide</h3><p>The cyan pointer marks the AI advice. Move the red square to set your final estimate, then confirm. You can click, drag, type, or use the arrow keys.</p></div>
-  </div>
-  {% if ratings %}<p>Every {{rating_every}} trials, rate your trust and how the advice made you feel.</p>{% endif %}
-  <p>There is no speed bonus or accuracy feedback during the task. Keep this tab visible; you can rest between rounds.</p>
-  <a class="button primary" href="/task">{% if practice %}Start practice{% else %}Start{% endif %}</a>
+{% extends "base.html" %}
+{% block theme_colour %}#101418{% endblock %}{% block body_class %}task-surface info-surface{% endblock %}
+{% block body %}<main class="page narrow">
+<h1>How it works</h1><p class="lead">{{n_trials}} images · {{n_blocks}} rounds</p>
+<div class="step-cards">
+<section class="card"><span class="step-number">01</span><h3>Look</h3><p>{% if stimulus_seconds %}Look at the dots for {{'%g'|format(stimulus_seconds)}} seconds.{% else %}Look at the dots, then continue.{% endif %}</p></section>
+<section class="card"><span class="step-number">02</span><h3>First estimate</h3><p>Select how many dots you saw on the line. Your first estimate is grey.</p></section>
+<section class="card"><span class="step-number">03</span><h3>Final estimate</h3><p>Read the blue AI advice. Move the red square to choose your final estimate, then confirm.</p>{% if advice_preview_ms %}<p>The AI advice appears alone for {{advice_preview_ms//1000}} seconds before the line.</p>{% endif %}</section>
+</div>
+{% if ratings %}<p>Every {{rating_every}} trials, answer two questions about the AI advice.</p>{% endif %}
+<p>You can take breaks between rounds. If you switch tabs or minimise this window, timed displays pause until you return.</p>
+<a class="button primary" href="/task">{% if practice %}Start practice{% else %}Start{% endif %}</a>
 </main>{% endblock %}
