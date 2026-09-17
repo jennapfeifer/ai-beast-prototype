@@ -69,7 +69,7 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 /* Response roles use both shape and colour. Never place the rail above a marker. */
 .task-surface{
   --paper:#101418;--ink:#edf2f7;--muted:#aab4be;--line:#35404a;--soft:#222a32;
-  --previous:#bac2cc;--advice:#45def2;--choice:#ff6b73;--track:#73808b;
+  --previous:#bac2cc;--advice:#619fff;--choice:#ff6b73;--track:#edf2f7;
   background:var(--paper);color:var(--ink);min-height:100vh;color-scheme:dark;
 }
 .task-surface .site-header{border:0;min-height:60px;padding:14px 5%}
@@ -112,14 +112,14 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 .estimate-range{position:absolute;inset:0;opacity:0;margin:0;width:100%;height:100%;pointer-events:none}
 .previous-marker{position:absolute;top:8px;transform:translateX(-50%);width:18px;height:18px;border-radius:2px;background:var(--previous);z-index:3;pointer-events:none;box-shadow:0 0 0 3px var(--paper)}
 .previous-marker:after{content:"";position:absolute;left:8px;top:18px;width:2px;height:28px;background:var(--previous);z-index:-1}
-.advice-marker{position:absolute;top:32px;transform:translateX(-50%);width:24px;height:22px;background:var(--advice);clip-path:polygon(0 0,100% 0,50% 100%);z-index:4;pointer-events:none}
-.value-marker{position:absolute;top:54px;width:0;height:98px;z-index:5;pointer-events:none}
-.value-stem{position:absolute;top:0;left:-1px;height:34px;width:2px;background:currentColor}
-.value-square{position:absolute;top:34px;left:0;transform:translateX(-50%);display:grid;place-items:center;width:64px;height:64px;border-radius:4px;background:currentColor;box-shadow:0 0 0 3px var(--paper);font-size:32px;font-weight:700;font-variant-numeric:tabular-nums}
+.advice-marker{position:absolute;top:56px;transform:translateX(-50%);width:24px;height:22px;background:var(--advice);clip-path:polygon(50% 0,100% 100%,0 100%);z-index:4;pointer-events:none}
+.value-marker{position:absolute;top:54px;width:0;height:98px;pointer-events:none}
+.value-stem{position:absolute;top:0;left:-1px;height:34px;width:2px;background:currentColor;z-index:2}
+.value-square{position:absolute;top:34px;left:0;transform:translateX(-50%);display:grid;place-items:center;width:64px;height:64px;border-radius:4px;background:currentColor;box-shadow:0 0 0 3px var(--paper);font-size:32px;font-weight:700;font-variant-numeric:tabular-nums;z-index:5}
 .initial-marker{color:var(--previous)}.final-marker{color:var(--choice)}
 .initial-marker .value-square{background:var(--previous);color:#101418}
 .final-marker .value-square{background:var(--choice);color:#101418}
-.scale-end{position:absolute;top:62px;color:var(--muted);font-size:14px;font-variant-numeric:tabular-nums;pointer-events:none}
+.scale-end{position:absolute;top:62px;color:#edf2f7;font-size:14px;font-variant-numeric:tabular-nums;pointer-events:none}
 .scale-start{left:0}.scale-finish{right:0}
 .task-surface .estimate-confirm{min-width:160px;font-size:20px;min-height:56px;padding:14px 34px;border:0;border-radius:6px}
 .task-surface .confirm-initial{background:var(--previous);color:#101418}
@@ -137,3 +137,21 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
   .value-square{width:60px;height:60px;font-size:30px}
   .task-surface .scale-anchors{font-size:13px}
 }
+
+/* v2.9: separate source information from the neutral scale. */
+.previous-lane{margin-bottom:0!important}
+.advice-lane{margin-top:-14px;margin-bottom:28px!important}
+.info-surface .page{max-width:780px;margin:32px auto}
+.info-surface h1{font-size:38px;letter-spacing:-.7px}
+.info-surface h2{font-size:26px}
+.info-surface h3{font-size:23px}
+.info-surface p,.info-surface .copy-columns p,.info-surface .checkline{font-size:18px;line-height:1.6}
+.info-surface .step-cards{display:block;margin:28px 0}
+.info-surface .step-cards .card{padding:18px 0;margin:0;border-top:1px solid var(--line)}
+.info-surface .step-cards p{margin:0}
+.info-surface .notice{background:var(--soft);font-size:16px}
+.advice-focus .site-header,.advice-focus .task-heading,.advice-focus .progress,.advice-focus .pilot-strip,.advice-focus .researcher-overlay{display:none!important}
+.advice-focus .trial-card{min-height:85vh}
+.advice-only{max-width:780px;margin:auto;text-align:center}
+.advice-only p{color:var(--advice);font-size:26px}
+.advice-only h1{color:var(--advice);font-size:clamp(28px,4vw,40px);line-height:1.5;letter-spacing:0}

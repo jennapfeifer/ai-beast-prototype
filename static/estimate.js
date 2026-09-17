@@ -15,11 +15,11 @@ window.BEASTEstimate = (() => {
     const first = Number(initial);
     const ai = Number(advice?.advice_number);
     return `<div class="estimate-card ${final?'decision-card':'initial-card'}">
-      <h1 class="estimate-question ${final?'final-colour':'previous-colour'}" id="estimate-title">Enter your ${final?'final ':''}estimate</h1>
-      ${final?'':'<p class="estimate-instruction" id="estimate-help">Click the line or type a number.</p>'}
+      <h1 class="estimate-question ${final?'final-colour':'previous-colour'}" id="estimate-title">Enter your ${final?'final ':'first '}estimate</h1>
+      ${final?'':'<p class="estimate-instruction" id="estimate-help">Select your estimate on the line.</p>'}
       <div class="estimate-scale">
-        ${final?`<div class="reference-lane previous-lane"><p class="reference-copy previous-colour" id="previous-copy">YOUR PREVIOUS ESTIMATE: <strong>${first}</strong></p></div>
-        <div class="reference-lane advice-lane"><p class="reference-copy ai-colour" id="advice-copy"><span class="advice-intro">AI ADVICE: <strong>${ai}</strong></span><span class="advice-words"> — ${escape(advice.advice_text)}</span></p></div>`:''}
+        ${final?`<div class="reference-lane previous-lane"><p class="reference-copy previous-colour" id="previous-copy">YOUR FIRST ESTIMATE: <strong>${first}</strong></p></div>
+        `:''}
         <div class="estimate-axis" id="${final?'final-line':'initial-line'}" ${final?'':'tabindex="0" role="group" aria-labelledby="estimate-title" aria-describedby="estimate-help"'}>
           <div class="estimate-rail" aria-hidden="true"></div>
           ${final?`<span class="previous-marker" style="left:${percent(first,max)}%" aria-hidden="true"></span>
@@ -28,6 +28,7 @@ window.BEASTEstimate = (() => {
           <div class="value-marker ${final?'final-marker':'initial-marker'}" id="${final?'final-pin':'initial-pin'}" ${final?`style="left:${percent(first,max)}%"`:'hidden'} aria-hidden="true"><span class="value-stem"></span><span class="value-square" id="${final?'revised-value':'initial-pin-value'}">${final?first:''}</span></div>
           <span class="scale-end scale-start" aria-hidden="true">1</span><span class="scale-end scale-finish" aria-hidden="true">${max}</span>
         </div>
+        ${final?`<div class="reference-lane advice-lane"><p class="reference-copy ai-colour" id="advice-copy"><span class="advice-intro">AI ADVICE: <strong>${ai}</strong></span><span class="advice-words"> — ${escape(advice.advice_text)}</span></p></div>`:''}
       </div>
       <div class="center"><button class="button estimate-confirm ${final?'confirm-final':'confirm-initial'}" id="go" ${final?'':'disabled'}>${final?'Confirm':'Continue'}</button></div>
     </div>`;
