@@ -85,7 +85,7 @@ async function playBrowserVoice(advice){
   if(!('speechSynthesis' in window)||typeof SpeechSynthesisUtterance==='undefined')return false;
   try{
     const voices=await loadBrowserVoices();
-    const utterance=new SpeechSynthesisUtterance(`${advice.adviser_name||'Agent'}. My estimate is ${advice.advice_number}. ${advice.advice_text}`);
+    const utterance=new SpeechSynthesisUtterance(advice.advice_text);
     utterance.lang='en-US';utterance.rate=advice.voice_tone==='persuasive'?0.99:0.94;utterance.pitch=1;utterance.volume=1;
     const voice=bestBrowserVoice(voices);if(voice)utterance.voice=voice;
     utterance.onstart=markAudioPlayed;window.speechSynthesis.speak(utterance);return true;
