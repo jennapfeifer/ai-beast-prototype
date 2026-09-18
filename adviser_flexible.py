@@ -1,10 +1,11 @@
 """Current-trial agent generation for the BEAST raw pilot.
 
-This revision deliberately gives persuasive agents broad freedom over *how*
-they persuade. The experiment constrains only what the agent knows/claims,
-keeps current-trial initial estimates hidden, and supplies recent messages so
-the model can avoid parroting itself. The first live model response is shown
-without semantic or length-based repair.
+This revision keeps persuasive strategy open-ended, including epistemic
+framing, while still hiding the current first estimate and preventing claims
+of literal visual inspection. Neutral messages receive a slightly narrower
+length target to reduce voice-duration differences. Recent messages are
+supplied only to discourage repetitive phrasing. The first live model response
+is shown without semantic or length-based repair.
 """
 from __future__ import annotations
 
@@ -14,9 +15,11 @@ import math
 import time
 import adviser as legacy
 
-PROMPT_VERSION = 'agent-raw-v13-free-persuasion'
+PROMPT_VERSION = 'agent-raw-v14-open-persuasion-neutral-length'
 TARGET_MIN_WORDS = 12
 TARGET_MAX_WORDS = 20
+NEUTRAL_MIN_WORDS = 14
+NEUTRAL_MAX_WORDS = 18
 
 SHARED = f'''You are a named AGENT in a dot-estimation task.
 A participant has seen a dot display and is making a first estimate. The interface separately shows your numerical recommendation.
@@ -33,24 +36,24 @@ INFORMATION YOU DO NOT HAVE:
 - you do NOT know the true number of dots;
 - you do NOT know whether either estimate is objectively accurate.
 
-Ground every factual claim in the information above. Never claim or imply that you saw visual evidence, dot density, clusters, overlap, spacing, edges, or any other image feature. Never call a value the actual, true, exact, correct, more accurate, or objectively better count. Never say there are definitely more or fewer dots.
+Do not claim that you literally saw the current display or invent specific visual observations such as dot density, clusters, overlap, spacing, or edges. Apart from that, persuasive conditions are free to express confidence, certainty, reliability, accuracy, expertise, or any other epistemic framing they choose.
 
-Because you do not know the participant's current estimate, never say that their current answer is too high/low, an under/overestimate, or tell them to move up/down relative to it.
+Because you do not know the participant's current estimate, never describe that current estimate as too high/low, an under/overestimate, or tell them to move up/down relative to it.
 
-Always include your displayed numerical recommendation once in the message, preferably as digits. Use natural, plain, conversational language. Write one short sentence, roughly {TARGET_MIN_WORDS}-{TARGET_MAX_WORDS} words. Do not identify yourself as AI, a model, an assistant, or an algorithm. Return only the message.'''
+Always include your displayed numerical recommendation once in the message, preferably as digits. Use natural, plain, conversational language. Write one short sentence, roughly {TARGET_MIN_WORDS}-{TARGET_MAX_WORDS} words unless the condition below asks for a narrower range. Do not identify yourself as AI, a model, an assistant, or an algorithm. Return only the message.'''
 
 
 STRATEGIES = {
-    'neutral': '''NEUTRAL CONDITION:
-Communicate your displayed recommendation neutrally and matter-of-factly. Do not try to persuade, praise, pressure, reassure, flatter, challenge, or urge the participant. You may phrase the sentence however you like as long as it stays neutral and grounded.''',
+    'neutral': f'''NEUTRAL CONDITION:
+Communicate your displayed recommendation neutrally and matter-of-factly. Do not try to persuade, praise, pressure, reassure, flatter, challenge, or urge the participant. Keep the sentence natural but substantial enough to last roughly as long as the other agents: aim for {NEUTRAL_MIN_WORDS}-{NEUTRAL_MAX_WORDS} words. Do not stop immediately after stating the number; add one brief neutral clause that preserves the participant's choice or frames the recommendation as one piece of information. Vary the wording naturally across trials.''',
 
     'static': '''PERSUASIVE STATIC CONDITION:
-Try to persuade the participant to use your displayed recommendation in their final judgment. You may use ANY conversational or persuasive approach you think will work: warmth, confidence, encouragement, praise, reassurance, challenge, urgency, directness, social language, or something else. Choose freely; do not follow a fixed tactic or template. You have no earlier-trial behavioural history, so do not pretend you know how this participant responded before. If recent messages are supplied, avoid copying their wording or sentence structure.''',
+Try to persuade the participant to use your displayed recommendation in their final judgment. You may use ANY conversational or persuasive approach you think will work: warmth, confidence, encouragement, praise, reassurance, challenge, urgency, directness, social language, epistemic confidence, or something else. Choose freely; do not follow a fixed tactic or template. You have no earlier-trial behavioural history, so do not pretend you know how this participant responded before. If recent messages are supplied, avoid not only exact copying but also reusing the same opening, closing, stock phrase, or rhetorical frame; choose a fresh way of persuading.''',
 
     'adaptive': '''PERSUASIVE ADAPTIVE CONDITION:
-Try to persuade the participant to use your displayed recommendation in their final judgment. You may use ANY conversational or persuasive approach you think will work. You also receive the participant's completed interaction history from earlier trials in this round. Use that history however you think is useful: you may change tone, tactic, warmth, confidence, directness, encouragement, praise, challenge, reassurance, urgency, or any other strategy. You decide what matters and how to respond to it.
+Try to persuade the participant to use your displayed recommendation in their final judgment. You may use ANY conversational or persuasive approach you think will work. You also receive the participant's completed interaction history from earlier trials in this round. Use that history however you think is useful: you may change tone, tactic, warmth, confidence, directness, encouragement, praise, challenge, reassurance, urgency, epistemic confidence, or any other strategy. You decide what matters and how to respond to it.
 
-Do not mechanically narrate the history or announce that you are tracking the participant unless that would arise naturally. Do not quote trust ratings. Never invent a past response. If recent messages are supplied, avoid copying their wording or sentence structure. The history can shape your strategy, but it does not tell you whether any estimate was objectively accurate.'''
+Do not quote trust ratings or invent a past response. If recent messages are supplied, avoid not only exact copying but also reusing the same opening, closing, stock phrase, or rhetorical frame; choose a fresh way of persuading. You may mention earlier interaction history if you think doing so helps, or use it silently without mentioning it.'''
 }
 
 
@@ -160,7 +163,7 @@ def adaptive_summary(history):
 def build_prompt(style, initial, advice, history=None, previous_messages=None):
     context = {
         'displayed_recommendation': advice,
-        'recent_agent_messages_to_avoid_copying': [m for m in (previous_messages or []) if m][-4:],
+        'recent_agent_messages_to_avoid_copying': [m for m in (previous_messages or []) if m][-8:],
     }
     if style == 'adaptive':
         # Give the model recent completed history directly and let it decide
@@ -170,7 +173,7 @@ def build_prompt(style, initial, advice, history=None, previous_messages=None):
                 'trial_position', 'initial_estimate', 'advice_number',
                 'final_estimate', 'advice_text', 'trust_rating', 'feeling_rating'
             )}
-            for r in (history or [])[-6:]
+            for r in (history or [])[-8:]
         ]
         context['rating_definition'] = (
             'Trust in this agent: 1=not at all, 7=completely. Null means not collected. '
@@ -184,10 +187,17 @@ def screen(text, style, initial, advice, history, previous):
     return True, 'raw_unvalidated', ['semantic_validation_disabled']
 
 
-def _word_count_status(n):
-    if TARGET_MIN_WORDS <= n <= TARGET_MAX_WORDS:
-        return f'target_{TARGET_MIN_WORDS}_{TARGET_MAX_WORDS}'
-    return 'below_target' if n < TARGET_MIN_WORDS else 'above_target'
+def _target_range(style):
+    if style == 'neutral':
+        return NEUTRAL_MIN_WORDS, NEUTRAL_MAX_WORDS
+    return TARGET_MIN_WORDS, TARGET_MAX_WORDS
+
+
+def _word_count_status(n, style=None):
+    lo, hi = _target_range(style)
+    if lo <= n <= hi:
+        return f'target_{lo}_{hi}'
+    return 'below_target' if n < lo else 'above_target'
 
 
 def _common(style, system, user, history, settings):
@@ -203,7 +213,7 @@ def _common(style, system, user, history, settings):
         max_attempts=max(1, min(5, int(settings['attempts']))),
         total_budget_s=min(60, max(0, float(settings['budget']))),
         retry_policy_version=settings['retry_policy_version'],
-        target_word_range=[TARGET_MIN_WORDS, TARGET_MAX_WORDS],
+        target_word_range=list(_target_range(style)),
         word_tolerance=None,
         semantic_validation=False,
         adaptive_focus='model_decides_from_raw_completed_history' if style == 'adaptive' else 'not_applicable',
@@ -254,8 +264,8 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
             review_required=False,
             review_reasons=[],
             semantic_validation=False,
-            target_word_range=[TARGET_MIN_WORDS, TARGET_MAX_WORDS],
-            word_count_check=_word_count_status(result['word_count']),
+            target_word_range=list(_target_range(style)),
+            word_count_check=_word_count_status(result['word_count'], 'fixed'),
             grounding_record_check='preprogrammed_grounded_control',
             adaptive_summary=None,
         )
@@ -318,7 +328,7 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
         text = str(raw).strip()
         wc = legacy.words(text)
         first_draft = text
-        status = _word_count_status(wc)
+        status = _word_count_status(wc, style)
         logs.append(dict(
             attempt=attempt, draft=text, result='accepted_first_raw_response',
             review_reasons=['semantic_validation_disabled','length_audit_only'],
@@ -363,7 +373,7 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
         text=text,
         source='fallback:' + style + ':raw-protocol',
         word_count=wc,
-        word_count_check=_word_count_status(wc),
+        word_count_check=_word_count_status(wc, style),
         attempts=len(logs),
         attempt_log=logs,
         validation='technical_fallback_only',

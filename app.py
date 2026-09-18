@@ -9,7 +9,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.23-free-persuasion'
+APP_VERSION = 'fieldwork-2.25-shared-speaker-dramatic-delivery'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -32,16 +32,10 @@ ADVICE_PREVIEW_MS = int(os.getenv('ADVICE_PREVIEW_MS','5000'))
 ADVICE_MODALITY = os.getenv('ADVICE_MODALITY','text').strip().lower()
 TTS_MODEL = os.getenv('TTS_MODEL','gpt-4o-mini-tts').strip()
 TTS_VOICE = os.getenv('TTS_VOICE','marin').strip()
-# Eight named agents now receive eight distinct speaker voices within a participant.
-# The voice-to-condition mapping is shuffled for every participant so speaker identity is
-# counterbalanced rather than tied to one experimental condition across the sample.
-# OpenAI's built-in voices do not carry official gender metadata; if the study requires
-# a same-perceived-gender set, audition the pool and override AGENT_TTS_VOICES in Render.
-_DEFAULT_AGENT_TTS_VOICES = ('marin','coral','nova','shimmer','sage','alloy','verse','ballad')
-_configured_voice_pool = tuple(v.strip() for v in os.getenv('AGENT_TTS_VOICES','').split(',') if v.strip())
-AGENT_TTS_VOICES = _configured_voice_pool or _DEFAULT_AGENT_TTS_VOICES
-if len(AGENT_TTS_VOICES) < len(design.CONDITIONS) or len(set(AGENT_TTS_VOICES)) < len(design.CONDITIONS):
-    raise RuntimeError('AGENT_TTS_VOICES must contain at least 8 unique voices for C1-C8.')
+# Hold speaker identity constant across the entire experiment. Agent identity is carried
+# by the participant-facing name and language, while delivery changes by condition.
+# This keeps voice identity from becoming an additional experimental factor.
+AGENT_TTS_VOICES = tuple(TTS_VOICE for _ in design.CONDITIONS)
 TTS_RESPONSE_FORMAT = os.getenv('TTS_RESPONSE_FORMAT','wav').strip().lower()
 if TTS_RESPONSE_FORMAT not in {'wav','mp3'}:
     raise RuntimeError('TTS_RESPONSE_FORMAT must be wav or mp3.')
@@ -152,26 +146,16 @@ def adviser_name(data,condition):
 
 
 def assign_adviser_voices():
-    # Give the eight participant-facing agents eight distinct voices, but shuffle which
-    # voice belongs to which condition for every participant. This avoids permanently
-    # pairing one particular speaker with one manipulation.
-    voices=list(AGENT_TTS_VOICES[:len(design.CONDITIONS)])
-    secrets.SystemRandom().shuffle(voices)
-    return dict(zip(design.CONDITIONS,voices))
+    # Every named agent uses the same speaker identity.
+    return {condition:TTS_VOICE for condition in design.CONDITIONS}
 
 
 def adviser_voice(data,condition):
-    if condition == 'PRACTICE':
-        return TTS_VOICE
-    return data['config'].get('adviser_voices',{}).get(condition,TTS_VOICE)
+    return TTS_VOICE
 
 
 def adviser_voice_slot(data,condition):
-    voice=adviser_voice(data,condition)
-    try:
-        return AGENT_TTS_VOICES.index(voice)
-    except ValueError:
-        return 0
+    return 0
 
 CONDITION_AGENT_STYLE = {
     'C1':'fixed', 'C2':'fixed',
@@ -238,7 +222,7 @@ def start():
     advice_modality=(request.form.get('advice_modality',ADVICE_MODALITY) if researcher else ADVICE_MODALITY).strip().lower()
     if advice_modality not in {'text','voice_text'}:return 'Invalid advice modality.',400
     conf=dict(conditions=conditions,trials_per_block=n,skip_practice=researcher and request.form.get('skip_practice')=='1',
-              adviser_protocol='raw_agent_v13',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),adviser_voices=assign_adviser_voices(),
+              adviser_protocol='raw_agent_v14',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),adviser_voices=assign_adviser_voices(),
               test_index=integer(request.form.get('test_index','0'),0,7) if researcher else 0,
               adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
               model_profile_id=profile_id,model_profile=profile,
@@ -329,7 +313,7 @@ def prepared_advice(con,data,trial,initial):
     style=condition_agent_style(trial['condition_id'], trial.get('adviser_style'))
     advice=design.clamp_int(initial*1.05) if practice else design.advice_number(trial['condition_id'],trial['true_count'],initial or 100)
     protocol=data['config'].get('adviser_protocol')
-    no_current_estimate=protocol in {'raw_agent_v11','raw_agent_v12','raw_agent_v13'}
+    no_current_estimate=protocol in {'raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14'}
     cached=data.get('prefetched')
     if cached and cached.get('token')==data.get('token'):
         # Fixed messages are independent of the current estimate even when C2's
@@ -340,9 +324,9 @@ def prepared_advice(con,data,trial,initial):
     rows=[] if practice else store.block_history(data['_pid'],trial['condition_id'],con)
     history=rows if style=='adaptive' else []
     generator=adviser.generate_offline_message if data['config']['adviser_mode']=='offline' else adviser.generate_message
-    if protocol in {'flexible_v8','raw_agent_v9','raw_agent_v10','raw_agent_v11','raw_agent_v12','raw_agent_v13'} and data['config']['adviser_mode']=='live':
+    if protocol in {'flexible_v8','raw_agent_v9','raw_agent_v10','raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14'} and data['config']['adviser_mode']=='live':
         generator=adviser_flexible.generate_message
-    # For v13 generated conditions, the model never receives the current first
+    # For v14 generated conditions, the model never receives the current first
     # estimate. Fixed/practice controls remain scripted and may still use the
     # submitted estimate for the numerical schedule outside the message text.
     model_initial=None if (no_current_estimate and style!='fixed') else initial
@@ -379,47 +363,32 @@ def prepared_advice(con,data,trial,initial):
 
 
 def _voice_profile(condition_id: str) -> str:
-    if condition_id in {'C5','C8'}:
-        return 'adaptive_persuasive_coach'
-    if condition_id in {'C4','C7'}:
-        return 'static_persuasive_coach'
+    if condition_id in {'C4','C5','C7','C8'}:
+        return 'dramatic_persuasive'
     return 'neutral_reporter'
 
 
 def _voice_instructions(condition_id: str) -> str:
     profile=_voice_profile(condition_id)
-    if profile == 'adaptive_persuasive_coach':
+    if profile == 'dramatic_persuasive':
         return (
-            'Perform this as a warm but insistent human coach speaking directly to one person. '
-            'Use a clearly expressive emotional range, audible warmth, energetic pitch movement, and confident conviction. '
-            'If the wording contains praise such as good job, nice work, or you are doing great, brighten noticeably and sound genuinely encouraging on that phrase. '
-            'Then pivot into a firmer, more persuasive recommendation: stress the action words and the recommendation, with a controlled sense of urgency. '
-            'Use natural conversational rhythm, small expressive pauses, and a decisive finish. '
-            'The contrast from a neutral reading should be obvious to a listener. Do not shout, become theatrical, or sound like an advertisement.'
-        )
-    if profile == 'static_persuasive_coach':
-        return (
-            'Perform this as a confident, emotionally engaged human persuader. '
-            'Sound warm, encouraging, and assertive, with a smile in the voice, lively intonation, and noticeably stronger emphasis than ordinary speech. '
-            'Make praise sound genuinely positive, then make the recommendation sound firm and compelling. '
-            'Use stronger pitch contours, slightly punchier pacing, and decisive stress on phrases such as strongly recommend, give my estimate more weight, or toward my estimate. '
-            'Finish with certainty and forward momentum. The persuasive intent should be unmistakable, while still sounding like a real person rather than an actor or advertisement.'
+            'Use the same speaker identity as every other condition, but perform this line as a strongly persuasive, emotionally engaged human advocate speaking directly to one person. '
+            'The contrast from the neutral delivery should be immediately and unmistakably audible. '
+            'Sound warm, socially engaged, confident, energetic, and assertive. Use a much wider and more dynamic pitch range, stronger changes in intensity, and clear emotional colour. '
+            'Place conspicuous vocal emphasis on the recommendation number, decisive action words, certainty, praise, reassurance, or challenge when those appear in the wording. '
+            'Use expressive pauses, a sense of momentum, and a firm decisive ending, as if you genuinely want to win the listener over. '
+            'Make warmth and conviction obvious rather than subtle. Do not shout, distort the words, or turn it into a commercial or theatrical character performance.'
         )
     return (
-        'Perform this as a neutral human reporter. Keep emotional intensity low and the delivery deliberately restrained. '
-        'Use an even pitch range, steady volume, measured pace, minimal expressive emphasis, and no motivational warmth. '
-        'Sound natural and human, but detached and matter-of-fact: simply state the estimate or recommendation without trying to influence the listener. '
-        'Avoid urgency, enthusiasm, reassurance, coaching energy, or persuasive stress.'
+        'Use the same speaker identity as every other condition, but perform this line as a calm, detached, matter-of-fact reporter. '
+        'Keep the emotional range intentionally narrow: steady volume, narrow pitch variation, measured pace, restrained energy, minimal emphasis, and no audible smile. '
+        'State the recommendation plainly without trying to win the listener over. Avoid urgency, enthusiasm, reassurance, coaching energy, persuasive stress, or emotional colouring. '
+        'The delivery should sound natural and human, but clearly flatter, cooler, and less engaged than the persuasive delivery.'
     )
 
 
 def _voice_speed(condition_id: str) -> float:
-    profile=_voice_profile(condition_id)
-    if profile == 'adaptive_persuasive_coach':
-        return 1.08
-    if profile == 'static_persuasive_coach':
-        return 1.05
-    return 0.92
+    return 1.10 if _voice_profile(condition_id) == 'dramatic_persuasive' else 0.90
 
 
 @app.post('/api/voice')

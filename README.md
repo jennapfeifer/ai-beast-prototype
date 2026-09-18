@@ -1,3 +1,7 @@
+## v2.25 — one speaker, deliberately dramatic delivery contrast
+
+All eight named agents now use the **same TTS speaker identity**. Neutral C1/C2/C3/C6 use a calm, cool, matter-of-fact delivery; persuasive C4/C5/C7/C8 use the same speaker but a deliberately strong warm/assertive/expressive performance. Static and adaptive persuasive conditions share the exact same voice-performance profile, so any additional difference between them comes from the generated language/history rather than a second vocal manipulation. The browser fallback also keeps one speaker and exaggerates rate/pitch only as a backup. See `SHARED_SPEAKER_DRAMATIC_DELIVERY_v2.25.md`.
+
 # Latest: v2.23 free-form persuasion
 
 C4/C7 and C5/C8 are no longer forced into researcher-authored persuasion tactics. Static persuasive agents may use any conversational or persuasive approach they choose. Adaptive persuasive agents receive recent completed history and may use it however they think is useful; no deterministic `recommended_strategy_family` is supplied to the model. C3/C6 remain neutral. All generated messages are asked for one short sentence of roughly 12–20 words and to include the recommendation number. The first successful model response is displayed as-is: there is no semantic repair and no length-only retry. Recent same-agent messages are supplied only to discourage copying. Current first estimates remain hidden during generation. See `FREE_PERSUASION_UPDATE_v2.23.md`.
