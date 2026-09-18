@@ -9,7 +9,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.13-flexible-current'
+APP_VERSION = 'fieldwork-2.14-agent-raw-pilot'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -29,6 +29,9 @@ RATING_EVERY = max(1,int(os.getenv('RATING_EVERY','2')))
 PREFILL_FINAL = True  # The v6 final slider starts at the participant's initial estimate.
 SHOW_END_SCORE = os.getenv('SHOW_END_SCORE','1').lower() not in {'0','false'}
 ADVICE_PREVIEW_MS = int(os.getenv('ADVICE_PREVIEW_MS','5000'))
+ADVICE_MODALITY = os.getenv('ADVICE_MODALITY','text').strip().lower()
+if ADVICE_MODALITY not in {'text','voice_text'}:
+    raise RuntimeError('ADVICE_MODALITY must be text or voice_text.')
 if ADVICE_PREVIEW_MS not in {0,3000,4000,5000}:
     raise RuntimeError('ADVICE_PREVIEW_MS must be 0, 3000, 4000 or 5000.')
 STUDY_CONTACT = os.getenv('STUDY_CONTACT','')
@@ -128,7 +131,18 @@ def assign_adviser_names():
 
 
 def adviser_name(data,condition):
-    return data['config'].get('adviser_names',{}).get(condition,'Practice AI' if condition=='PRACTICE' else 'AI')
+    return data['config'].get('adviser_names',{}).get(condition,'Practice Agent' if condition=='PRACTICE' else 'Agent')
+
+CONDITION_AGENT_STYLE = {
+    'C1':'fixed', 'C2':'fixed',
+    'C3':'neutral', 'C4':'static', 'C5':'adaptive',
+    'C6':'neutral', 'C7':'static', 'C8':'adaptive',
+}
+
+def condition_agent_style(condition, fallback=None):
+    if condition == 'PRACTICE':
+        return 'fixed'
+    return CONDITION_AGENT_STYLE.get(condition, fallback)
 
 
 def ensure_token(data):
@@ -181,8 +195,10 @@ def start():
     try:preview_ms=integer(request.form.get('advice_preview_ms',str(ADVICE_PREVIEW_MS)),0,5000) if researcher else ADVICE_PREVIEW_MS
     except ValueError:return 'Invalid advice display setting.',400
     if preview_ms not in {0,3000,4000,5000}:return 'Invalid advice display setting.',400
+    advice_modality=(request.form.get('advice_modality',ADVICE_MODALITY) if researcher else ADVICE_MODALITY).strip().lower()
+    if advice_modality not in {'text','voice_text'}:return 'Invalid advice modality.',400
     conf=dict(conditions=conditions,trials_per_block=n,skip_practice=researcher and request.form.get('skip_practice')=='1',
-              adviser_protocol='flexible_v8',advice_preview_ms=preview_ms,rating_items='trust_only',adviser_names=assign_adviser_names(),
+              adviser_protocol='raw_agent_v9',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),
               test_index=integer(request.form.get('test_index','0'),0,7) if researcher else 0,
               adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
               model_profile_id=profile_id,model_profile=profile,
@@ -200,7 +216,7 @@ def instructions():
     return render_template('instructions.html',n_trials=sum(r['condition_id']!='PRACTICE' for r in sched),
       n_blocks=len({r['condition_id'] for r in sched if r['condition_id']!='PRACTICE'}),practice=not data['config']['skip_practice'],
       stimulus_seconds=STIMULUS_MS/1000,ratings=COLLECT_RATINGS,rating_every=RATING_EVERY,pilot=data['config']['is_test'],
-      advice_preview_ms=data['config'].get('advice_preview_ms',0),rating_items=data['config'].get('rating_items','trust_and_feeling'))
+      advice_preview_ms=data['config'].get('advice_preview_ms',0),advice_modality=data['config'].get('advice_modality','text'),rating_items=data['config'].get('rating_items','trust_and_feeling'))
 
 
 @app.route('/task')
@@ -210,7 +226,7 @@ def task():
         fixation_ms=FIXATION_MS,collect_ratings=COLLECT_RATINGS,rating_every=RATING_EVERY,prefill_final=PREFILL_FINAL,
         researcher_mode=bool(session.get('researcher') and data['config'].get('researcher')),max_estimate=design.MAX_ESTIMATE,
         pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline',request_timeout_ms=90000,
-        advice_preview_ms=data['config'].get('advice_preview_ms',0),prefetch_enabled=data['config'].get('adviser_protocol')!='flexible_v8',rating_items=data['config'].get('rating_items','trust_and_feeling')))
+        advice_preview_ms=data['config'].get('advice_preview_ms',0),advice_modality=data['config'].get('advice_modality','text'),prefetch_enabled=data['config'].get('adviser_protocol') not in {'flexible_v8','raw_agent_v9'},rating_items=data['config'].get('rating_items','trust_and_feeling')))
 
 
 @app.get('/api/state')
@@ -233,7 +249,7 @@ def api_state():
         if data['pending']:
             out['pending']={k:data['pending'][k] for k in ['initial','text','rt_initial','latency_ms','advice']}
         if session.get('researcher') and data['config'].get('researcher'):
-            out['researcher']=dict(condition=trial['condition_id'],style=trial['adviser_style'],direction=trial['direction'],
+            out['researcher']=dict(condition=trial['condition_id'],style=condition_agent_style(trial['condition_id'],trial.get('adviser_style')),direction=trial['direction'],
                 true_count=trial['true_count'],pid=pid,participant_index=data['participant_index'],mode=data['config']['adviser_mode'],
                 condition_order=conditions,**(data['pending'].get('diagnostic',{}) if data['pending'] else {}))
         return jsonify(out)
@@ -255,9 +271,9 @@ def advice_payload(pending,data):
 
 def prepared_advice(con,data,trial,initial):
     practice=trial['condition_id']=='PRACTICE'
-    style='fixed' if practice else trial['adviser_style']
+    style=condition_agent_style(trial['condition_id'], trial.get('adviser_style'))
     advice=design.clamp_int(initial*1.05) if practice else design.advice_number(trial['condition_id'],trial['true_count'],initial or 100)
-    flexible=data['config'].get('adviser_protocol')=='flexible_v8'
+    flexible=data['config'].get('adviser_protocol') in {'flexible_v8','raw_agent_v9'}
     cached=None if flexible else data.get('prefetched')
     if style!='fixed' and cached and cached.get('token')==data.get('token') and cached['advice']==advice:
         return advice,cached['message'],dict(cached['diagnostic'],prefetched=True)
@@ -304,7 +320,7 @@ def api_prefetch():
         trial,_=current(data)
         if trial is None or not data.get('token') or body.get('trial_token')!=data.get('token'):
             return jsonify(error='This trial is no longer current.'),409
-        if data['config'].get('adviser_protocol')=='flexible_v8':
+        if data['config'].get('adviser_protocol') in {'flexible_v8','raw_agent_v9'}:
             return jsonify(ok=True,prefetched=False,reason='requires_current_estimate')
         if data.get('pending') or trial['condition_id']=='PRACTICE' or trial['adviser_style']=='fixed':
             return jsonify(ok=True,prefetched=False)
@@ -382,10 +398,11 @@ def api_final():
                 advice_word_count=pending['word_count'],final_estimate=final,trust_rating=trust,feeling_rating=feeling,
                 initial_error_pct=design.signed_pct(initial,truth),final_error_pct=design.signed_pct(final,truth),
                 advice_error_pct=design.signed_pct(advice,truth),woa=design.woa(initial,final,advice),
-                rt_initial_ms=pending['rt_initial'],rt_final_ms=rt,advice_latency_ms=pending['latency_ms'],audio_played=False,modality='text')
+                rt_initial_ms=pending['rt_initial'],rt_final_ms=rt,advice_latency_ms=pending['latency_ms'],
+                audio_played=bool(body.get('audio_played',False)),modality=data['config'].get('advice_modality','text'))
             store.save_trial(row,con)
         diagnostic=dict(pending['diagnostic'],**timing,ui_version=APP_VERSION,stimulus_render_version=STIMULUS_RENDER_VERSION,
-            adviser_name=adviser_name(data,trial['condition_id']),stimulus_format='webp_lossless',advice_preview_target_ms=data['config'].get('advice_preview_ms',0),rating_items=data['config'].get('rating_items','trust_and_feeling'),
+            adviser_name=adviser_name(data,trial['condition_id']),stimulus_format='webp_lossless',advice_preview_target_ms=data['config'].get('advice_preview_ms',0),advice_modality=data['config'].get('advice_modality','text'),audio_played=bool(body.get('audio_played',False)),rating_items=data['config'].get('rating_items','trust_and_feeling'),
             condition_id=trial['condition_id'],trial_position=trial['trial_position'],
             global_trial=trial['global_trial'],practice=practice,is_test=data['config']['is_test'],
             adviser_mode=data['config']['adviser_mode'],target_stimulus_ms=STIMULUS_MS,target_wait_ms=ADVISER_MIN_DELAY_MS,
@@ -428,7 +445,7 @@ def researcher():
     return render_template('researcher.html',conditions=design.CONDITIONS,report=build_report(records,people),
         model_profiles=profiles,default_profile=default_profile,has_any_key=any(v['available'] for v in profiles.values()),
         has_key=adviser.has_api_key(),model=adviser.ADVISER_MODEL,stimulus_ms=STIMULUS_MS,
-        delay_ms=ADVISER_MIN_DELAY_MS,rating_every=RATING_EVERY,advice_preview_ms=ADVICE_PREVIEW_MS,projection=timing_projection(
+        delay_ms=ADVISER_MIN_DELAY_MS,rating_every=RATING_EVERY,advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,projection=timing_projection(
             wait_s=ADVISER_MIN_DELAY_MS/1000,stimulus_s=STIMULUS_MS/1000,fixation_s=FIXATION_MS/1000,
             rating_every=RATING_EVERY,collect_ratings=COLLECT_RATINGS,advice_preview_s=ADVICE_PREVIEW_MS/1000))
 
@@ -442,7 +459,7 @@ def admin_downloads():
 def researcher_status():
     require_admin()
     return jsonify(version=APP_VERSION,stimulus_render_version=STIMULUS_RENDER_VERSION,stimulus_format='webp_lossless',
-        advice_preview_ms=ADVICE_PREVIEW_MS,
+        advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,
         provider=adviser.resolved_provider(),model=adviser.resolved_model(),
         has_key=adviser.has_api_key(),database_dialect=store.engine.dialect.name,study_mode=STUDY_MODE,
         adviser_mode=ADVISER_MODE,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
@@ -491,7 +508,7 @@ def export_all_zip():
         for name,rows in tables.items():z.writestr(name+'.csv',csv_text(rows))
         z.writestr('pilot_report.json',json.dumps(build_report(tables['diagnostics'],tables['participants']),default=str,indent=2))
         z.writestr('run_metadata.json',json.dumps(dict(ui_version=APP_VERSION,stimulus_render_version=STIMULUS_RENDER_VERSION,
-            stimulus_format='webp_lossless',default_advice_preview_ms=ADVICE_PREVIEW_MS,
+            stimulus_format='webp_lossless',default_advice_preview_ms=ADVICE_PREVIEW_MS,default_advice_modality=ADVICE_MODALITY,
             study_seed=design.STUDY_SEED,
             adviser_model=adviser.resolved_model(),adviser_provider=adviser.resolved_provider(),study_mode=STUDY_MODE,default_adviser_mode=ADVISER_MODE,
             stimulus_ms=STIMULUS_MS,fixation_ms=FIXATION_MS,minimum_advice_wait_ms=ADVISER_MIN_DELAY_MS,
