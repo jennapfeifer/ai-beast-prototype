@@ -84,12 +84,11 @@ async function prepareBrowserVoice(advice){
   try{
     const voices=rankedBrowserVoices(await loadBrowserVoices());
     const persuasive=advice.voice_tone==='persuasive';
-    const rate=persuasive?1.12:0.90,pitch=persuasive?1.09:0.96;
-    // Match the participant's condition-specific agent identity in the browser fallback too.
-    // Browser speech cannot express emotion as richly as OpenAI TTS, so rate/pitch carry
-    // a deliberately larger pilot contrast here.
-    const slot=Number.isFinite(Number(advice.voice_slot))?Number(advice.voice_slot):0;
-    const selected=voices.length?voices[((slot%voices.length)+voices.length)%voices.length]:null;
+    const rate=persuasive?1.12:0.90,pitch=persuasive?1.14:0.94;
+    // Keep speaker identity constant in the browser fallback as well. Browser speech cannot
+    // follow performance instructions, so rate/pitch provide a deliberately obvious backup
+    // contrast without changing the underlying voice.
+    const selected=voices.length?voices[0]:null;
     return {kind:'browser',voice:selected,rate,pitch,
       durationMs:estimatedSpeechMs(advice.advice_text,rate)};
   }catch(_error){return null;}

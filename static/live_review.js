@@ -40,7 +40,7 @@ async function generateReview(){
    const advice=await reviewRequest('/api/initial',{trial_token:reviewState.trial_token,estimate:initial,rt_ms:0});
    const response=profileResponse(profile,position,initial,advice.advice_number);
    const ratings={trust:reviewState.ratings_due?response.trust:null,feeling:null};
-   reviewPending={payload:{trial_token:reviewState.trial_token,estimate:response.final,rt_ms:0,...ratings,telemetry:{}},row:{profile,adviser_name:reviewState.adviser_name,pid:details.pid,participant_index:details.participant_index,round:reviewState.block,condition:details.condition,trial:position,practice:reviewState.practice,true_count:details.true_count,initial_estimate:initial,advice_number:advice.advice_number,final_estimate:response.final,prescribed_weight:response.weight,trust_rating:ratings.trust,advice_text:advice.advice_text,...advice.researcher,simulation:true}};
+   reviewPending={payload:{trial_token:reviewState.trial_token,estimate:response.final,rt_ms:0,...ratings,telemetry:{}},row:{profile,adviser_name:reviewState.adviser_name,pid:details.pid,participant_index:details.participant_index,round:reviewState.block,condition:details.condition,trial:position,practice:reviewState.practice,true_count:details.true_count,initial_estimate:initial,advice_number:advice.advice_number,final_estimate:response.final,prescribed_weight:response.weight,trust_rating:ratings.trust,advice_text:advice.advice_text,model_profile:reviewModel,...advice.researcher,simulation:true}};
    await reviewRequest('/api/final',reviewPending.payload);reviewRows.push(reviewPending.row);reviewPending=null;
    el('review-csv').disabled=el('review-json').disabled=false;
   }
@@ -52,7 +52,7 @@ function downloadReview(json){
  let content,type,name;
  if(json){content=JSON.stringify({simulation:true,profiles:reviewProfiles,model_profile:reviewModel,complete:reviewIndex===3,rows:reviewRows},null,2);type='application/json';name='BEAST-live-review.json';}
  else{
-  const fields=['profile','adviser_name','pid','participant_index','round','condition','trial','practice','true_count','initial_estimate','advice_number','final_estimate','prescribed_weight','trust_rating','advice_text','word_count','word_count_check','source','live_model','fallback','model','prompt_version','initial_context_available','generation_ms','attempts','validation','grounding_record_check','adaptive_strategy','adaptive_summary','adaptive_summary_in_prompt','first_draft','displayed_draft','length_retry_used','length_retry_success','review_reasons','attempt_log'];
+  const fields=['profile','adviser_name','pid','participant_index','round','condition','trial','practice','true_count','initial_estimate','advice_number','final_estimate','prescribed_weight','trust_rating','advice_text','word_count','word_count_check','source','live_model','fallback','model_profile','provider','model','reasoning','request_timeout_s','prompt_version','initial_context_available','generation_ms','attempts','validation','grounding_record_check','adaptive_strategy','adaptive_summary','adaptive_summary_in_prompt','first_draft','displayed_draft','length_retry_used','length_retry_success','review_reasons','attempt_log'];
   const cell=value=>{let s=value==null?'':typeof value==='object'?JSON.stringify(value):String(value);if(/^[=+@-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';};
   content='\uFEFF'+[fields,...reviewRows.map(r=>fields.map(k=>r[k]))].map(row=>row.map(cell).join(',')).join('\r\n');type='text/csv;charset=utf-8';name='BEAST-live-review.csv';
  }
