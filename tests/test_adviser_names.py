@@ -17,8 +17,8 @@ def test_names_unique_stable_and_exported(client):
 
 def test_practice_and_old_sessions(client):
     state=start(client)
-    assert state['adviser_name']=='Practice AI'
+    assert state['adviser_name']=='Practice Agent'
     with client.session_transaction() as cookie:pid=cookie['pid']
     with store.session_transaction(pid) as (con,data):
         data['config'].pop('adviser_names')
-    assert A.adviser_name(store.session_data(pid),'C5')=='AI'
+    assert A.adviser_name(store.session_data(pid),'C5')=='Agent'

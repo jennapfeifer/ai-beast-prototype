@@ -17,14 +17,14 @@ def test_implicit_and_paraphrased_history_accepted_without_retry(monkeypatch):
         assert result['live_model'] and result['attempts']==1
         assert result['review_required']
 
-def test_wrong_direction_repaired_but_numbers_and_claims_flagged(monkeypatch):
-    assert not flex.screen('Move left toward my estimate for your final answer.', 'static',100,150,[],[])[0]
-    ok,_,flags=flex.screen('My estimate is verified, so move toward 150 for your final answer.','static',100,150,[],[])
-    assert ok
-    calls=iter(['Move left toward my estimate for your final answer.','Move right toward my estimate for your final answer.'])
-    monkeypatch.setattr(adviser,'_model_text',lambda *args:next(calls))
+def test_raw_mode_does_not_repair_or_reject_model_wording(monkeypatch):
+    ok,reason,flags=flex.screen('Move left toward my estimate for your final answer.', 'static',100,150,[],[])
+    assert ok and reason=='raw_unvalidated' and 'semantic_validation_disabled' in flags
+    sentence='My estimate is verified, so move left and use 150.'
+    monkeypatch.setattr(adviser,'_model_text',lambda *args:sentence)
     result=flex.generate_message('static',100,150)
-    assert result['attempts']==2 and result['live_model']
+    assert result['attempts']==1 and result['live_model']
+    assert result['text']==sentence and result['validation']=='disabled_raw_response'
 
 def test_new_server_flow_waits_for_current_estimate(client,monkeypatch):
     monkeypatch.setenv('OPENAI_API_KEY','mock-only')

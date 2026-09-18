@@ -74,6 +74,16 @@ def test_intro_consistent_and_end_summary_copy_matches_setting(client,monkeypatc
         assert 'measuring the study duration' not in html and 'assistant’s recommendations' not in html
     start(client,['C5'],skip=True,trials=1)
     html=client.get('/instructions').get_data(as_text=True)
-    assert 'first estimate' in html and 'final estimate' in html and 'blue AI advice' in html
+    assert 'first estimate' in html and 'final estimate' in html and 'red agent advice' in html
     assert 'keep this tab visible' not in html.lower() and 'type your' not in html
     assert 'Timed displays pause if you leave this tab' in html
+
+
+def test_researcher_can_enable_voice_text_pilot(client):
+    post(client,'/researcher',data={'token':'researcher-test'})
+    response=post(client,'/start',data=dict(consent='yes',researcher_test='1',conditions=['C4'],
+                adviser_mode='offline',trials='1',skip_practice='1',advice_modality='voice_text'))
+    assert response.status_code==302
+    with client.session_transaction() as cookie:pid=cookie['pid']
+    assert store.session_data(pid)['config']['advice_modality']=='voice_text'
+    assert '"advice_modality": "voice_text"' in client.get('/task').get_data(as_text=True)
