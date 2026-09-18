@@ -70,15 +70,15 @@ test('native range input changes are reflected in the visible box and recorded v
 test('nearby or identical references retain separate labels and markers without a legend',async()=>{
   for(const [first,ai] of [[151,160],[151,151],[1,1],[400,400]]){
     const ui=setup({initial:first,advice:{advice_number:ai,advice_text:'Move toward my estimate.'},width:224});
-    assert.equal(ui.stage.querySelectorAll('.reference-lane').length,2);
+    assert.equal(ui.stage.querySelectorAll('.reference-lane').length,1);
+    assert.equal(ui.stage.querySelectorAll('.advice-bubble').length,1);
     assert.equal(ui.stage.querySelectorAll('.previous-marker,.advice-marker,.value-marker').length,3);
     assert.equal(ui.stage.querySelectorAll('.estimate-pair,.line-legend,.revision-readout').length,0);
     assert.equal(ui.stage.querySelectorAll('.scale-end').length,2);
-    for(const id of ['previous-copy','advice-copy']){
-      const label=ui.stage.querySelector('#'+id);
-      const left=parseFloat(label.style.left);
-      assert(left>=0&&left+label.getBoundingClientRect().width<=224);
-    }
+    const previous=ui.stage.querySelector('#previous-copy'),pLeft=parseFloat(previous.style.left);
+    assert(pLeft>=0&&pLeft+previous.getBoundingClientRect().width<=224);
+    const bubble=ui.stage.querySelector('#advice-copy'),bLeft=parseFloat(bubble.style.left),bWidth=bubble.getBoundingClientRect().width;
+    assert(bLeft>=bWidth/2&&bLeft<=224-bWidth/2);
     ui.key('Enter');await ui.result;
   }
 });

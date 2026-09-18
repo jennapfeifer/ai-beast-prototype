@@ -8,7 +8,7 @@ function setup(preview=0,pause=false){
  let now=0,hidden=false;const order=[];const images=[];
  Object.defineProperty(document,'hidden',{get:()=>hidden});
  const ctx={document,console,performance:{now:()=>now},
-   BEAST_CFG:{max_estimate:400,advice_preview_ms:preview,stimulus_ms:1},
+   BEAST_CFG:{max_estimate:400,advice_preview_ms:preview,stimulus_ms:1,advice_modality:'text',voice_backend:'browser'},
    requestAnimationFrame:cb=>queueMicrotask(()=>{order.push('paint');cb();}),
    setTimeout:(cb,ms)=>{queueMicrotask(()=>{
      now+=ms;
@@ -33,6 +33,14 @@ test('advice-only exposure pauses when hidden and final UI appears afterwards',a
  assert(timing().advice_preview_ms>=3000&&timing().advice_preview_ms<3100);
  assert(timing().advice_preview_wall_ms>=5000);
  assert.equal(document.body.classList.contains('advice-focus'),false);
+ assert.equal(order.at(-1),'final');
+});
+
+test('voice completion cannot hold the advice screen open',async()=>{
+ const {ctx,order}=setup(3000,false);
+ ctx.speakAgentAdvice=()=>new Promise(()=>{});
+ const result=ctx.showAdvice({estimate:151},{advice_number:160,advice_text:'Example'});
+ assert.equal((await result).estimate,119);
  assert.equal(order.at(-1),'final');
 });
 
