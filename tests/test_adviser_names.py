@@ -34,5 +34,6 @@ def test_agent_voice_is_constant_across_conditions_and_exposed(client):
 
 def test_voice_delivery_contrast_is_deliberate():
     assert A._voice_speed('C4') > A._voice_speed('C3')
-    assert 'unmistakably more persuasive' in A._voice_instructions('C4')
+    assert 'immediately and unmistakably audible' in A._voice_instructions('C4')
     assert 'matter-of-fact' in A._voice_instructions('C3')
+    assert A._voice_profile('C4') == A._voice_profile('C5') == 'dramatic_persuasive'
