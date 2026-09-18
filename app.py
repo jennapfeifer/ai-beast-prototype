@@ -9,7 +9,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.16-voice-message-only'
+APP_VERSION = 'fieldwork-2.17-synced-distinct-voices'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -32,6 +32,9 @@ ADVICE_PREVIEW_MS = int(os.getenv('ADVICE_PREVIEW_MS','5000'))
 ADVICE_MODALITY = os.getenv('ADVICE_MODALITY','text').strip().lower()
 TTS_MODEL = os.getenv('TTS_MODEL','gpt-4o-mini-tts').strip()
 TTS_VOICE = os.getenv('TTS_VOICE','marin').strip()
+# Distinct speaker identities for the eight agents. The mapping is shuffled per participant,
+# so no particular voice is tied to a condition across the sample.
+AGENT_TTS_VOICES = ('marin','cedar','coral','nova','sage','shimmer','verse','ash')
 TTS_TIMEOUT_S = max(5.0,float(os.getenv('TTS_TIMEOUT_S','30')))
 
 if ADVICE_MODALITY not in {'text','voice_text'}:
@@ -137,6 +140,24 @@ def assign_adviser_names():
 def adviser_name(data,condition):
     return data['config'].get('adviser_names',{}).get(condition,'Practice Agent' if condition=='PRACTICE' else 'Agent')
 
+
+def assign_adviser_voices():
+    voices=list(AGENT_TTS_VOICES)
+    secrets.SystemRandom().shuffle(voices)
+    return dict(zip(design.CONDITIONS,voices))
+
+
+def adviser_voice(data,condition):
+    if condition == 'PRACTICE':
+        return TTS_VOICE
+    return data['config'].get('adviser_voices',{}).get(condition,TTS_VOICE)
+
+
+def adviser_voice_slot(data,condition):
+    voice=adviser_voice(data,condition)
+    try:return AGENT_TTS_VOICES.index(voice)
+    except ValueError:return 0
+
 CONDITION_AGENT_STYLE = {
     'C1':'fixed', 'C2':'fixed',
     'C3':'neutral', 'C4':'static', 'C5':'adaptive',
@@ -202,7 +223,7 @@ def start():
     advice_modality=(request.form.get('advice_modality',ADVICE_MODALITY) if researcher else ADVICE_MODALITY).strip().lower()
     if advice_modality not in {'text','voice_text'}:return 'Invalid advice modality.',400
     conf=dict(conditions=conditions,trials_per_block=n,skip_practice=researcher and request.form.get('skip_practice')=='1',
-              adviser_protocol='raw_agent_v9',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),
+              adviser_protocol='raw_agent_v9',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),adviser_voices=assign_adviser_voices(),
               test_index=integer(request.form.get('test_index','0'),0,7) if researcher else 0,
               adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
               model_profile_id=profile_id,model_profile=profile,
@@ -251,12 +272,14 @@ def api_state():
                  overall=completed+1,completed=completed,overall_total=len(experimental),
                  image=url_for('stimulus',token=token),break_due=not practice and trial['trial_position']==1 and block>1,
                  voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral',
+                 voice_slot=adviser_voice_slot(data,trial['condition_id']),
                  ratings_due=ratings_due(trial),rating_window=RATING_EVERY,pending=None,researcher=None)
         if data['pending']:
             out['pending']={k:data['pending'][k] for k in ['initial','text','rt_initial','latency_ms','advice']}
         if session.get('researcher') and data['config'].get('researcher'):
             out['researcher']=dict(condition=trial['condition_id'],style=condition_agent_style(trial['condition_id'],trial.get('adviser_style')),direction=trial['direction'],
                 true_count=trial['true_count'],pid=pid,participant_index=data['participant_index'],mode=data['config']['adviser_mode'],
+                agent_voice=adviser_voice(data,trial['condition_id']),voice_tone=out['voice_tone'],
                 condition_order=conditions,**(data['pending'].get('diagnostic',{}) if data['pending'] else {}))
         return jsonify(out)
 
@@ -271,8 +294,10 @@ def stimulus(token):
 def advice_payload(pending,data):
     trial,_=current(data)
     result=dict(adviser_name=adviser_name(data,trial['condition_id']),advice_text=pending['text'],advice_number=pending['advice'],latency_ms=pending['latency_ms'],
-                voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral')
-    if session.get('researcher') and data['config'].get('researcher'):result['researcher']=pending['diagnostic']
+                voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral',
+                voice_slot=adviser_voice_slot(data,trial['condition_id']))
+    if session.get('researcher') and data['config'].get('researcher'):
+        result['researcher']={**pending['diagnostic'],'agent_voice':adviser_voice(data,trial['condition_id']),'voice_tone':result['voice_tone']}
     return result
 
 
@@ -323,10 +348,16 @@ def prepared_advice(con,data,trial,initial):
 def _voice_instructions(condition_id: str) -> str:
     persuasive = condition_id in {'C4','C5','C7','C8'}
     if persuasive:
-        return ('Speak like a natural human peer in a research task. Be conversational, confident, and gently persuasive. '
-                'Sound engaged and encouraging rather than theatrical, sales-like, or aggressive. Use natural pacing and subtle emphasis.')
-    return ('Speak like a natural human peer in a research task. Be calm, conversational, and neutral. '
-            'Sound warm but matter-of-fact, without a sales tone or exaggerated emotion. Use natural pacing.')
+        return ('Sound like a real human peer who is actively trying to convince the listener. Be clearly more assertive, '
+                'confident, engaged, and encouraging than a neutral reading. Put natural emphasis on the recommendation and '
+                'action-oriented wording. Keep it believable and conversational, not theatrical, sales-like, or aggressive.')
+    return ('Sound like a real human peer giving information neutrally. Use a measured, calm, matter-of-fact delivery with '
+            'minimal persuasive emphasis. Keep the pacing natural and conversational, warm but restrained.')
+
+
+def _voice_speed(condition_id: str) -> float:
+    # Deliberately audible pilot contrast while keeping both deliveries natural.
+    return 1.06 if condition_id in {'C4','C5','C7','C8'} else 0.92
 
 
 @app.post('/api/voice')
@@ -342,8 +373,9 @@ def api_voice():
         # Speak exactly the generated quotation/message shown to the participant.
         # Agent name, recommendation number, and interface labels remain visual only.
         spoken=pending['text']
-        payload=json.dumps(dict(model=TTS_MODEL,voice=TTS_VOICE,input=spoken,
-            instructions=_voice_instructions(trial['condition_id']),response_format='mp3',speed=1.0)).encode('utf-8')
+        voice=adviser_voice(data,trial['condition_id'])
+        payload=json.dumps(dict(model=TTS_MODEL,voice=voice,input=spoken,
+            instructions=_voice_instructions(trial['condition_id']),response_format='mp3',speed=_voice_speed(trial['condition_id']))).encode('utf-8')
     req=urllib.request.Request('https://api.openai.com/v1/audio/speech',data=payload,method='POST',headers={
         'Authorization':f'Bearer {api_key}','Content-Type':'application/json','Accept':'audio/mpeg'})
     try:
@@ -352,7 +384,7 @@ def api_voice():
     except (urllib.error.URLError,TimeoutError,OSError) as exc:
         app.logger.warning('Natural voice generation failed: %s',exc)
         return jsonify(error='Natural voice could not be generated.'),503
-    return Response(audio,mimetype='audio/mpeg',headers={'X-BEAST-Voice-Backend':'openai-tts'})
+    return Response(audio,mimetype='audio/mpeg',headers={'X-BEAST-Voice-Backend':'openai-tts','X-BEAST-Voice':voice})
 
 
 @app.post('/api/prefetch')
