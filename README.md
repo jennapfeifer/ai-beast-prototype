@@ -1,3 +1,31 @@
+# Latest: v2.23 free-form persuasion
+
+C4/C7 and C5/C8 are no longer forced into researcher-authored persuasion tactics. Static persuasive agents may use any conversational or persuasive approach they choose. Adaptive persuasive agents receive recent completed history and may use it however they think is useful; no deterministic `recommended_strategy_family` is supplied to the model. C3/C6 remain neutral. All generated messages are asked for one short sentence of roughly 12–20 words and to include the recommendation number. The first successful model response is displayed as-is: there is no semantic repair and no length-only retry. Recent same-agent messages are supplied only to discourage copying. Current first estimates remain hidden during generation. See `FREE_PERSUASION_UPDATE_v2.23.md`.
+
+# Latest: v2.21 social encouragement + 16–18-word matching + simulation prefetch parity
+
+Persuasive C4/C5/C7/C8 agents now include brief human social encouragement (for example, “Good job”, “You’re doing great”, or “Nice work”) without tying praise to objective accuracy. All eight conditions target 16–18 spoken words. C1/C2 use a rewritten fixed bank; C3–C8 get at most one mechanical length-only retry, with the untouched first draft retained in the audit. The live-review simulator now calls the same prefetch endpoint as the real task before supplying the synthetic participant’s current estimate, so C3–C8 audits should show `initial_context_available=false`. See `SOCIAL_PRAISE_LENGTH_SIMULATION_UPDATE_v2.21.md`.
+
+# Latest: v2.20 prefetched advice + stronger voice contrast + dark-root fix
+
+Generated C3-C8 agent text no longer receives the participant's current first estimate. That lets text generation begin before the dot display and lets natural TTS prepare while the participant is viewing/estimating, greatly reducing visible wait. Adaptive agents still receive completed earlier-trial behaviour and ratings. The same speaker identity is held constant across neutral and persuasive conditions, but the TTS instructions now deliberately make the neutral delivery restrained/low-affect and the persuasive delivery forceful, emotionally engaged, high-conviction, and dynamically stressed. The task root is also dark so Safari/browser overscroll no longer reveals a white bar at the bottom. See `PREFETCH_VOICE_UI_UPDATE_v2.20.md`.
+
+# Latest: v2.19 grounded + length-matched + genuinely adaptive agents
+
+The first live-review simulation showed three issues: C1/C2/neutral messages were shorter than persuasive messages; generated agents sometimes invented visual evidence or claimed hidden accuracy; and C5/C8 adaptation was often only superficial. v2.19 gives all conditions a 14–18-word target, explicitly tells generated agents what they do and do not know, and supplies C5/C8 with a deterministic response/trust summary that must change persuasive strategy. Raw live outputs are still displayed without semantic repair. See `AGENT_GROUNDING_LENGTH_ADAPTATION_v2.19.md`.
+
+# Latest: v2.18 faster voice + same speaker + stronger persuasion
+
+Participant instructions no longer say ‘red’. Voice identity is now held constant across conditions, while neutral and persuasive delivery are deliberately separated much more strongly. TTS defaults to WAV for lower latency and voice preparation starts as early as possible. See `VOICE_TONE_LATENCY_UPDATE_v2.18.md`.
+
+# Latest: v2.17 synced audio + distinct agent voices
+
+Voice is now prepared *before* the advice appears, starts with the advice text, and finishes before the final number line is shown. Each agent also receives a different natural TTS speaker shuffled per participant, while neutral versus persuasive conditions use a deliberately stronger delivery contrast. See `VOICE_SYNC_UPDATE.md`.
+
+# Latest: v2.16 voice reads message only
+
+Voice + text now speaks exactly the generated advice message shown in quotation marks. The agent name, recommendation number, and interface labels are visual only. See `ADVICE_UI_VOICE_FIX.md`.
+
 # Latest: v2.15 advice bubble + natural voice fix
 
 Read `ADVICE_UI_VOICE_FIX.md`. Agent wording is now anchored in a box directly below the red advice triangle, voice playback cannot block progression, and Voice + text uses natural server-side TTS when `OPENAI_API_KEY` is available (with a better local-voice fallback).
@@ -86,3 +114,7 @@ GitHub: `jennapfeifer/ai-beast-prototype`; Render service: `ai-beast-prototype`,
 Set `SECRET_KEY`, `ACCESS_CODE` and `ADMIN_TOKEN` before deploying; on Render the app refuses to start without them. Preserve provider API keys and the existing database URL when editing environment settings. `DATABASE_URL` should point to persistent Postgres for retained data; a SQLite file on the free web service can disappear when it restarts. The build stays in pilot mode. Before recruitment, finalise participant information/contact/withdrawal terms, validate live manipulation and timings, and use durable storage.
 
 The original table schema is retained and diagnostic/session tables are additive. Old browser sessions from v6.1 cannot migrate; update between sessions. Retain a data export before deployment. Read the protected `/api/researcher/status` for the deployed model/configuration and database dialect without exposing keys.
+
+## v2.21 social-praise / length-matching update
+
+C1–C8 now aim for 16–18 words. Persuasive agents may use grounded social encouragement without claiming accuracy. Live generated messages get at most one mechanical word-count retry; both the first raw draft and displayed draft are retained in the audit. The live-review simulator now uses the same prefetch-before-initial-estimate path as the participant task.

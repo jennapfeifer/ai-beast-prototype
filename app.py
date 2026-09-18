@@ -9,7 +9,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.21-social-praise-length-matched'
+APP_VERSION = 'fieldwork-2.23-free-persuasion'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -32,9 +32,16 @@ ADVICE_PREVIEW_MS = int(os.getenv('ADVICE_PREVIEW_MS','5000'))
 ADVICE_MODALITY = os.getenv('ADVICE_MODALITY','text').strip().lower()
 TTS_MODEL = os.getenv('TTS_MODEL','gpt-4o-mini-tts').strip()
 TTS_VOICE = os.getenv('TTS_VOICE','marin').strip()
-# Keep one speaker identity across conditions so the experimental contrast is delivery, not speaker.
-# Different agent names remain participant-facing, but voice identity is intentionally held constant.
-AGENT_TTS_VOICES = (TTS_VOICE,)
+# Eight named agents now receive eight distinct speaker voices within a participant.
+# The voice-to-condition mapping is shuffled for every participant so speaker identity is
+# counterbalanced rather than tied to one experimental condition across the sample.
+# OpenAI's built-in voices do not carry official gender metadata; if the study requires
+# a same-perceived-gender set, audition the pool and override AGENT_TTS_VOICES in Render.
+_DEFAULT_AGENT_TTS_VOICES = ('marin','coral','nova','shimmer','sage','alloy','verse','ballad')
+_configured_voice_pool = tuple(v.strip() for v in os.getenv('AGENT_TTS_VOICES','').split(',') if v.strip())
+AGENT_TTS_VOICES = _configured_voice_pool or _DEFAULT_AGENT_TTS_VOICES
+if len(AGENT_TTS_VOICES) < len(design.CONDITIONS) or len(set(AGENT_TTS_VOICES)) < len(design.CONDITIONS):
+    raise RuntimeError('AGENT_TTS_VOICES must contain at least 8 unique voices for C1-C8.')
 TTS_RESPONSE_FORMAT = os.getenv('TTS_RESPONSE_FORMAT','wav').strip().lower()
 if TTS_RESPONSE_FORMAT not in {'wav','mp3'}:
     raise RuntimeError('TTS_RESPONSE_FORMAT must be wav or mp3.')
@@ -145,8 +152,12 @@ def adviser_name(data,condition):
 
 
 def assign_adviser_voices():
-    # Same speaker for every condition. This avoids confounding persuasion with speaker identity.
-    return {condition:TTS_VOICE for condition in design.CONDITIONS}
+    # Give the eight participant-facing agents eight distinct voices, but shuffle which
+    # voice belongs to which condition for every participant. This avoids permanently
+    # pairing one particular speaker with one manipulation.
+    voices=list(AGENT_TTS_VOICES[:len(design.CONDITIONS)])
+    secrets.SystemRandom().shuffle(voices)
+    return dict(zip(design.CONDITIONS,voices))
 
 
 def adviser_voice(data,condition):
@@ -157,7 +168,10 @@ def adviser_voice(data,condition):
 
 def adviser_voice_slot(data,condition):
     voice=adviser_voice(data,condition)
-    return 0
+    try:
+        return AGENT_TTS_VOICES.index(voice)
+    except ValueError:
+        return 0
 
 CONDITION_AGENT_STYLE = {
     'C1':'fixed', 'C2':'fixed',
@@ -224,7 +238,7 @@ def start():
     advice_modality=(request.form.get('advice_modality',ADVICE_MODALITY) if researcher else ADVICE_MODALITY).strip().lower()
     if advice_modality not in {'text','voice_text'}:return 'Invalid advice modality.',400
     conf=dict(conditions=conditions,trials_per_block=n,skip_practice=researcher and request.form.get('skip_practice')=='1',
-              adviser_protocol='raw_agent_v12',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),adviser_voices=assign_adviser_voices(),
+              adviser_protocol='raw_agent_v13',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),adviser_voices=assign_adviser_voices(),
               test_index=integer(request.form.get('test_index','0'),0,7) if researcher else 0,
               adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
               model_profile_id=profile_id,model_profile=profile,
@@ -280,7 +294,7 @@ def api_state():
         if session.get('researcher') and data['config'].get('researcher'):
             out['researcher']=dict(condition=trial['condition_id'],style=condition_agent_style(trial['condition_id'],trial.get('adviser_style')),direction=trial['direction'],
                 true_count=trial['true_count'],pid=pid,participant_index=data['participant_index'],mode=data['config']['adviser_mode'],
-                agent_voice=adviser_voice(data,trial['condition_id']),voice_tone=out['voice_tone'],
+                agent_voice=adviser_voice(data,trial['condition_id']),voice_tone=out['voice_tone'],voice_profile=_voice_profile(trial['condition_id']),
                 condition_order=conditions,**(data['pending'].get('diagnostic',{}) if data['pending'] else {}))
         return jsonify(out)
 
@@ -298,14 +312,14 @@ def advice_payload(pending,data):
                 voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral',
                 voice_slot=adviser_voice_slot(data,trial['condition_id']))
     if session.get('researcher') and data['config'].get('researcher'):
-        result['researcher']={**pending['diagnostic'],'agent_voice':adviser_voice(data,trial['condition_id']),'voice_tone':result['voice_tone']}
+        result['researcher']={**pending['diagnostic'],'agent_voice':adviser_voice(data,trial['condition_id']),'voice_tone':result['voice_tone'],'voice_profile':_voice_profile(trial['condition_id'])}
     return result
 
 
 def prepared_advice(con,data,trial,initial):
     """Resolve one trial's advice.
 
-    v2.21 deliberately removes the current first estimate from generated-agent
+    v2.23 deliberately removes the current first estimate from generated-agent
     context so C3-C8 can be generated while the participant is still viewing/
     estimating. C2's numerical recommendation still depends on the submitted
     estimate, but its fixed sentence can be prefetched because the sentence
@@ -315,7 +329,7 @@ def prepared_advice(con,data,trial,initial):
     style=condition_agent_style(trial['condition_id'], trial.get('adviser_style'))
     advice=design.clamp_int(initial*1.05) if practice else design.advice_number(trial['condition_id'],trial['true_count'],initial or 100)
     protocol=data['config'].get('adviser_protocol')
-    no_current_estimate=protocol in {'raw_agent_v11','raw_agent_v12'}
+    no_current_estimate=protocol in {'raw_agent_v11','raw_agent_v12','raw_agent_v13'}
     cached=data.get('prefetched')
     if cached and cached.get('token')==data.get('token'):
         # Fixed messages are independent of the current estimate even when C2's
@@ -326,9 +340,9 @@ def prepared_advice(con,data,trial,initial):
     rows=[] if practice else store.block_history(data['_pid'],trial['condition_id'],con)
     history=rows if style=='adaptive' else []
     generator=adviser.generate_offline_message if data['config']['adviser_mode']=='offline' else adviser.generate_message
-    if protocol in {'flexible_v8','raw_agent_v9','raw_agent_v10','raw_agent_v11','raw_agent_v12'} and data['config']['adviser_mode']=='live':
+    if protocol in {'flexible_v8','raw_agent_v9','raw_agent_v10','raw_agent_v11','raw_agent_v12','raw_agent_v13'} and data['config']['adviser_mode']=='live':
         generator=adviser_flexible.generate_message
-    # For v12 generated conditions, the model never receives the current first
+    # For v13 generated conditions, the model never receives the current first
     # estimate. Fixed/practice controls remain scripted and may still use the
     # submitted estimate for the numerical schedule outside the message text.
     model_initial=None if (no_current_estimate and style!='fixed') else initial
@@ -358,35 +372,54 @@ def prepared_advice(con,data,trial,initial):
                   'generation_status','rating_influence_status','persuasion_check',
                   'max_attempts','total_budget_s','retry_policy_version','retry_count',
                   'recovered_after_retry','stop_reason','budget_overrun',
-                  'target_word_range','word_tolerance','word_count_check','direction_check','adaptive_summary',
+                  'target_word_range','word_tolerance','word_count_check','direction_check','adaptive_summary','adaptive_summary_in_prompt',
                   'first_draft','displayed_draft','length_retry_used','length_retry_success'):
         diagnostic[field]=msg.get(field)
     return advice,msg,diagnostic
 
 
+def _voice_profile(condition_id: str) -> str:
+    if condition_id in {'C5','C8'}:
+        return 'adaptive_persuasive_coach'
+    if condition_id in {'C4','C7'}:
+        return 'static_persuasive_coach'
+    return 'neutral_reporter'
+
+
 def _voice_instructions(condition_id: str) -> str:
-    persuasive = condition_id in {'C4','C5','C7','C8'}
-    if persuasive:
+    profile=_voice_profile(condition_id)
+    if profile == 'adaptive_persuasive_coach':
         return (
-            'Keep the same speaker identity, but make this delivery unmistakably persuasive and human. '
-            'Speak with strong conviction, emotional engagement, warmth, and controlled urgency, as if you genuinely want a person in front of you to follow the recommendation. '
-            'Use dynamic intonation, firmer volume, crisp articulation, and strong stress on decisive or action-oriented words. '
-            'Let the sentence build toward the recommendation and finish with a decisive downward cadence. '
-            'Sound confident and forceful rather than polite or tentative. Do not merely read the sentence; actively persuade. '
-            'Remain natural: do not shout, sound angry, theatrical, synthetic, or like an advertisement.'
+            'Perform this as a warm but insistent human coach speaking directly to one person. '
+            'Use a clearly expressive emotional range, audible warmth, energetic pitch movement, and confident conviction. '
+            'If the wording contains praise such as good job, nice work, or you are doing great, brighten noticeably and sound genuinely encouraging on that phrase. '
+            'Then pivot into a firmer, more persuasive recommendation: stress the action words and the recommendation, with a controlled sense of urgency. '
+            'Use natural conversational rhythm, small expressive pauses, and a decisive finish. '
+            'The contrast from a neutral reading should be obvious to a listener. Do not shout, become theatrical, or sound like an advertisement.'
+        )
+    if profile == 'static_persuasive_coach':
+        return (
+            'Perform this as a confident, emotionally engaged human persuader. '
+            'Sound warm, encouraging, and assertive, with a smile in the voice, lively intonation, and noticeably stronger emphasis than ordinary speech. '
+            'Make praise sound genuinely positive, then make the recommendation sound firm and compelling. '
+            'Use stronger pitch contours, slightly punchier pacing, and decisive stress on phrases such as strongly recommend, give my estimate more weight, or toward my estimate. '
+            'Finish with certainty and forward momentum. The persuasive intent should be unmistakable, while still sounding like a real person rather than an actor or advertisement.'
         )
     return (
-        'Keep the same speaker identity used in the persuasive condition, but make this delivery clearly neutral. '
-        'Use low emotional intensity, restrained energy, an even volume, almost no rhetorical emphasis, and a steady slower pace. '
-        'Sound matter-of-fact and observational, as if simply reporting your own estimate with no attempt to influence the listener. '
-        'Keep the voice natural and conversational, not robotic, but deliberately avoid urgency, warmth-as-persuasion, or assertive stress.'
+        'Perform this as a neutral human reporter. Keep emotional intensity low and the delivery deliberately restrained. '
+        'Use an even pitch range, steady volume, measured pace, minimal expressive emphasis, and no motivational warmth. '
+        'Sound natural and human, but detached and matter-of-fact: simply state the estimate or recommendation without trying to influence the listener. '
+        'Avoid urgency, enthusiasm, reassurance, coaching energy, or persuasive stress.'
     )
 
 
 def _voice_speed(condition_id: str) -> float:
-    # The pilot intentionally makes the delivery contrast large enough to hear.
-    # Speaker identity remains constant, so this is a prosody/tone manipulation.
-    return 1.12 if condition_id in {'C4','C5','C7','C8'} else 0.90
+    profile=_voice_profile(condition_id)
+    if profile == 'adaptive_persuasive_coach':
+        return 1.08
+    if profile == 'static_persuasive_coach':
+        return 1.05
+    return 0.92
 
 
 @app.post('/api/voice')
@@ -420,7 +453,7 @@ def api_voice():
         app.logger.warning('Natural voice generation failed: %s',exc)
         return jsonify(error='Natural voice could not be generated.'),503
     mimetype='audio/wav' if TTS_RESPONSE_FORMAT=='wav' else 'audio/mpeg'
-    return Response(audio,mimetype=mimetype,headers={'X-BEAST-Voice-Backend':'openai-tts','X-BEAST-Voice':voice,'X-BEAST-Audio-Format':TTS_RESPONSE_FORMAT})
+    return Response(audio,mimetype=mimetype,headers={'X-BEAST-Voice-Backend':'openai-tts','X-BEAST-Voice':voice,'X-BEAST-Voice-Profile':_voice_profile(trial['condition_id']),'X-BEAST-Audio-Format':TTS_RESPONSE_FORMAT})
 
 
 @app.post('/api/prefetch')
@@ -447,7 +480,7 @@ def api_prefetch():
                         voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral',
                         voice_slot=adviser_voice_slot(data,trial['condition_id']))
             if session.get('researcher') and data['config'].get('researcher'):
-                result['researcher']={**diagnostic,'agent_voice':adviser_voice(data,trial['condition_id']),'voice_tone':result['voice_tone']}
+                result['researcher']={**diagnostic,'agent_voice':adviser_voice(data,trial['condition_id']),'voice_tone':result['voice_tone'],'voice_profile':_voice_profile(trial['condition_id'])}
             return jsonify(ok=True,prefetched=True,advice=result)
         data['_pid']=pid
         # initial=None is intentional. C2 gets a placeholder numerical value for
@@ -459,7 +492,7 @@ def api_prefetch():
                     voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral',
                     voice_slot=adviser_voice_slot(data,trial['condition_id']))
         if session.get('researcher') and data['config'].get('researcher'):
-            result['researcher']={**diagnostic,'agent_voice':adviser_voice(data,trial['condition_id']),'voice_tone':result['voice_tone']}
+            result['researcher']={**diagnostic,'agent_voice':adviser_voice(data,trial['condition_id']),'voice_tone':result['voice_tone'],'voice_profile':_voice_profile(trial['condition_id'])}
         return jsonify(ok=True,prefetched=True,advice=result)
 
 
@@ -592,7 +625,7 @@ def admin_downloads():
 def researcher_status():
     require_admin()
     return jsonify(version=APP_VERSION,stimulus_render_version=STIMULUS_RENDER_VERSION,stimulus_format='webp_lossless',
-        advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,voice_backend='openai' if os.getenv('OPENAI_API_KEY') else 'browser',tts_voice=TTS_VOICE,
+        advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,voice_backend='openai' if os.getenv('OPENAI_API_KEY') else 'browser',tts_voice=TTS_VOICE,voice_pool=list(AGENT_TTS_VOICES[:8]),
         provider=adviser.resolved_provider(),model=adviser.resolved_model(),
         has_key=adviser.has_api_key(),database_dialect=store.engine.dialect.name,study_mode=STUDY_MODE,
         adviser_mode=ADVISER_MODE,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
