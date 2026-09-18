@@ -14,7 +14,7 @@ function elapsed(c){const wall=performance.now()-c.time;return {wall:Math.round(
 function visibility(){const now=performance.now();if(document.hidden&&hiddenStarted===null){hiddenStarted=now;interruptions++;}else if(!document.hidden&&hiddenStarted!==null){hiddenTotal+=now-hiddenStarted;hiddenStarted=null;}document.getElementById('visibility-cover').hidden=!document.hidden;}
 document.addEventListener('visibilitychange',visibility);visibility();
 async function visibleSleep(ms){const t=clock();while(elapsed(t).active<ms)await sleep(Math.min(40,Math.max(1,ms-elapsed(t).active)));return elapsed(t);}
-let voiceAudioContext=null,activeVoiceNode=null,activeVoiceElement=null,activeVoiceUrl=null;
+let voiceAudioContext=null,activeVoiceNode=null,activeVoiceElement=null,activeVoiceUrl=null,voicePreparationPromise=null;
 function unlockVoiceAudio(){
   if(CFG.advice_modality!=='voice_text')return;
   const AudioCtx=window.AudioContext||window.webkitAudioContext;
@@ -34,32 +34,30 @@ function stopCurrentVoice(){
   try{window.speechSynthesis?.cancel();}catch(_error){}
 }
 function markAudioPlayed(){audioPlayed=true;timing.audio_played=1;}
-async function playNaturalVoice(advice){
-  if(CFG.voice_backend!=='openai'||typeof fetch!=='function')return false;
-  const token=state?.trial_token;
-  if(!token)return false;
+function estimatedSpeechMs(text,rate=1){
+  const words=String(text||'').trim().split(/\s+/).filter(Boolean).length;
+  return clamp(Math.round((Math.max(words,3)/(158*Math.max(rate,0.5)))*60000+350),900,15000);
+}
+async function prepareNaturalVoice(advice){
+  if(CFG.voice_backend!=='openai'||typeof fetch!=='function')return null;
+  const token=state?.trial_token;if(!token)return null;
+  let timeout=null;
   try{
-    const response=await fetch('/api/voice',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':CFG.csrf},body:JSON.stringify({trial_token:token})});
-    if(!response.ok)return false;
+    const controller=typeof AbortController!=='undefined'?new AbortController():null;
+    if(controller)timeout=setTimeout(()=>controller.abort(),12000);
+    const response=await fetch('/api/voice',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':CFG.csrf},body:JSON.stringify({trial_token:token}),...(controller?{signal:controller.signal}:{})});
+    if(!response.ok)return null;
     const bytes=await response.arrayBuffer();
-    if(state?.trial_token!==token)return false;
+    if(state?.trial_token!==token)return null;
     const AudioCtx=window.AudioContext||window.webkitAudioContext;
     if(AudioCtx){
       if(!voiceAudioContext)voiceAudioContext=new AudioCtx();
-      if(voiceAudioContext.state==='suspended')await voiceAudioContext.resume();
       const buffer=await voiceAudioContext.decodeAudioData(bytes.slice(0));
-      if(state?.trial_token!==token)return false;
-      const source=voiceAudioContext.createBufferSource();source.buffer=buffer;source.connect(voiceAudioContext.destination);
-      activeVoiceNode=source;source.onended=()=>{if(activeVoiceNode===source)activeVoiceNode=null;};source.start(0);markAudioPlayed();return true;
+      if(state?.trial_token!==token)return null;
+      return {kind:'buffer',buffer,durationMs:Math.ceil(buffer.duration*1000)+120,voiceId:response.headers?.get?.('X-BEAST-Voice')||null};
     }
-    if(typeof Audio!=='undefined'&&typeof Blob!=='undefined'&&typeof URL!=='undefined'){
-      const url=URL.createObjectURL(new Blob([bytes],{type:'audio/mpeg'})),audio=new Audio(url);
-      activeVoiceUrl=url;activeVoiceElement=audio;
-      audio.onended=()=>{if(activeVoiceElement===audio)activeVoiceElement=null;try{URL.revokeObjectURL(url);}catch(_error){}if(activeVoiceUrl===url)activeVoiceUrl=null;};
-      await audio.play();markAudioPlayed();return true;
-    }
-  }catch(_error){}
-  return false;
+    return {kind:'bytes',bytes,durationMs:estimatedSpeechMs(advice.advice_text,advice.voice_tone==='persuasive'?1.06:0.92),voiceId:response.headers?.get?.('X-BEAST-Voice')||null};
+  }catch(_error){return null;}finally{if(timeout)clearTimeout(timeout);}
 }
 function loadBrowserVoices(){
   if(!('speechSynthesis' in window))return Promise.resolve([]);
@@ -69,7 +67,7 @@ function loadBrowserVoices(){
     window.speechSynthesis.addEventListener?.('voiceschanged',done);const timer=setTimeout(done,500);
   });
 }
-function bestBrowserVoice(voices){
+function rankedBrowserVoices(voices){
   const preferred=['Microsoft Aria Online','Microsoft Jenny Online','Google US English','Samantha','Ava','Serena','Daniel','Karen','Moira','Tessa','Fiona','Alex'];
   const english=voices.filter(v=>/^en(?:-|_)/i.test(v.lang));
   const score=v=>{
@@ -79,23 +77,48 @@ function bestBrowserVoice(voices){
     if(/compact/i.test(name))n-=60;
     return n;
   };
-  return english.sort((a,b)=>score(b)-score(a))[0]||voices[0]||null;
+  return (english.length?english:voices.slice()).sort((a,b)=>score(b)-score(a));
 }
-async function playBrowserVoice(advice){
-  if(!('speechSynthesis' in window)||typeof SpeechSynthesisUtterance==='undefined')return false;
+async function prepareBrowserVoice(advice){
+  if(!('speechSynthesis' in window)||typeof SpeechSynthesisUtterance==='undefined')return null;
   try{
-    const voices=await loadBrowserVoices();
-    const utterance=new SpeechSynthesisUtterance(advice.advice_text);
-    utterance.lang='en-US';utterance.rate=advice.voice_tone==='persuasive'?0.99:0.94;utterance.pitch=1;utterance.volume=1;
-    const voice=bestBrowserVoice(voices);if(voice)utterance.voice=voice;
-    utterance.onstart=markAudioPlayed;window.speechSynthesis.speak(utterance);return true;
-  }catch(_error){return false;}
+    const voices=rankedBrowserVoices(await loadBrowserVoices());
+    const rate=advice.voice_tone==='persuasive'?1.06:0.92;
+    const slot=Number.isFinite(Number(advice.voice_slot))?Number(advice.voice_slot):0;
+    return {kind:'browser',voice:voices.length?voices[((slot%voices.length)+voices.length)%voices.length]:null,rate,
+      durationMs:estimatedSpeechMs(advice.advice_text,rate)};
+  }catch(_error){return null;}
 }
-async function speakAgentAdvice(advice){
-  if(CFG.advice_modality!=='voice_text')return false;
+async function prepareAgentVoice(advice){
+  if(CFG.advice_modality!=='voice_text')return null;
+  const natural=await prepareNaturalVoice(advice);if(natural)return natural;
+  return prepareBrowserVoice(advice);
+}
+async function startPreparedVoice(prepared,advice){
+  if(!prepared)return null;
   stopCurrentVoice();
-  if(await playNaturalVoice(advice))return true;
-  return playBrowserVoice(advice);
+  try{
+    if(prepared.kind==='buffer'){
+      if(voiceAudioContext.state==='suspended')await voiceAudioContext.resume();
+      const source=voiceAudioContext.createBufferSource();source.buffer=prepared.buffer;source.connect(voiceAudioContext.destination);
+      let finish;const ended=new Promise(r=>finish=r);activeVoiceNode=source;
+      source.onended=()=>{if(activeVoiceNode===source)activeVoiceNode=null;finish();};
+      source.start(0);markAudioPlayed();return {durationMs:prepared.durationMs,ended,voiceId:prepared.voiceId};
+    }
+    if(prepared.kind==='bytes'&&typeof Audio!=='undefined'&&typeof Blob!=='undefined'&&typeof URL!=='undefined'){
+      const url=URL.createObjectURL(new Blob([prepared.bytes],{type:'audio/mpeg'})),audio=new Audio(url);
+      activeVoiceUrl=url;activeVoiceElement=audio;let finish;const ended=new Promise(r=>finish=r);
+      audio.onended=()=>{if(activeVoiceElement===audio)activeVoiceElement=null;try{URL.revokeObjectURL(url);}catch(_error){}if(activeVoiceUrl===url)activeVoiceUrl=null;finish();};
+      await audio.play();markAudioPlayed();return {durationMs:prepared.durationMs,ended,voiceId:prepared.voiceId};
+    }
+    if(prepared.kind==='browser'){
+      const utterance=new SpeechSynthesisUtterance(advice.advice_text);utterance.lang='en-US';utterance.rate=prepared.rate;utterance.pitch=1;utterance.volume=1;
+      if(prepared.voice)utterance.voice=prepared.voice;
+      let finish;const ended=new Promise(r=>finish=r);utterance.onstart=markAudioPlayed;utterance.onend=finish;utterance.onerror=finish;
+      window.speechSynthesis.speak(utterance);return {durationMs:prepared.durationMs,ended,voiceId:prepared.voice?.name||null};
+    }
+  }catch(_error){}
+  return null;
 }
 function phase(label){document.getElementById('phase-name').textContent=label;}
 function renderResearcher(extra){
@@ -144,23 +167,34 @@ async function showStimulus(){
   }
 if(CFG.stimulus_ms>0){const exposure=await visibleSleep(CFG.stimulus_ms);timing.stimulus_visible_ms=exposure.active;phase('FIRST ESTIMATE');return await initialEstimator();}
 const t=clock();stage.insertAdjacentHTML('beforeend','<button class="button primary" id="finish-viewing">Continue to estimate</button>');await new Promise(r=>document.getElementById('finish-viewing').onclick=r);timing.stimulus_visible_ms=elapsed(t).active;return await initialEstimator();}
-async function getAdvice(initial){phase('AGENT ADVICE');stage.innerHTML=`<div class="advice-stage"><div class="adviser-label"><span class="adviser-icon">⋮</span> Agent advice</div><div class="composing"><i></i><i></i><i></i></div><h2>Preparing advice…</h2><p class="small muted" id="long-wait"></p></div>`;const slow=setTimeout(()=>{const el=document.getElementById('long-wait');if(el)el.textContent='Still preparing your advice. Please keep this tab open.';},8000);const t=clock();let result;try{const remainingStart=performance.now();if(prefetchPromise)await prefetchPromise;timing.prefetch_remaining_ms=Math.round(performance.now()-remainingStart);prefetchPromise=null;result=await recover(()=>fetchJSON('/api/initial',{trial_token:state.trial_token,estimate:initial.estimate,rt_ms:initial.active,telemetry:timing}),'We couldn’t retrieve the advice.');}finally{clearTimeout(slow);}const wait=elapsed(t).wall;if(wait<CFG.min_delay_ms)await sleep(CFG.min_delay_ms-wait);timing.advice_wait_ms=elapsed(t).wall;renderResearcher(result.researcher);return result;}
+async function getAdvice(initial){phase('AGENT ADVICE');stage.innerHTML=`<div class="advice-stage"><div class="adviser-label"><span class="adviser-icon">⋮</span> Agent advice</div><div class="composing"><i></i><i></i><i></i></div><h2>Preparing advice…</h2><p class="small muted" id="long-wait"></p></div>`;const slow=setTimeout(()=>{const el=document.getElementById('long-wait');if(el)el.textContent='Still preparing your advice. Please keep this tab open.';},8000);const t=clock();let result;try{const remainingStart=performance.now();if(prefetchPromise)await prefetchPromise;timing.prefetch_remaining_ms=Math.round(performance.now()-remainingStart);prefetchPromise=null;result=await recover(()=>fetchJSON('/api/initial',{trial_token:state.trial_token,estimate:initial.estimate,rt_ms:initial.active,telemetry:timing}),'We couldn’t retrieve the advice.');}finally{clearTimeout(slow);}const wait=elapsed(t).wall;if(wait<CFG.min_delay_ms)await sleep(CFG.min_delay_ms-wait);timing.advice_wait_ms=elapsed(t).wall;renderResearcher(result.researcher);if(CFG.advice_modality==='voice_text'){const voiceStarted=performance.now();voicePreparationPromise=prepareAgentVoice(result).then(prepared=>{timing.voice_prepare_ms=Math.round(performance.now()-voiceStarted);return prepared;});}return result;}
 function initialEstimator() {
   phase('FIRST ESTIMATE');
   return BEASTEstimate.render({stage,max:CFG.max_estimate,clock,elapsed});
 }
 async function showAdvice(initial,advice) {
   timing.advice_preview_ms=0;timing.advice_preview_wall_ms=0;
-  // Voice is deliberately non-blocking. A slow or broken speech engine must never trap the participant on the advice screen.
-  speakAgentAdvice(advice).catch(()=>false);
-  if(CFG.advice_preview_ms>0){
+  let prepared=null;
+  if(CFG.advice_modality==='voice_text'){
+    prepared=voicePreparationPromise?await voicePreparationPromise:await prepareAgentVoice(advice);
+    voicePreparationPromise=null;
+  }
+  const focusAdvice=CFG.advice_preview_ms>0||CFG.advice_modality==='voice_text';
+  if(focusAdvice){
     phase('AGENT ADVICE');document.body.classList.add('advice-focus');
     stage.innerHTML=`<section class="advice-only ai-colour"><p>${esc(advice.adviser_name||'Agent')} · AGENT: <strong>${esc(advice.advice_number)}</strong></p><h1>“${esc(advice.advice_text)}”</h1></section>`;
     try{
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-      const exposure=await visibleSleep(CFG.advice_preview_ms);
-      timing.advice_preview_ms=exposure.active;timing.advice_preview_wall_ms=exposure.wall;
-    }finally{document.body.classList.remove('advice-focus');}
+      const playback=CFG.advice_modality==='voice_text'?await startPreparedVoice(prepared,advice):null;
+      if(playback?.voiceId)timing.voice_id=playback.voiceId;
+      const holdMs=Math.max(CFG.advice_preview_ms,playback?.durationMs||0);
+      timing.voice_hold_ms=Math.round(holdMs);
+      if(holdMs>0){const exposure=await visibleSleep(holdMs);timing.advice_preview_ms=exposure.active;timing.advice_preview_wall_ms=exposure.wall;}
+    }finally{
+      // Never allow speech to continue over the response scale. The timed hold is bounded by the
+      // generated clip duration (or an estimate for the browser fallback), so a missing end event cannot trap the task.
+      stopCurrentVoice();document.body.classList.remove('advice-focus');
+    }
   }
   phase('YOUR FINAL DECISION');
   return BEASTEstimate.render({stage,initial:Number(initial.estimate),advice,max:CFG.max_estimate,clock,elapsed});
@@ -186,7 +220,7 @@ async function ratings(){
   });
 }
 async function run(){let finishedWarmup=false;for(;;){state=await recover(()=>fetchJSON('/api/state'),'We couldn’t load the next trial.');if(state.done){location.href='/debrief';return;}info={};renderResearcher(state.researcher);renderProgress();const start=clock();audioPlayed=false;timing={rating_ms:0,break_ms:0,resumed:state.pending?1:0,viewport_width:innerWidth,viewport_height:innerHeight,device_pixel_ratio:devicePixelRatio};let initial,advice;
-if(state.pending){phase('WELCOME BACK');stage.innerHTML=`<div class="checkpoint-card"><h2>Your last answer is saved.</h2><p>Continue with the advice for that trial.</p><button class="button primary" id="resume-advice">Continue →</button></div>`;await new Promise(r=>document.getElementById('resume-advice').onclick=r);initial={estimate:state.pending.initial,active:state.pending.rt_initial,wall:0};advice={adviser_name:state.adviser_name,advice_text:state.pending.text,advice_number:state.pending.advice,voice_tone:state.voice_tone};}
+if(state.pending){phase('WELCOME BACK');stage.innerHTML=`<div class="checkpoint-card"><h2>Your last answer is saved.</h2><p>Continue with the advice for that trial.</p><button class="button primary" id="resume-advice">Continue →</button></div>`;await new Promise(r=>document.getElementById('resume-advice').onclick=r);initial={estimate:state.pending.initial,active:state.pending.rt_initial,wall:0};advice={adviser_name:state.adviser_name,advice_text:state.pending.text,advice_number:state.pending.advice,voice_tone:state.voice_tone,voice_slot:state.voice_slot};}
 else{if(state.break_due||finishedWarmup){await checkpoint(finishedWarmup);finishedWarmup=false;}stimulusPromise=prepareStimulus();timing.fixation_ms=0;initial=await recover(()=>showStimulus(),'We couldn’t load the dot image.');timing.initial_active_ms=initial.active;timing.initial_wall_ms=initial.wall;advice=await getAdvice(initial);}
 const final=await showAdvice(initial,advice);timing.final_active_ms=final.active;timing.final_wall_ms=final.wall;const checkin=await ratings();timing.total_wall_ms=elapsed(start).wall;timing.total_active_ms=elapsed(start).active;timing.hidden_ms=Math.round(totalHidden()-start.hidden);timing.visibility_interruptions=interruptions-start.interruptions;await recover(()=>fetchJSON('/api/final',{trial_token:state.trial_token,estimate:final.estimate,rt_ms:final.active,trust:checkin.trust??null,feeling:checkin.feeling??null,telemetry:timing,audio_played:audioPlayed,modality:CFG.advice_modality}),'We couldn’t confirm that your response was saved.');finishedWarmup=state.practice;}}
 run().catch(error=>{stage.innerHTML=`<div class="recovery"><h2>Session interrupted</h2><p>${esc(error.message)}</p><button class="button primary" onclick="location.reload()">Reload this session</button></div>`;});
