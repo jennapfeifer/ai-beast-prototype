@@ -35,7 +35,8 @@ async function generateReview(){
    const position=reviewState.trial_in_block;
    const initial=rounded(details.true_count*([.88,1.08,.96,1.12][(details.true_count/8)%4|0]));
    el('review-status').textContent=`${profile}: ${details.condition}, trial ${position}. ${reviewRows.length}/315 saved.`;
-   // Send the synthetic participant's current first estimate exactly as the current-trial protocol does.
+   // Exercise the same prefetch path as the real task: generate the agent message BEFORE the current first estimate exists.
+   await reviewRequest('/api/prefetch',{trial_token:reviewState.trial_token});
    const advice=await reviewRequest('/api/initial',{trial_token:reviewState.trial_token,estimate:initial,rt_ms:0});
    const response=profileResponse(profile,position,initial,advice.advice_number);
    const ratings={trust:reviewState.ratings_due?response.trust:null,feeling:null};
@@ -51,7 +52,7 @@ function downloadReview(json){
  let content,type,name;
  if(json){content=JSON.stringify({simulation:true,profiles:reviewProfiles,model_profile:reviewModel,complete:reviewIndex===3,rows:reviewRows},null,2);type='application/json';name='BEAST-live-review.json';}
  else{
-  const fields=['profile','adviser_name','pid','participant_index','round','condition','trial','practice','true_count','initial_estimate','advice_number','final_estimate','prescribed_weight','trust_rating','advice_text','word_count','word_count_check','source','live_model','fallback','model','prompt_version','initial_context_available','generation_ms','attempts','validation','grounding_record_check','adaptive_strategy','adaptive_summary','review_reasons','attempt_log'];
+  const fields=['profile','adviser_name','pid','participant_index','round','condition','trial','practice','true_count','initial_estimate','advice_number','final_estimate','prescribed_weight','trust_rating','advice_text','word_count','word_count_check','source','live_model','fallback','model','prompt_version','initial_context_available','generation_ms','attempts','validation','grounding_record_check','adaptive_strategy','adaptive_summary','first_draft','displayed_draft','length_retry_used','length_retry_success','review_reasons','attempt_log'];
   const cell=value=>{let s=value==null?'':typeof value==='object'?JSON.stringify(value):String(value);if(/^[=+@-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';};
   content='\uFEFF'+[fields,...reviewRows.map(r=>fields.map(k=>r[k]))].map(row=>row.map(cell).join(',')).join('\r\n');type='text/csv;charset=utf-8';name='BEAST-live-review.csv';
  }

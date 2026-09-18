@@ -56,7 +56,7 @@ async function prepareNaturalVoice(advice){
       if(state?.trial_token!==token)return null;
       return {kind:'buffer',buffer,durationMs:Math.ceil(buffer.duration*1000)+120,voiceId:response.headers?.get?.('X-BEAST-Voice')||null};
     }
-    return {kind:'bytes',bytes,mime:response.headers?.get?.('Content-Type')||'audio/wav',durationMs:estimatedSpeechMs(advice.advice_text,advice.voice_tone==='persuasive'?1.04:0.96),voiceId:response.headers?.get?.('X-BEAST-Voice')||null};
+    return {kind:'bytes',bytes,mime:response.headers?.get?.('Content-Type')||'audio/wav',durationMs:estimatedSpeechMs(advice.advice_text,advice.voice_tone==='persuasive'?1.12:0.90),voiceId:response.headers?.get?.('X-BEAST-Voice')||null};
   }catch(_error){return null;}finally{if(timeout)clearTimeout(timeout);}
 }
 function loadBrowserVoices(){
@@ -83,9 +83,11 @@ async function prepareBrowserVoice(advice){
   if(!('speechSynthesis' in window)||typeof SpeechSynthesisUtterance==='undefined')return null;
   try{
     const voices=rankedBrowserVoices(await loadBrowserVoices());
-    const rate=advice.voice_tone==='persuasive'?1.04:0.96;
-    // Same browser voice across conditions; delivery, not speaker identity, carries the manipulation.
-    return {kind:'browser',voice:voices.length?voices[0]:null,rate,pitch:1,
+    const persuasive=advice.voice_tone==='persuasive';
+    const rate=persuasive?1.10:0.90,pitch=persuasive?1.04:0.97;
+    // Same browser speaker across conditions. The larger rate/pitch contrast is
+    // only a fallback; natural OpenAI TTS carries the intended prosody.
+    return {kind:'browser',voice:voices.length?voices[0]:null,rate,pitch,
       durationMs:estimatedSpeechMs(advice.advice_text,rate)};
   }catch(_error){return null;}
 }
@@ -141,6 +143,22 @@ function renderResearcher(extra){
 }
 async function fetchJSON(path,body){const control=new AbortController(),timer=setTimeout(()=>control.abort(),CFG.request_timeout_ms||90000);try{const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':CFG.csrf},body:body===undefined?undefined:JSON.stringify(body),signal:control.signal});let result;try{result=await response.json();}catch{throw Error('Your session may have expired. Reload to resume.');}if(!response.ok)throw Object.assign(Error(result.error||`Request failed (${response.status}).`),{status:response.status});return result;}finally{clearTimeout(timer);}}
 async function recover(action,description){for(;;){try{return await action();}catch(error){phase('CONNECTION CHECK');stage.innerHTML=`<div class="recovery"><span class="stage-symbol">↻</span><h2>${esc(description)}</h2><p>${esc(error.message)}</p><p class="helper">Your saved responses are safe.</p><div class="button-row"><button class="button primary" id="retry">Try again</button><button class="button" id="resume">Reload &amp; resume</button></div></div>`;document.getElementById('resume').onclick=()=>location.reload();await new Promise(r=>document.getElementById('retry').onclick=r);}}}
+function beginAdvicePrefetch(){
+  if(CFG.prefetch_enabled===false||state?.pending||!state?.trial_token)return;
+  const token=state.trial_token,started=performance.now(),metrics=timing;
+  prefetchPromise=fetchJSON('/api/prefetch',{trial_token:token}).then(result=>{
+    metrics.prefetch_request_ms=Math.round(performance.now()-started);
+    if(state?.trial_token!==token)return null;
+    if(result?.prefetched&&result.advice&&CFG.advice_modality==='voice_text'){
+      const voiceStarted=performance.now();
+      voicePreparationPromise=prepareAgentVoice(result.advice).then(prepared=>{
+        if(state?.trial_token===token)metrics.voice_prepare_ms=Math.round(performance.now()-voiceStarted);
+        return prepared;
+      });
+    }
+    return result;
+  }).catch(()=>null);
+}
 function renderProgress(){document.getElementById('round-title').textContent=state.practice?'Practice':`Round ${state.block} of ${state.n_blocks}`;document.getElementById('meta').textContent=state.practice?'Practice':`${state.completed} / ${state.overall_total}`;const percent=100*state.completed/Math.max(1,state.overall_total);document.getElementById('bar').style.width=percent+'%';document.querySelector('[role=progressbar]').setAttribute('aria-valuenow',String(Math.round(percent)));}
 async function checkpoint(warmup=false){phase('BREAK');stage.innerHTML=`<div class="checkpoint-card"><h1>${warmup?'Practice complete':`Round ${state.block-1} complete`}</h1><p>Next agent: ${esc(state.adviser_name||'Agent')}</p><p>Take a break if you like.</p><button class="button primary" id="continue-round">Start round ${state.block}</button></div>`;const t=clock();await new Promise(r=>document.getElementById('continue-round').onclick=r);timing.break_ms=elapsed(t).wall;}
 function inputMarkup(prompt,button='Record estimate',prefill=''){return `<div class="answer-stage"><span class="eyebrow">YOUR ESTIMATE</span><h2>${prompt}</h2><p class="helper">Enter a whole number from 1 to ${CFG.max_estimate}.</p><form id="estimate-form"><div class="estimate-row"><label class="sr-only" for="estimate">Your estimate</label><input id="estimate" type="number" min="1" max="${CFG.max_estimate}" step="1" inputmode="numeric" autocomplete="off" required value="${prefill}"><button class="button primary" type="submit">${button} →</button></div><p class="error" id="estimate-error" role="alert"></p></form></div>`;}
@@ -160,14 +178,29 @@ async function showStimulus(){
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
   timing.stimulus_load_ms=elapsed(start).wall;
   const bounds=image.getBoundingClientRect();timing.stimulus_render_width=bounds.width;timing.stimulus_render_height=bounds.height;
-  // Prioritise the image. Advice generation starts only once it is displayed.
-  if(CFG.prefetch_enabled!==false){
-  const prefetchStarted=performance.now(),metrics=timing;
-  prefetchPromise=fetchJSON('/api/prefetch',{trial_token:state.trial_token}).then(result=>{metrics.prefetch_request_ms=Math.round(performance.now()-prefetchStarted);return result;}).catch(()=>null);
-  }
+  // Advice/text/voice prefetch starts before this function, so API latency overlaps viewing and estimation.
 if(CFG.stimulus_ms>0){const exposure=await visibleSleep(CFG.stimulus_ms);timing.stimulus_visible_ms=exposure.active;phase('FIRST ESTIMATE');return await initialEstimator();}
 const t=clock();stage.insertAdjacentHTML('beforeend','<button class="button primary" id="finish-viewing">Continue to estimate</button>');await new Promise(r=>document.getElementById('finish-viewing').onclick=r);timing.stimulus_visible_ms=elapsed(t).active;return await initialEstimator();}
-async function getAdvice(initial){phase('AGENT ADVICE');stage.innerHTML=`<div class="advice-stage"><div class="adviser-label"><span class="adviser-icon">⋮</span> Agent advice</div><div class="composing"><i></i><i></i><i></i></div><h2>Preparing advice…</h2><p class="small muted" id="long-wait"></p></div>`;const slow=setTimeout(()=>{const el=document.getElementById('long-wait');if(el)el.textContent='Still preparing your advice. Please keep this tab open.';},8000);const t=clock();let result;try{const remainingStart=performance.now();if(prefetchPromise)await prefetchPromise;timing.prefetch_remaining_ms=Math.round(performance.now()-remainingStart);prefetchPromise=null;result=await recover(()=>fetchJSON('/api/initial',{trial_token:state.trial_token,estimate:initial.estimate,rt_ms:initial.active,telemetry:timing}),'We couldn’t retrieve the advice.');}finally{clearTimeout(slow);}if(CFG.advice_modality==='voice_text'){const voiceStarted=performance.now();voicePreparationPromise=prepareAgentVoice(result).then(prepared=>{timing.voice_prepare_ms=Math.round(performance.now()-voiceStarted);return prepared;});}const wait=elapsed(t).wall;if(wait<CFG.min_delay_ms)await sleep(CFG.min_delay_ms-wait);timing.advice_wait_ms=elapsed(t).wall;renderResearcher(result.researcher);return result;}
+async function getAdvice(initial){
+  phase('AGENT ADVICE');
+  stage.innerHTML=`<div class="advice-stage"><div class="adviser-label"><span class="adviser-icon">⋮</span> Agent advice</div><div class="composing"><i></i><i></i><i></i></div><h2>Preparing advice…</h2><p class="small muted" id="long-wait"></p></div>`;
+  const slow=setTimeout(()=>{const el=document.getElementById('long-wait');if(el)el.textContent='Still preparing your advice. Please keep this tab open.';},8000);
+  const t=clock();let result;
+  try{
+    const remainingStart=performance.now();
+    if(prefetchPromise)await prefetchPromise;
+    timing.prefetch_remaining_ms=Math.round(performance.now()-remainingStart);prefetchPromise=null;
+    result=await recover(()=>fetchJSON('/api/initial',{trial_token:state.trial_token,estimate:initial.estimate,rt_ms:initial.active,telemetry:timing}),'We couldn’t retrieve the advice.');
+  }finally{clearTimeout(slow);}
+  // If prefetch/TTS failed or was not available (e.g. practice/resume), start it now.
+  if(CFG.advice_modality==='voice_text'&&!voicePreparationPromise){
+    const voiceStarted=performance.now();
+    voicePreparationPromise=prepareAgentVoice(result).then(prepared=>{timing.voice_prepare_ms=Math.round(performance.now()-voiceStarted);return prepared;});
+  }
+  const wait=elapsed(t).wall;if(wait<CFG.min_delay_ms)await sleep(CFG.min_delay_ms-wait);
+  timing.advice_wait_ms=elapsed(t).wall;renderResearcher(result.researcher);return result;
+}
+
 function initialEstimator() {
   phase('FIRST ESTIMATE');
   return BEASTEstimate.render({stage,max:CFG.max_estimate,clock,elapsed});
@@ -219,8 +252,38 @@ async function ratings(){
     };
   });
 }
-async function run(){let finishedWarmup=false;for(;;){state=await recover(()=>fetchJSON('/api/state'),'We couldn’t load the next trial.');if(state.done){location.href='/debrief';return;}info={};renderResearcher(state.researcher);renderProgress();const start=clock();audioPlayed=false;timing={rating_ms:0,break_ms:0,resumed:state.pending?1:0,viewport_width:innerWidth,viewport_height:innerHeight,device_pixel_ratio:devicePixelRatio};let initial,advice;
-if(state.pending){phase('WELCOME BACK');stage.innerHTML=`<div class="checkpoint-card"><h2>Your last answer is saved.</h2><p>Continue with the advice for that trial.</p><button class="button primary" id="resume-advice">Continue →</button></div>`;await new Promise(r=>document.getElementById('resume-advice').onclick=r);initial={estimate:state.pending.initial,active:state.pending.rt_initial,wall:0};advice={adviser_name:state.adviser_name,advice_text:state.pending.text,advice_number:state.pending.advice,voice_tone:state.voice_tone,voice_slot:state.voice_slot};}
-else{if(state.break_due||finishedWarmup){await checkpoint(finishedWarmup);finishedWarmup=false;}stimulusPromise=prepareStimulus();timing.fixation_ms=0;initial=await recover(()=>showStimulus(),'We couldn’t load the dot image.');timing.initial_active_ms=initial.active;timing.initial_wall_ms=initial.wall;advice=await getAdvice(initial);}
-const final=await showAdvice(initial,advice);timing.final_active_ms=final.active;timing.final_wall_ms=final.wall;const checkin=await ratings();timing.total_wall_ms=elapsed(start).wall;timing.total_active_ms=elapsed(start).active;timing.hidden_ms=Math.round(totalHidden()-start.hidden);timing.visibility_interruptions=interruptions-start.interruptions;await recover(()=>fetchJSON('/api/final',{trial_token:state.trial_token,estimate:final.estimate,rt_ms:final.active,trust:checkin.trust??null,feeling:checkin.feeling??null,telemetry:timing,audio_played:audioPlayed,modality:CFG.advice_modality}),'We couldn’t confirm that your response was saved.');finishedWarmup=state.practice;}}
+async function run(){
+  let finishedWarmup=false;
+  for(;;){
+    state=await recover(()=>fetchJSON('/api/state'),'We couldn’t load the next trial.');
+    if(state.done){location.href='/debrief';return;}
+    info={};renderResearcher(state.researcher);renderProgress();
+    const start=clock();audioPlayed=false;voicePreparationPromise=null;prefetchPromise=null;
+    timing={rating_ms:0,break_ms:0,resumed:state.pending?1:0,viewport_width:innerWidth,viewport_height:innerHeight,device_pixel_ratio:devicePixelRatio};
+    let initial,advice;
+    if(state.pending){
+      phase('WELCOME BACK');
+      advice={adviser_name:state.adviser_name,advice_text:state.pending.text,advice_number:state.pending.advice,voice_tone:state.voice_tone,voice_slot:state.voice_slot};
+      if(CFG.advice_modality==='voice_text')voicePreparationPromise=prepareAgentVoice(advice);
+      stage.innerHTML=`<div class="checkpoint-card"><h2>Your last answer is saved.</h2><p>Continue with the advice for that trial.</p><button class="button primary" id="resume-advice">Continue →</button></div>`;
+      await new Promise(r=>document.getElementById('resume-advice').onclick=r);
+      initial={estimate:state.pending.initial,active:state.pending.rt_initial,wall:0};
+    }else{
+      if(state.break_due||finishedWarmup){await checkpoint(finishedWarmup);finishedWarmup=false;}
+      // Begin model generation before the dot image is even presented. v2.21 agents
+      // do not receive the current first estimate, so this is experimentally safe.
+      beginAdvicePrefetch();
+      stimulusPromise=prepareStimulus();timing.fixation_ms=0;
+      initial=await recover(()=>showStimulus(),'We couldn’t load the dot image.');
+      timing.initial_active_ms=initial.active;timing.initial_wall_ms=initial.wall;
+      advice=await getAdvice(initial);
+    }
+    const final=await showAdvice(initial,advice);timing.final_active_ms=final.active;timing.final_wall_ms=final.wall;
+    const checkin=await ratings();timing.total_wall_ms=elapsed(start).wall;timing.total_active_ms=elapsed(start).active;
+    timing.hidden_ms=Math.round(totalHidden()-start.hidden);timing.visibility_interruptions=interruptions-start.interruptions;
+    await recover(()=>fetchJSON('/api/final',{trial_token:state.trial_token,estimate:final.estimate,rt_ms:final.active,trust:checkin.trust??null,feeling:checkin.feeling??null,telemetry:timing,audio_played:audioPlayed,modality:CFG.advice_modality}),'We couldn’t confirm that your response was saved.');
+    finishedWarmup=state.practice;
+  }
+}
+
 run().catch(error=>{stage.innerHTML=`<div class="recovery"><h2>Session interrupted</h2><p>${esc(error.message)}</p><button class="button primary" onclick="location.reload()">Reload this session</button></div>`;});

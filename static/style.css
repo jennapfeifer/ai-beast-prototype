@@ -67,10 +67,12 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
 /* Response roles use both shape and colour. Never place the rail above a marker. */
+.task-root{background:#101418;min-height:100%;overscroll-behavior-y:none}
+.task-root body{background:#101418}
 .task-surface{
   --paper:#101418;--ink:#edf2f7;--muted:#aab4be;--line:#35404a;--soft:#222a32;
   --previous:#bac2cc;--advice:#d6666c;--choice:#6fa8ff;--track:#edf2f7;
-  background:var(--paper);color:var(--ink);min-height:100vh;color-scheme:dark;
+  background:var(--paper);color:var(--ink);min-height:100vh;min-height:100dvh;color-scheme:dark;overscroll-behavior-y:none;
 }
 .task-surface .site-header{border:0;min-height:60px;padding:14px 5%}
 .task-surface .brand b{color:var(--previous);font-size:15px}
