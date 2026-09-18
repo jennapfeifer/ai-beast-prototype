@@ -69,7 +69,7 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 /* Response roles use both shape and colour. Never place the rail above a marker. */
 .task-surface{
   --paper:#101418;--ink:#edf2f7;--muted:#aab4be;--line:#35404a;--soft:#222a32;
-  --previous:#bac2cc;--advice:#619fff;--choice:#ff6b73;--track:#edf2f7;
+  --previous:#bac2cc;--advice:#d6666c;--choice:#6fa8ff;--track:#edf2f7;
   background:var(--paper);color:var(--ink);min-height:100vh;color-scheme:dark;
 }
 .task-surface .site-header{border:0;min-height:60px;padding:14px 5%}
@@ -101,8 +101,10 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 .estimate-instruction{text-align:center;color:var(--muted);font-size:18px;line-height:1.5;margin:-24px 0 28px}
 .estimate-scale{margin:0 38px}
 .reference-lane{position:relative;margin-bottom:20px;min-width:0}
-.reference-copy{position:relative;display:block;width:max-content;max-width:100%;margin:0;font-size:20px;line-height:1.55;overflow-wrap:anywhere;font-weight:500}
+.reference-copy{position:relative;display:block;width:max-content;max-width:100%;margin:0;font-size:20px;line-height:1.5;overflow-wrap:anywhere;font-weight:500}
 .reference-copy strong{font-size:28px;line-height:1;font-weight:650;font-variant-numeric:tabular-nums}
+.advice-lane .reference-copy{font-size:23px;font-weight:560}
+.advice-lane .reference-copy strong{font-size:32px;font-weight:720}
 .previous-lane .reference-copy{font-size:18px}
 .advice-intro{white-space:nowrap}.advice-words{font-weight:450}
 .estimate-axis{position:relative;height:190px;user-select:none;touch-action:none;cursor:ew-resize;isolation:isolate;border-radius:6px}
@@ -140,7 +142,7 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 
 /* v2.9: separate source information from the neutral scale. */
 .previous-lane{margin-bottom:0!important}
-.advice-lane{margin-top:-14px;margin-bottom:28px!important}
+.advice-lane{margin-top:-38px;margin-bottom:24px!important}
 .info-surface .page{max-width:780px;margin:32px auto}
 .info-surface h1{font-size:38px;letter-spacing:-.7px}
 .info-surface h2{font-size:26px}
@@ -169,5 +171,5 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 .final-marker .value-square{z-index:5}
 
 /* Equal-size advice label, number and sentence. */
-.advice-only p,.advice-only h1,.advice-only strong{font-size:clamp(28px,4vw,36px);line-height:1.5;font-weight:500;letter-spacing:0}
-.advice-lane .reference-copy strong{font-size:inherit}
+.advice-only p,.advice-only h1,.advice-only strong{font-size:clamp(30px,4.4vw,42px);line-height:1.45;font-weight:560;letter-spacing:0}
+.advice-lane .reference-copy strong{font-size:32px;font-weight:720}
