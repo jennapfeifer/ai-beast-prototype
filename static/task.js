@@ -14,25 +14,88 @@ function elapsed(c){const wall=performance.now()-c.time;return {wall:Math.round(
 function visibility(){const now=performance.now();if(document.hidden&&hiddenStarted===null){hiddenStarted=now;interruptions++;}else if(!document.hidden&&hiddenStarted!==null){hiddenTotal+=now-hiddenStarted;hiddenStarted=null;}document.getElementById('visibility-cover').hidden=!document.hidden;}
 document.addEventListener('visibilitychange',visibility);visibility();
 async function visibleSleep(ms){const t=clock();while(elapsed(t).active<ms)await sleep(Math.min(40,Math.max(1,ms-elapsed(t).active)));return elapsed(t);}
-function speakAgentAdvice(advice){
-  if(CFG.advice_modality!=='voice_text'||!('speechSynthesis' in window)||typeof SpeechSynthesisUtterance==='undefined')return Promise.resolve(false);
+let voiceAudioContext=null,activeVoiceNode=null,activeVoiceElement=null,activeVoiceUrl=null;
+function unlockVoiceAudio(){
+  if(CFG.advice_modality!=='voice_text')return;
+  const AudioCtx=window.AudioContext||window.webkitAudioContext;
+  if(!AudioCtx)return;
+  try{
+    if(!voiceAudioContext)voiceAudioContext=new AudioCtx();
+    if(voiceAudioContext.state==='suspended')voiceAudioContext.resume().catch(()=>{});
+  }catch(_error){}
+}
+document.addEventListener('pointerdown',unlockVoiceAudio,{passive:true});
+document.addEventListener('keydown',unlockVoiceAudio);
+function stopCurrentVoice(){
+  try{activeVoiceNode?.stop();}catch(_error){}
+  try{if(activeVoiceElement){activeVoiceElement.pause();activeVoiceElement.currentTime=0;}}catch(_error){}
+  if(activeVoiceUrl){try{URL.revokeObjectURL(activeVoiceUrl);}catch(_error){}}
+  activeVoiceNode=null;activeVoiceElement=null;activeVoiceUrl=null;
+  try{window.speechSynthesis?.cancel();}catch(_error){}
+}
+function markAudioPlayed(){audioPlayed=true;timing.audio_played=1;}
+async function playNaturalVoice(advice){
+  if(CFG.voice_backend!=='openai'||typeof fetch!=='function')return false;
+  const token=state?.trial_token;
+  if(!token)return false;
+  try{
+    const response=await fetch('/api/voice',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':CFG.csrf},body:JSON.stringify({trial_token:token})});
+    if(!response.ok)return false;
+    const bytes=await response.arrayBuffer();
+    if(state?.trial_token!==token)return false;
+    const AudioCtx=window.AudioContext||window.webkitAudioContext;
+    if(AudioCtx){
+      if(!voiceAudioContext)voiceAudioContext=new AudioCtx();
+      if(voiceAudioContext.state==='suspended')await voiceAudioContext.resume();
+      const buffer=await voiceAudioContext.decodeAudioData(bytes.slice(0));
+      if(state?.trial_token!==token)return false;
+      const source=voiceAudioContext.createBufferSource();source.buffer=buffer;source.connect(voiceAudioContext.destination);
+      activeVoiceNode=source;source.onended=()=>{if(activeVoiceNode===source)activeVoiceNode=null;};source.start(0);markAudioPlayed();return true;
+    }
+    if(typeof Audio!=='undefined'&&typeof Blob!=='undefined'&&typeof URL!=='undefined'){
+      const url=URL.createObjectURL(new Blob([bytes],{type:'audio/mpeg'})),audio=new Audio(url);
+      activeVoiceUrl=url;activeVoiceElement=audio;
+      audio.onended=()=>{if(activeVoiceElement===audio)activeVoiceElement=null;try{URL.revokeObjectURL(url);}catch(_error){}if(activeVoiceUrl===url)activeVoiceUrl=null;};
+      await audio.play();markAudioPlayed();return true;
+    }
+  }catch(_error){}
+  return false;
+}
+function loadBrowserVoices(){
+  if(!('speechSynthesis' in window))return Promise.resolve([]);
+  const now=window.speechSynthesis.getVoices();if(now.length)return Promise.resolve(now);
   return new Promise(resolve=>{
-    let settled=false,started=false;
-    const done=value=>{if(settled)return;settled=true;clearTimeout(timer);resolve(value);};
-    try{
-      window.speechSynthesis.cancel();
-      const utterance=new SpeechSynthesisUtterance(`${advice.adviser_name||'Agent'}. Estimate ${advice.advice_number}. ${advice.advice_text}`);
-      utterance.lang='en-US';utterance.rate=.96;utterance.pitch=1;
-      const voices=window.speechSynthesis.getVoices();
-      const voice=voices.find(v=>/^en(-|_)/i.test(v.lang)&&v.default)||voices.find(v=>/^en(-|_)/i.test(v.lang));
-      if(voice)utterance.voice=voice;
-      utterance.onstart=()=>{started=true;audioPlayed=true;timing.audio_played=1;};
-      utterance.onend=()=>done(started);
-      utterance.onerror=()=>done(false);
-      const timer=setTimeout(()=>done(started),12000);
-      window.speechSynthesis.speak(utterance);
-    }catch(_error){resolve(false);}
+    let finished=false;const done=()=>{if(finished)return;finished=true;clearTimeout(timer);window.speechSynthesis.removeEventListener?.('voiceschanged',done);resolve(window.speechSynthesis.getVoices());};
+    window.speechSynthesis.addEventListener?.('voiceschanged',done);const timer=setTimeout(done,500);
   });
+}
+function bestBrowserVoice(voices){
+  const preferred=['Microsoft Aria Online','Microsoft Jenny Online','Google US English','Samantha','Ava','Serena','Daniel','Karen','Moira','Tessa','Fiona','Alex'];
+  const english=voices.filter(v=>/^en(?:-|_)/i.test(v.lang));
+  const score=v=>{
+    const name=String(v.name||'');let n=v.default?15:0;
+    const idx=preferred.findIndex(x=>name.toLowerCase().includes(x.toLowerCase()));if(idx>=0)n+=100-idx*4;
+    if(/premium|enhanced|natural|neural|online/i.test(name))n+=35;
+    if(/compact/i.test(name))n-=60;
+    return n;
+  };
+  return english.sort((a,b)=>score(b)-score(a))[0]||voices[0]||null;
+}
+async function playBrowserVoice(advice){
+  if(!('speechSynthesis' in window)||typeof SpeechSynthesisUtterance==='undefined')return false;
+  try{
+    const voices=await loadBrowserVoices();
+    const utterance=new SpeechSynthesisUtterance(`${advice.adviser_name||'Agent'}. My estimate is ${advice.advice_number}. ${advice.advice_text}`);
+    utterance.lang='en-US';utterance.rate=advice.voice_tone==='persuasive'?0.99:0.94;utterance.pitch=1;utterance.volume=1;
+    const voice=bestBrowserVoice(voices);if(voice)utterance.voice=voice;
+    utterance.onstart=markAudioPlayed;window.speechSynthesis.speak(utterance);return true;
+  }catch(_error){return false;}
+}
+async function speakAgentAdvice(advice){
+  if(CFG.advice_modality!=='voice_text')return false;
+  stopCurrentVoice();
+  if(await playNaturalVoice(advice))return true;
+  return playBrowserVoice(advice);
 }
 function phase(label){document.getElementById('phase-name').textContent=label;}
 function renderResearcher(extra){
@@ -88,14 +151,14 @@ function initialEstimator() {
 }
 async function showAdvice(initial,advice) {
   timing.advice_preview_ms=0;timing.advice_preview_wall_ms=0;
-  const voicePromise=speakAgentAdvice(advice);
+  // Voice is deliberately non-blocking. A slow or broken speech engine must never trap the participant on the advice screen.
+  speakAgentAdvice(advice).catch(()=>false);
   if(CFG.advice_preview_ms>0){
     phase('AGENT ADVICE');document.body.classList.add('advice-focus');
     stage.innerHTML=`<section class="advice-only ai-colour"><p>${esc(advice.adviser_name||'Agent')} · AGENT: <strong>${esc(advice.advice_number)}</strong></p><h1>“${esc(advice.advice_text)}”</h1></section>`;
     try{
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-      const exposurePromise=visibleSleep(CFG.advice_preview_ms);
-      const [exposure]=await Promise.all([exposurePromise,voicePromise]);
+      const exposure=await visibleSleep(CFG.advice_preview_ms);
       timing.advice_preview_ms=exposure.active;timing.advice_preview_wall_ms=exposure.wall;
     }finally{document.body.classList.remove('advice-focus');}
   }
@@ -123,7 +186,7 @@ async function ratings(){
   });
 }
 async function run(){let finishedWarmup=false;for(;;){state=await recover(()=>fetchJSON('/api/state'),'We couldn’t load the next trial.');if(state.done){location.href='/debrief';return;}info={};renderResearcher(state.researcher);renderProgress();const start=clock();audioPlayed=false;timing={rating_ms:0,break_ms:0,resumed:state.pending?1:0,viewport_width:innerWidth,viewport_height:innerHeight,device_pixel_ratio:devicePixelRatio};let initial,advice;
-if(state.pending){phase('WELCOME BACK');stage.innerHTML=`<div class="checkpoint-card"><h2>Your last answer is saved.</h2><p>Continue with the advice for that trial.</p><button class="button primary" id="resume-advice">Continue →</button></div>`;await new Promise(r=>document.getElementById('resume-advice').onclick=r);initial={estimate:state.pending.initial,active:state.pending.rt_initial,wall:0};advice={adviser_name:state.adviser_name,advice_text:state.pending.text,advice_number:state.pending.advice};}
+if(state.pending){phase('WELCOME BACK');stage.innerHTML=`<div class="checkpoint-card"><h2>Your last answer is saved.</h2><p>Continue with the advice for that trial.</p><button class="button primary" id="resume-advice">Continue →</button></div>`;await new Promise(r=>document.getElementById('resume-advice').onclick=r);initial={estimate:state.pending.initial,active:state.pending.rt_initial,wall:0};advice={adviser_name:state.adviser_name,advice_text:state.pending.text,advice_number:state.pending.advice,voice_tone:state.voice_tone};}
 else{if(state.break_due||finishedWarmup){await checkpoint(finishedWarmup);finishedWarmup=false;}stimulusPromise=prepareStimulus();timing.fixation_ms=0;initial=await recover(()=>showStimulus(),'We couldn’t load the dot image.');timing.initial_active_ms=initial.active;timing.initial_wall_ms=initial.wall;advice=await getAdvice(initial);}
 const final=await showAdvice(initial,advice);timing.final_active_ms=final.active;timing.final_wall_ms=final.wall;const checkin=await ratings();timing.total_wall_ms=elapsed(start).wall;timing.total_active_ms=elapsed(start).active;timing.hidden_ms=Math.round(totalHidden()-start.hidden);timing.visibility_interruptions=interruptions-start.interruptions;await recover(()=>fetchJSON('/api/final',{trial_token:state.trial_token,estimate:final.estimate,rt_ms:final.active,trust:checkin.trust??null,feeling:checkin.feeling??null,telemetry:timing,audio_played:audioPlayed,modality:CFG.advice_modality}),'We couldn’t confirm that your response was saved.');finishedWarmup=state.practice;}}
 run().catch(error=>{stage.innerHTML=`<div class="recovery"><h2>Session interrupted</h2><p>${esc(error.message)}</p><button class="button primary" onclick="location.reload()">Reload this session</button></div>`;});

@@ -108,13 +108,18 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 .previous-lane .reference-copy{font-size:18px}
 .advice-intro{white-space:nowrap}.advice-words{font-weight:450}
 .estimate-axis{position:relative;height:190px;user-select:none;touch-action:none;cursor:ew-resize;isolation:isolate;border-radius:6px}
+.decision-card .estimate-axis{height:305px}
 .estimate-axis:before{content:"";position:absolute;inset:0 -34px;z-index:0}
 .estimate-axis:focus-visible,.estimate-axis:has(.estimate-range:focus-visible){outline:2px solid #bac2cc;outline-offset:8px}
 .estimate-rail{position:absolute;left:0;right:0;top:52px;height:4px;border-radius:2px;background:var(--track);z-index:1;pointer-events:none}
 .estimate-range{position:absolute;inset:0;opacity:0;margin:0;width:100%;height:100%;pointer-events:none}
 .previous-marker{position:absolute;top:8px;transform:translateX(-50%);width:18px;height:18px;border-radius:2px;background:var(--previous);z-index:3;pointer-events:none;box-shadow:0 0 0 3px var(--paper)}
 .previous-marker:after{content:"";position:absolute;left:8px;top:18px;width:2px;height:28px;background:var(--previous);z-index:-1}
-.advice-marker{position:absolute;top:56px;transform:translateX(-50%);width:24px;height:22px;background:var(--advice);clip-path:polygon(50% 0,100% 100%,0 100%);z-index:4;pointer-events:none}
+.advice-marker{position:absolute;top:56px;transform:translateX(-50%);width:28px;height:25px;background:var(--advice);clip-path:polygon(50% 0,100% 100%,0 100%);z-index:5;pointer-events:none}
+.advice-bubble{position:absolute;top:88px;transform:translateX(-50%);width:min(430px,calc(100% - 8px));padding:11px 14px 12px;border:1px solid rgba(214,102,108,.55);border-radius:8px;background:rgba(214,102,108,.10);text-align:left;z-index:4;pointer-events:none;box-shadow:0 6px 22px rgba(0,0,0,.16)}
+.advice-bubble-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:5px;font-size:16px;line-height:1.25;font-weight:650;letter-spacing:.02em}
+.advice-bubble-head strong{font-size:26px;line-height:1;font-weight:760;font-variant-numeric:tabular-nums}
+.advice-bubble .advice-words{font-size:20px;line-height:1.38;font-weight:520;color:var(--advice);overflow-wrap:anywhere}
 .value-marker{position:absolute;top:54px;width:0;height:98px;pointer-events:none}
 .value-stem{position:absolute;top:0;left:-1px;height:38px;width:2px;background:currentColor;z-index:2}
 .value-square{position:absolute;top:34px;left:0;transform:translateX(-50%);display:grid;place-items:center;width:64px;height:64px;border-radius:4px;background:currentColor;box-shadow:0 0 0 3px var(--paper);font-size:32px;font-weight:700;font-variant-numeric:tabular-nums;z-index:5}
@@ -138,11 +143,18 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
   .reference-lane{margin-bottom:18px}
   .value-square{width:60px;height:60px;font-size:30px}
   .task-surface .scale-anchors{font-size:13px}
+  .decision-card .estimate-axis{height:330px}
+  .advice-bubble{top:88px;width:calc(100% - 4px);padding:10px 12px}
+  .advice-bubble .advice-words{font-size:18px;line-height:1.38}
+  .advice-bubble-head{font-size:15px}
+  .advice-bubble-head strong{font-size:24px}
+  .final-marker .value-stem{height:198px}
+  .final-marker .value-square{top:194px}
 }
 
 /* v2.9: separate source information from the neutral scale. */
 .previous-lane{margin-bottom:0!important}
-.advice-lane{margin-top:-38px;margin-bottom:24px!important}
+.advice-lane{margin-top:0;margin-bottom:0!important}
 .info-surface .page{max-width:780px;margin:32px auto}
 .info-surface h1{font-size:38px;letter-spacing:-.7px}
 .info-surface h2{font-size:26px}
@@ -167,8 +179,8 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 
 /* Keep the selected estimate and its connector above the advice pointer. */
 .final-marker{z-index:6}
-.final-marker .value-stem{z-index:6}
-.final-marker .value-square{z-index:5}
+.final-marker .value-stem{z-index:2;height:176px}
+.final-marker .value-square{z-index:6;top:172px}
 
 /* Equal-size advice label, number and sentence. */
 .advice-only p,.advice-only h1,.advice-only strong{font-size:clamp(30px,4.4vw,42px);line-height:1.45;font-weight:560;letter-spacing:0}
