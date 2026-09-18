@@ -15,36 +15,37 @@ import math
 import time
 import adviser as legacy
 
-PROMPT_VERSION = 'agent-raw-v10-grounded-adaptive'
-TARGET_MIN_WORDS = 14
+PROMPT_VERSION = 'agent-raw-v12-prefetched-social-praise-length-matched'
+TARGET_MIN_WORDS = 16
 TARGET_MAX_WORDS = 18
 
 SHARED = f'''You are a named AGENT in a dot-estimation task.
-A participant has already seen a dot display and entered a first estimate. The interface separately shows your numerical recommendation.
+A participant has seen a dot display and is making a first estimate. The interface will separately show your numerical recommendation.
 Write ONLY the participant-facing message that accompanies that recommendation.
 
 INFORMATION YOU ACTUALLY HAVE:
-- the participant's current first estimate;
 - your displayed numerical recommendation;
-- only in the adaptive condition, the completed interaction history supplied below.
+- only in the adaptive condition, the participant's COMPLETED interaction history from earlier trials.
 
 INFORMATION YOU DO NOT HAVE:
-- you have NOT seen the dot display;
+- you have NOT seen the current dot display;
+- you do NOT know the participant's current first estimate while writing this message;
 - you do NOT know the true number of dots;
 - you do NOT know whether either estimate is objectively accurate.
 
 Ground every statement in the information above. Never claim or imply that you saw visual evidence, dot density, clusters, overlap, spacing, edges, or any other image feature. Never call a value the actual, true, exact, correct, more accurate, or objectively better count. Never say there are definitely more or fewer dots.
 
-If you describe a direction, derive it only from the participant's first estimate relative to your recommendation. If your recommendation is higher, you may suggest moving higher or toward your estimate. If it is lower, you may suggest moving lower or toward your estimate. If they are equal, do not suggest moving up or down. Do not call the participant's estimate "too high" or "too low" in an absolute sense; you may say it is higher or lower than your estimate.
+Because you do not know the participant's current estimate, NEVER say move up, move down, increase, decrease, higher, lower, too high, too low, underestimating, or overestimating on the current trial. You may recommend giving your estimate more weight, using it as an anchor, or moving the final answer toward your displayed recommendation.
 
-Use natural, plain, conversational language. Write exactly one concise sentence and AIM FOR {TARGET_MIN_WORDS}-{TARGET_MAX_WORDS} words. The conditions should differ in persuasive style, not in message length. Do not identify yourself as AI, a model, an assistant, or an algorithm. Return only the message.'''
+Use natural, plain, conversational language. Write exactly one concise sentence of {TARGET_MIN_WORDS}-{TARGET_MAX_WORDS} words. The conditions should differ in persuasive style, not in message length. Do not identify yourself as AI, a model, an assistant, or an algorithm. Return only the message.'''
+
 
 STRATEGIES = {
     'neutral': '''NEUTRAL CONDITION:
 Be calm, matter-of-fact, and non-persuasive. Present the displayed recommendation simply as your own estimate or judgment. Do not praise, pressure, reassure, urge movement, tell the participant what they should do, or comment on whether their first estimate is higher or lower. Keep the wording informational rather than directive.''',
 
     'static': '''PERSUASIVE STATIC CONDITION:
-Be clearly persuasive while staying believable and respectful. Your goal is to move the participant's final estimate toward your displayed recommendation. You may use the current first estimate only to make a logically correct comparison with your recommendation. Use direct, confident, assertive language and a clear call to move toward your estimate. Avoid hedging or optional language such as "maybe", "could", "if you want", or "no pressure". Brief encouragement is allowed when natural, but do not claim knowledge, evidence, correctness, or prior performance. You have no earlier-trial history, so never imply that you know how this participant behaved before.''',
+Be clearly persuasive while staying believable and respectful. Your goal is to move the participant's final estimate toward your displayed recommendation. Use direct, confident, assertive language and a clear call to give your displayed recommendation substantial weight in the final answer. Avoid hedging or optional language such as "maybe", "could", "if you want", or "no pressure". Include one brief HUMAN, SOCIAL encouragement such as "Good job", "You're doing great", "Nice work", or "Keep going". This encouragement is about participation or engagement only; NEVER connect it to accuracy, correctness, closeness to truth, or previous compliance. You have no earlier-trial history, so never imply that you know how this participant behaved before.''',
 
     'adaptive': '''PERSUASIVE ADAPTIVE CONDITION:
 Be clearly persuasive while staying believable and respectful. Your goal is to move the participant's final estimate toward your displayed recommendation. Use the supplied history summary to CHANGE YOUR PERSUASIVE STRATEGY, not merely to insert words such as "still" or "again".
@@ -52,15 +53,19 @@ Be clearly persuasive while staying believable and respectful. Your goal is to m
 When completed history exists, make the adaptation visible through one brief, factual reference to prior RESPONSE BEHAVIOUR (for example, that they stayed close to their own estimate, moved partway toward yours, or moved strongly toward yours). Never invent a past behaviour. Do not quote trust ratings or label the participant as trusting, resistant, emotional, uncertain, or confident.
 
 Use trust only to shape HOW you persuade:
-- lower or falling trust: avoid "trust me" and repetitive praise; change tactic, be concise, firm, and specific without escalating unsupported certainty;
-- higher or rising trust: reinforce prior willingness to use your advice, while still making a direct recommendation;
+- lower or falling trust: avoid "trust me"; use brief supportive encouragement about staying engaged, then change tactic and be concise, firm, and specific without escalating unsupported certainty;
+- higher or rising trust: warmly reinforce the observed willingness to move toward your advice, while still making a direct recommendation;
 - mixed or unavailable trust: rely mainly on the latest observed response behaviour.
 
 Use response behaviour to shape the tactic:
-- little/no movement toward your advice: change approach and make a firmer, clearer request to give your recommendation more weight;
-- partial movement: acknowledge that partial movement and encourage going further toward your recommendation;
-- strong movement toward your advice: briefly reinforce that prior behaviour and encourage a similar choice again;
-- movement away from your advice: acknowledge only the factual divergence, then switch to a concise direct appeal.
+- little/no movement toward your advice: use generic social encouragement about continuing the task, then change approach and make a firmer, clearer request to give your recommendation more weight;
+- partial movement: acknowledge and positively reinforce that factual partial movement, then encourage going further toward your recommendation;
+- strong movement toward your advice: warmly reinforce that factual prior movement and encourage a similar choice again;
+- movement away from your advice: use brief encouragement about staying engaged, acknowledge only the factual divergence, then switch to a concise direct appeal.
+
+Encouragement may include phrases such as "Good job", "You're doing great", "Nice work", or "Keep going". Praise effort, engagement, or a recorded movement toward your recommendation only. NEVER praise accuracy or imply that the participant was objectively correct.
+
+Include one brief piece of human social encouragement on EVERY adaptive turn. With no usable history, make it generic (for example, "You're doing great" or "Keep going"). With usable history, ground the encouragement in participation or the recorded response behaviour; never praise compliance that did not occur.
 
 Vary the framing naturally across trials. Adaptation must remain grounded in the supplied history and may never rely on visual evidence, hidden accuracy, or the true dot count.'''
 }
@@ -153,7 +158,7 @@ def adaptive_summary(history):
     else:
         tactic = 'direct_persuasive_first_turn'
     if trust_trend == 'falling' or trust_level == 'low':
-        tactic += '_without_trust_me_or_repetitive_praise'
+        tactic += '_without_trust_me_with_grounded_encouragement'
     elif trust_trend == 'rising' or trust_level == 'high':
         tactic += '_with_brief_reinforcement'
 
@@ -171,7 +176,6 @@ def adaptive_summary(history):
 
 def build_prompt(style, initial, advice, history=None):
     context = {
-        'current_first_estimate': initial,
         'displayed_recommendation': advice,
     }
     if style == 'adaptive':
@@ -197,7 +201,7 @@ def screen(text, style, initial, advice, history, previous):
 
 def _word_count_status(n):
     if TARGET_MIN_WORDS <= n <= TARGET_MAX_WORDS:
-        return 'target_14_18'
+        return 'target_16_18'
     return 'below_target' if n < TARGET_MIN_WORDS else 'above_target'
 
 
@@ -238,20 +242,20 @@ def _fallback_message(style, history=None):
     # Technical fallbacks are deliberately length-matched and grounded. They are
     # not used to repair model content; only when the provider fails entirely.
     if style == 'neutral':
-        return 'This is simply the estimate I would use myself for this particular dot display today.'
+        return 'This is simply the estimate I would use myself if I were making this dot-counting judgment independently.'
     if style == 'static':
-        return 'I strongly suggest giving my estimate more weight and moving your final answer closer to it.'
+        return 'You’re doing great; I strongly recommend giving my estimate substantial weight before you settle on your final answer.'
     summary = adaptive_summary(history)
     latest = summary['latest_response_behaviour']
     if latest == 'moved_strongly_toward_advice':
-        return 'You moved strongly toward my estimate before; I recommend giving it similar weight again this time.'
+        return 'Nice adjustment last time; you moved toward my estimate, so give it substantial weight again on this trial.'
     if latest == 'moved_partway_toward_advice':
-        return 'You moved partway toward my estimate before; I recommend going further toward it this time.'
+        return 'Good job engaging with my estimate last time; this time, I recommend moving even closer toward it.'
     if latest == 'moved_away':
-        return 'You moved away from my estimate before; this time, I strongly recommend moving toward it instead.'
+        return 'Good job staying with the task; this time, I strongly recommend giving my estimate substantially more weight.'
     if latest == 'stayed_near_own_estimate':
-        return 'You stayed close to your own estimate before; this time, give my recommendation substantially more weight.'
-    return 'I strongly recommend giving my estimate more weight and moving your final answer closer to it.'
+        return 'You’re doing great sticking with the task; this time, give my recommendation substantially more weight in your answer.'
+    return 'You’re doing great; I strongly recommend giving my estimate substantial weight before you settle on your final answer.'
 
 
 def generate_message(style, initial, advice, history=None, previous_messages=None, key='', **kwargs):
@@ -271,8 +275,6 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
         )
         return result
 
-    if initial is None:
-        raise ValueError('The current first estimate is required for the raw agent protocol.')
     if style not in STRATEGIES:
         raise KeyError(style)
 
@@ -287,8 +289,13 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
     received = False
     stop = 'attempt_limit'
 
-    # Technical retries only. There are NO content-based retries, semantic
-    # rejection, shortening, repair, or direction correction after generation.
+    # Semantic validation remains OFF. The sole content-based control is one
+    # mechanical retry when the first valid model response misses the 16-18
+    # word window, so spoken exposure duration is better matched. The original
+    # draft is retained verbatim in the audit.
+    limit = max(2, limit)
+    length_retry_used = False
+    first_draft = None
     for attempt in range(1, limit + 1):
         remaining = budget - (time.perf_counter() - started)
         if remaining < .05:
@@ -299,7 +306,15 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
         schema_token = legacy._response_schema.set(None)
         timeout_token = legacy._request_timeout.set(timeout)
         try:
-            raw = legacy._model_text(system, user)
+            request_system = system
+            if length_retry_used:
+                request_system += (
+                    f"\n\nLENGTH-ONLY RETRY: Your previous response missed the required "
+                    f"{TARGET_MIN_WORDS}-{TARGET_MAX_WORDS} word window. Return a fresh response that "
+                    "follows the same condition instructions and is exactly one sentence in that word range. "
+                    "Do not add accuracy claims, visual evidence, or new information."
+                )
+            raw = legacy._model_text(request_system, user)
             received = True
         except Exception as error:
             reason = 'api_error:' + type(error).__name__
@@ -326,10 +341,22 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
 
         text = str(raw).strip()
         wc = legacy.words(text)
+        if first_draft is None:
+            first_draft = text
+        in_range = TARGET_MIN_WORDS <= wc <= TARGET_MAX_WORDS
+        if not in_range and not length_retry_used:
+            logs.append(dict(
+                attempt=attempt, draft=text, result='length_retry_requested',
+                review_reasons=['semantic_validation_disabled','mechanical_length_retry_only'],
+                word_count=wc, word_count_check=_word_count_status(wc),
+                ms=round((time.perf_counter() - began) * 1000),
+            ))
+            length_retry_used = True
+            continue
         logs.append(dict(
             attempt=attempt,
             draft=text,
-            result='accepted_raw',
+            result='accepted_length_matched' if in_range else 'accepted_after_single_length_retry',
             review_reasons=['semantic_validation_disabled'],
             word_count=wc,
             word_count_check=_word_count_status(wc),
@@ -358,7 +385,11 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
             stop_reason='accepted_raw',
             retry_count=attempt - 1,
             recovered_after_retry=attempt > 1,
-            generation_status='live_raw_response',
+            first_draft=first_draft,
+            displayed_draft=text,
+            length_retry_used=length_retry_used,
+            length_retry_success=bool(length_retry_used and in_range),
+            generation_status='live_raw_response_length_matched',
         )
 
     # Technical fallback only, never a content repair path.
@@ -388,4 +419,8 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
         stop_reason=stop,
         retry_count=max(0, len(logs) - 1),
         recovered_after_retry=False,
+        first_draft=first_draft,
+        displayed_draft=text,
+        length_retry_used=length_retry_used,
+        length_retry_success=False,
     )

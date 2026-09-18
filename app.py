@@ -9,7 +9,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.19-grounded-length-matched-adaptive'
+APP_VERSION = 'fieldwork-2.21-social-praise-length-matched'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -224,7 +224,7 @@ def start():
     advice_modality=(request.form.get('advice_modality',ADVICE_MODALITY) if researcher else ADVICE_MODALITY).strip().lower()
     if advice_modality not in {'text','voice_text'}:return 'Invalid advice modality.',400
     conf=dict(conditions=conditions,trials_per_block=n,skip_practice=researcher and request.form.get('skip_practice')=='1',
-              adviser_protocol='raw_agent_v10',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),adviser_voices=assign_adviser_voices(),
+              adviser_protocol='raw_agent_v12',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),adviser_voices=assign_adviser_voices(),
               test_index=integer(request.form.get('test_index','0'),0,7) if researcher else 0,
               adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
               model_profile_id=profile_id,model_profile=profile,
@@ -253,7 +253,7 @@ def task():
         researcher_mode=bool(session.get('researcher') and data['config'].get('researcher')),max_estimate=design.MAX_ESTIMATE,
         pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline',request_timeout_ms=90000,
         advice_preview_ms=data['config'].get('advice_preview_ms',0),advice_modality=data['config'].get('advice_modality','text'),
-        voice_backend='openai' if os.getenv('OPENAI_API_KEY') else 'browser',prefetch_enabled=data['config'].get('adviser_protocol') not in {'flexible_v8','raw_agent_v9','raw_agent_v10'},rating_items=data['config'].get('rating_items','trust_and_feeling')))
+        voice_backend='openai' if os.getenv('OPENAI_API_KEY') else 'browser',prefetch_enabled=True,rating_items=data['config'].get('rating_items','trust_and_feeling')))
 
 
 @app.get('/api/state')
@@ -303,22 +303,39 @@ def advice_payload(pending,data):
 
 
 def prepared_advice(con,data,trial,initial):
+    """Resolve one trial's advice.
+
+    v2.21 deliberately removes the current first estimate from generated-agent
+    context so C3-C8 can be generated while the participant is still viewing/
+    estimating. C2's numerical recommendation still depends on the submitted
+    estimate, but its fixed sentence can be prefetched because the sentence
+    itself does not depend on that value.
+    """
     practice=trial['condition_id']=='PRACTICE'
     style=condition_agent_style(trial['condition_id'], trial.get('adviser_style'))
     advice=design.clamp_int(initial*1.05) if practice else design.advice_number(trial['condition_id'],trial['true_count'],initial or 100)
-    flexible=data['config'].get('adviser_protocol') in {'flexible_v8','raw_agent_v9','raw_agent_v10'}
-    cached=None if flexible else data.get('prefetched')
-    if style!='fixed' and cached and cached.get('token')==data.get('token') and cached['advice']==advice:
-        return advice,cached['message'],dict(cached['diagnostic'],prefetched=True)
+    protocol=data['config'].get('adviser_protocol')
+    no_current_estimate=protocol in {'raw_agent_v11','raw_agent_v12'}
+    cached=data.get('prefetched')
+    if cached and cached.get('token')==data.get('token'):
+        # Fixed messages are independent of the current estimate even when C2's
+        # recommendation number is not. Generated C3-C8 recommendations are
+        # fixed by the trial schedule, so the whole response can be reused.
+        if style=='fixed' or cached.get('advice')==advice:
+            return advice,cached['message'],dict(cached['diagnostic'],prefetched=True,advice=advice,initial_context_available=False)
     rows=[] if practice else store.block_history(data['_pid'],trial['condition_id'],con)
     history=rows if style=='adaptive' else []
     generator=adviser.generate_offline_message if data['config']['adviser_mode']=='offline' else adviser.generate_message
-    if flexible and data['config']['adviser_mode']=='live':generator=adviser_flexible.generate_message
+    if protocol in {'flexible_v8','raw_agent_v9','raw_agent_v10','raw_agent_v11','raw_agent_v12'} and data['config']['adviser_mode']=='live':
+        generator=adviser_flexible.generate_message
+    # For v12 generated conditions, the model never receives the current first
+    # estimate. Fixed/practice controls remain scripted and may still use the
+    # submitted estimate for the numerical schedule outside the message text.
+    model_initial=None if (no_current_estimate and style!='fixed') else initial
     t=time.perf_counter()
-    # Protocol is pinned at session creation; legacy v7 withholds the current estimate.
     profile=data['config'].get('model_profile') or adviser.model_profiles()['server']
     with adviser.use_model_profile(profile):
-        msg=generator(style=style,initial=initial if flexible or style=='fixed' else None,advice=advice,history=history,
+        msg=generator(style=style,initial=model_initial,advice=advice,history=history,
             previous_messages=[r['advice_text'] for r in rows if r.get('advice_text')],
             key=f"{data['participant_index']}|{trial['condition_id']}|{trial['trial_position']}")
     diagnostic=dict(history_rows=len(history),expected_history_rows=trial['trial_position']-1 if style=='adaptive' else 0,
@@ -328,7 +345,7 @@ def prepared_advice(con,data,trial,initial):
         history_check=msg.get('history_check'),prompt_version=msg.get('prompt_version'),
         prompt_sha256=msg.get('prompt_sha256'),
         attempt_log=msg.get('attempt_log',[]),fallback=msg['source'].startswith('fallback:'),
-        adviser_protocol=data['config'].get('adviser_protocol','legacy_v7'),initial_context_available=flexible or style=='fixed',prefetched=False,provider=profile['provider'],
+        adviser_protocol=protocol or 'legacy_v7',initial_context_available=(model_initial is not None),prefetched=False,provider=profile['provider'],
         model=profile['model'],reasoning=profile['reasoning'],request_timeout_s=profile['timeout'],advice=advice)
     diagnostic.update(model_response_received=msg.get('model_response_received',False),
         trust_context_in_prompt=msg.get('trust_context_in_prompt',False),
@@ -341,7 +358,8 @@ def prepared_advice(con,data,trial,initial):
                   'generation_status','rating_influence_status','persuasion_check',
                   'max_attempts','total_budget_s','retry_policy_version','retry_count',
                   'recovered_after_retry','stop_reason','budget_overrun',
-                  'target_word_range','word_tolerance','word_count_check','direction_check','adaptive_summary'):
+                  'target_word_range','word_tolerance','word_count_check','direction_check','adaptive_summary',
+                  'first_draft','displayed_draft','length_retry_used','length_retry_success'):
         diagnostic[field]=msg.get(field)
     return advice,msg,diagnostic
 
@@ -350,21 +368,25 @@ def _voice_instructions(condition_id: str) -> str:
     persuasive = condition_id in {'C4','C5','C7','C8'}
     if persuasive:
         return (
-            'Use the SAME speaker identity as the neutral condition, but make the delivery unmistakably more persuasive. '
-            'Sound emotionally engaged, firm, confident, and assertive, as if you genuinely want the listener to follow the advice. '
-            'Use stronger stress on decisive and action-oriented words, a firmer cadence, more vocal energy, and a small sense of urgency. '
-            'Be forceful enough that the contrast from neutral is obvious, but remain natural and human: do not shout, sound angry, theatrical, or like an advertisement.'
+            'Keep the same speaker identity, but make this delivery unmistakably persuasive and human. '
+            'Speak with strong conviction, emotional engagement, warmth, and controlled urgency, as if you genuinely want a person in front of you to follow the recommendation. '
+            'Use dynamic intonation, firmer volume, crisp articulation, and strong stress on decisive or action-oriented words. '
+            'Let the sentence build toward the recommendation and finish with a decisive downward cadence. '
+            'Sound confident and forceful rather than polite or tentative. Do not merely read the sentence; actively persuade. '
+            'Remain natural: do not shout, sound angry, theatrical, synthetic, or like an advertisement.'
         )
     return (
-        'Use the SAME speaker identity as the persuasive condition. Deliver this neutrally and with low emotional intensity. '
-        'Sound calm, even, restrained, and matter-of-fact. Use an even cadence, little emphasis, and no sense of urgency or attempt to convince. '
-        'Keep it natural and human rather than robotic.'
+        'Keep the same speaker identity used in the persuasive condition, but make this delivery clearly neutral. '
+        'Use low emotional intensity, restrained energy, an even volume, almost no rhetorical emphasis, and a steady slower pace. '
+        'Sound matter-of-fact and observational, as if simply reporting your own estimate with no attempt to influence the listener. '
+        'Keep the voice natural and conversational, not robotic, but deliberately avoid urgency, warmth-as-persuasion, or assertive stress.'
     )
 
 
 def _voice_speed(condition_id: str) -> float:
-    # Keep rate differences modest; most of the contrast should come from prosody/instructions.
-    return 1.04 if condition_id in {'C4','C5','C7','C8'} else 0.96
+    # The pilot intentionally makes the delivery contrast large enough to hear.
+    # Speaker identity remains constant, so this is a prosody/tone manipulation.
+    return 1.12 if condition_id in {'C4','C5','C7','C8'} else 0.90
 
 
 @app.post('/api/voice')
@@ -374,17 +396,23 @@ def api_voice():
     if not api_key:return jsonify(error='Natural voice is not configured on this server.'),503
     with store.session_transaction(pid) as (_con,data):
         trial,_=current(data)
-        if trial is None or body.get('trial_token')!=data.get('token') or not data.get('pending'):
+        if trial is None or body.get('trial_token')!=data.get('token'):
             return jsonify(error='Voice is not available for this trial.'),409
-        pending=data['pending']
-        # Speak exactly the generated quotation/message shown to the participant.
-        # Agent name, recommendation number, and interface labels remain visual only.
-        spoken=pending['text']
+        source=data.get('pending')
+        prefetched=data.get('prefetched')
+        if source is None and prefetched and prefetched.get('token')==data.get('token'):
+            source={'text':prefetched['message']['text']}
+        if source is None:
+            return jsonify(error='Voice is not available for this trial.'),409
+        # Speak exactly the quotation/message shown to the participant. Agent
+        # name, recommendation number, and interface labels remain visual only.
+        spoken=source['text']
         voice=adviser_voice(data,trial['condition_id'])
         payload=json.dumps(dict(model=TTS_MODEL,voice=voice,input=spoken,
             instructions=_voice_instructions(trial['condition_id']),response_format=TTS_RESPONSE_FORMAT,speed=_voice_speed(trial['condition_id']))).encode('utf-8')
+    accept='audio/wav' if TTS_RESPONSE_FORMAT=='wav' else 'audio/mpeg'
     req=urllib.request.Request('https://api.openai.com/v1/audio/speech',data=payload,method='POST',headers={
-        'Authorization':f'Bearer {api_key}','Content-Type':'application/json','Accept':'audio/mpeg'})
+        'Authorization':f'Bearer {api_key}','Content-Type':'application/json','Accept':accept})
     try:
         with urllib.request.urlopen(req,timeout=TTS_TIMEOUT_S) as response:
             audio=response.read()
@@ -397,19 +425,42 @@ def api_voice():
 
 @app.post('/api/prefetch')
 def api_prefetch():
+    """Prepare agent text before the participant submits the first estimate.
+
+    For v2.21, generated C3-C8 agents do not receive the current estimate, so
+    text generation can overlap the 5-second stimulus and the participant's
+    response time. Fixed C1/C2 sentences are also prefetched; C2's numerical
+    recommendation is resolved only after submission.
+    """
     pid=require_session();body=request.get_json(silent=True) or {}
     with store.session_transaction(pid) as (con,data):
         trial,_=current(data)
         if trial is None or not data.get('token') or body.get('trial_token')!=data.get('token'):
             return jsonify(error='This trial is no longer current.'),409
-        if data['config'].get('adviser_protocol') in {'flexible_v8','raw_agent_v9','raw_agent_v10'}:
-            return jsonify(ok=True,prefetched=False,reason='requires_current_estimate')
-        if data.get('pending') or trial['condition_id']=='PRACTICE' or trial['adviser_style']=='fixed':
+        if data.get('pending') or trial['condition_id']=='PRACTICE':
             return jsonify(ok=True,prefetched=False)
+        existing=data.get('prefetched')
+        if existing and existing.get('token')==data.get('token'):
+            msg=existing['message']; diagnostic=existing['diagnostic']
+            result=dict(adviser_name=adviser_name(data,trial['condition_id']),advice_text=msg['text'],
+                        advice_number=existing.get('advice'),latency_ms=diagnostic.get('generation_ms',0),
+                        voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral',
+                        voice_slot=adviser_voice_slot(data,trial['condition_id']))
+            if session.get('researcher') and data['config'].get('researcher'):
+                result['researcher']={**diagnostic,'agent_voice':adviser_voice(data,trial['condition_id']),'voice_tone':result['voice_tone']}
+            return jsonify(ok=True,prefetched=True,advice=result)
         data['_pid']=pid
+        # initial=None is intentional. C2 gets a placeholder numerical value for
+        # template resolution, but its text is independent of that value.
         advice,msg,diagnostic=prepared_advice(con,data,trial,None)
         data['prefetched']=dict(token=data['token'],advice=advice,message=msg,diagnostic=diagnostic)
-        return jsonify(ok=True,prefetched=True)
+        result=dict(adviser_name=adviser_name(data,trial['condition_id']),advice_text=msg['text'],
+                    advice_number=(None if trial['condition_id']=='C2' else advice),latency_ms=diagnostic.get('generation_ms',0),
+                    voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral',
+                    voice_slot=adviser_voice_slot(data,trial['condition_id']))
+        if session.get('researcher') and data['config'].get('researcher'):
+            result['researcher']={**diagnostic,'agent_voice':adviser_voice(data,trial['condition_id']),'voice_tone':result['voice_tone']}
+        return jsonify(ok=True,prefetched=True,advice=result)
 
 
 @app.post('/api/initial')

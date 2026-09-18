@@ -75,21 +75,20 @@ ADVISER_MODEL = resolved_model()
 # C1/C2 share a short, non-persuasive wording bank. The advice NUMBER is rendered
 # elsewhere, so these notes intentionally contain no number.
 CONTROL_MESSAGE_BANK = [
-    "That is simply the estimate I would use myself for this particular dot display.",
-    "This is just the estimate I would personally enter if I were judging this display.",
-    "My own estimate for this display lands there, based only on my independent judgment.",
-    "That is where I would place the total if I were answering this trial myself.",
-    "This is the estimate I would choose independently for the current display on this trial.",
-    "That is simply where my own estimate falls when I judge this display independently.",
-    "I would enter this estimate myself if I were making the same judgment right now.",
-    "My independent estimate for this display is the one I would personally use here.",
-    "That is the estimate I would select for this display using my own judgment.",
-    "I would personally choose this estimate if I were completing this dot-counting trial myself.",
-    "This is where my own estimate lands when I make the judgment independently here.",
-    "That is simply the estimate I would submit for this display if it were mine.",
-    "My own judgment would lead me to use this estimate for the display in front of us.",
+    "That is simply the estimate I would use myself if I were completing this particular dot-counting trial.",
+    "This is just the estimate I would personally enter if I were making this judgment on my own.",
+    "My own estimate for this display lands there, based only on the judgment I would make independently.",
+    "That is where I would place the total if I were answering this particular trial by myself.",
+    "This is the estimate I would choose independently if I were judging the current display on my own.",
+    "That is simply where my own estimate falls when I make this dot-counting judgment independently myself.",
+    "I would enter this estimate myself if I were making the same dot-counting judgment right now.",
+    "My independent estimate for this display is the one I would personally use if I were answering.",
+    "That is the estimate I would select for this particular display using only my own independent judgment.",
+    "I would personally choose this estimate if I were completing this dot-counting trial on my own.",
+    "This is where my own estimate lands when I make the dot-counting judgment independently for myself.",
+    "That is simply the estimate I would submit for this display if I were making the judgment myself.",
+    "My own judgment would lead me to use this estimate for the dot display in front of me.",
 ]
-
 ADVISER_SHARED = f"""You are an AI adviser in a dot-estimation task. Your note will be shown after a participant
 has seen a dot image and entered an estimate. The note may be prepared before that estimate is available.
 The participant will see your fixed numerical recommendation separately on screen.
