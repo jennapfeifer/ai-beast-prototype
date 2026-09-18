@@ -1,3 +1,11 @@
+# Latest: v2.15 advice bubble + natural voice fix
+
+Read `ADVICE_UI_VOICE_FIX.md`. Agent wording is now anchored in a box directly below the red advice triangle, voice playback cannot block progression, and Voice + text uses natural server-side TTS when `OPENAI_API_KEY` is available (with a better local-voice fallback).
+
+# Latest: v2.14 agent / raw-generation pilot
+
+Read AGENT_RAW_PILOT_UPDATE.md. Participant-facing framing is now AGENT, generated conditions use raw unvalidated model wording, a voice+text pilot is available, and dot layout can be switched between random/regular/jittered.
+
 # Latest: v2.13 flexible current-trial advice
 
 Read FLEXIBLE_ADVICE_UPDATE.md. New sessions use 10–20-word target prompts, the current first estimate, and no prefetch. Earlier sections below describe historical versions.

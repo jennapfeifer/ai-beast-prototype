@@ -17,6 +17,8 @@ services:
         generateValue: true
       - key: GEMINI_API_KEY
         sync: false
+      - key: OPENAI_API_KEY
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: STUDY_MODE
@@ -53,3 +55,9 @@ services:
         value: "2"
       - key: SHOW_END_SCORE
         value: "1"
+      - key: TTS_MODEL
+        value: gpt-4o-mini-tts
+      - key: TTS_VOICE
+        value: marin
+      - key: TTS_TIMEOUT_S
+        value: "30"

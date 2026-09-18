@@ -1,7 +1,7 @@
 """BEAST Fieldwork: the human experiment, with separate protected pilot tools."""
 from __future__ import annotations
 import adviser_flexible
-import csv, datetime as dt, hashlib, hmac, io, json, logging, math, os, secrets, time, uuid, zipfile
+import csv, datetime as dt, hashlib, hmac, io, json, logging, math, os, secrets, time, uuid, zipfile, urllib.error, urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, session, url_for, send_file
@@ -9,7 +9,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.14-agent-raw-pilot'
+APP_VERSION = 'fieldwork-2.15-advice-bubble-natural-voice'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -30,6 +30,10 @@ PREFILL_FINAL = True  # The v6 final slider starts at the participant's initial 
 SHOW_END_SCORE = os.getenv('SHOW_END_SCORE','1').lower() not in {'0','false'}
 ADVICE_PREVIEW_MS = int(os.getenv('ADVICE_PREVIEW_MS','5000'))
 ADVICE_MODALITY = os.getenv('ADVICE_MODALITY','text').strip().lower()
+TTS_MODEL = os.getenv('TTS_MODEL','gpt-4o-mini-tts').strip()
+TTS_VOICE = os.getenv('TTS_VOICE','marin').strip()
+TTS_TIMEOUT_S = max(5.0,float(os.getenv('TTS_TIMEOUT_S','30')))
+
 if ADVICE_MODALITY not in {'text','voice_text'}:
     raise RuntimeError('ADVICE_MODALITY must be text or voice_text.')
 if ADVICE_PREVIEW_MS not in {0,3000,4000,5000}:
@@ -226,7 +230,8 @@ def task():
         fixation_ms=FIXATION_MS,collect_ratings=COLLECT_RATINGS,rating_every=RATING_EVERY,prefill_final=PREFILL_FINAL,
         researcher_mode=bool(session.get('researcher') and data['config'].get('researcher')),max_estimate=design.MAX_ESTIMATE,
         pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline',request_timeout_ms=90000,
-        advice_preview_ms=data['config'].get('advice_preview_ms',0),advice_modality=data['config'].get('advice_modality','text'),prefetch_enabled=data['config'].get('adviser_protocol') not in {'flexible_v8','raw_agent_v9'},rating_items=data['config'].get('rating_items','trust_and_feeling')))
+        advice_preview_ms=data['config'].get('advice_preview_ms',0),advice_modality=data['config'].get('advice_modality','text'),
+        voice_backend='openai' if os.getenv('OPENAI_API_KEY') else 'browser',prefetch_enabled=data['config'].get('adviser_protocol') not in {'flexible_v8','raw_agent_v9'},rating_items=data['config'].get('rating_items','trust_and_feeling')))
 
 
 @app.get('/api/state')
@@ -245,6 +250,7 @@ def api_state():
                  adviser_name=adviser_name(data,trial['condition_id']),trial_in_block=trial['trial_position'],n_in_block=sum(r['condition_id']==trial['condition_id'] for r in sched),
                  overall=completed+1,completed=completed,overall_total=len(experimental),
                  image=url_for('stimulus',token=token),break_due=not practice and trial['trial_position']==1 and block>1,
+                 voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral',
                  ratings_due=ratings_due(trial),rating_window=RATING_EVERY,pending=None,researcher=None)
         if data['pending']:
             out['pending']={k:data['pending'][k] for k in ['initial','text','rt_initial','latency_ms','advice']}
@@ -264,7 +270,8 @@ def stimulus(token):
 
 def advice_payload(pending,data):
     trial,_=current(data)
-    result=dict(adviser_name=adviser_name(data,trial['condition_id']),advice_text=pending['text'],advice_number=pending['advice'],latency_ms=pending['latency_ms'])
+    result=dict(adviser_name=adviser_name(data,trial['condition_id']),advice_text=pending['text'],advice_number=pending['advice'],latency_ms=pending['latency_ms'],
+                voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral')
     if session.get('researcher') and data['config'].get('researcher'):result['researcher']=pending['diagnostic']
     return result
 
@@ -311,6 +318,40 @@ def prepared_advice(con,data,trial,initial):
                   'target_word_range','word_tolerance','word_count_check','direction_check'):
         diagnostic[field]=msg.get(field)
     return advice,msg,diagnostic
+
+
+def _voice_instructions(condition_id: str) -> str:
+    persuasive = condition_id in {'C4','C5','C7','C8'}
+    if persuasive:
+        return ('Speak like a natural human peer in a research task. Be conversational, confident, and gently persuasive. '
+                'Sound engaged and encouraging rather than theatrical, sales-like, or aggressive. Use natural pacing and subtle emphasis.')
+    return ('Speak like a natural human peer in a research task. Be calm, conversational, and neutral. '
+            'Sound warm but matter-of-fact, without a sales tone or exaggerated emotion. Use natural pacing.')
+
+
+@app.post('/api/voice')
+def api_voice():
+    pid=require_session();body=request.get_json(silent=True) or {}
+    api_key=os.getenv('OPENAI_API_KEY','').strip()
+    if not api_key:return jsonify(error='Natural voice is not configured on this server.'),503
+    with store.session_transaction(pid) as (_con,data):
+        trial,_=current(data)
+        if trial is None or body.get('trial_token')!=data.get('token') or not data.get('pending'):
+            return jsonify(error='Voice is not available for this trial.'),409
+        pending=data['pending']
+        name=adviser_name(data,trial['condition_id'])
+        spoken=f"{name}. My estimate is {pending['advice']}. {pending['text']}"
+        payload=json.dumps(dict(model=TTS_MODEL,voice=TTS_VOICE,input=spoken,
+            instructions=_voice_instructions(trial['condition_id']),response_format='mp3',speed=1.0)).encode('utf-8')
+    req=urllib.request.Request('https://api.openai.com/v1/audio/speech',data=payload,method='POST',headers={
+        'Authorization':f'Bearer {api_key}','Content-Type':'application/json','Accept':'audio/mpeg'})
+    try:
+        with urllib.request.urlopen(req,timeout=TTS_TIMEOUT_S) as response:
+            audio=response.read()
+    except (urllib.error.URLError,TimeoutError,OSError) as exc:
+        app.logger.warning('Natural voice generation failed: %s',exc)
+        return jsonify(error='Natural voice could not be generated.'),503
+    return Response(audio,mimetype='audio/mpeg',headers={'X-BEAST-Voice-Backend':'openai-tts'})
 
 
 @app.post('/api/prefetch')
@@ -445,7 +486,7 @@ def researcher():
     return render_template('researcher.html',conditions=design.CONDITIONS,report=build_report(records,people),
         model_profiles=profiles,default_profile=default_profile,has_any_key=any(v['available'] for v in profiles.values()),
         has_key=adviser.has_api_key(),model=adviser.ADVISER_MODEL,stimulus_ms=STIMULUS_MS,
-        delay_ms=ADVISER_MIN_DELAY_MS,rating_every=RATING_EVERY,advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,projection=timing_projection(
+        delay_ms=ADVISER_MIN_DELAY_MS,rating_every=RATING_EVERY,advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,natural_voice_available=bool(os.getenv('OPENAI_API_KEY')),tts_voice=TTS_VOICE,projection=timing_projection(
             wait_s=ADVISER_MIN_DELAY_MS/1000,stimulus_s=STIMULUS_MS/1000,fixation_s=FIXATION_MS/1000,
             rating_every=RATING_EVERY,collect_ratings=COLLECT_RATINGS,advice_preview_s=ADVICE_PREVIEW_MS/1000))
 
@@ -459,7 +500,7 @@ def admin_downloads():
 def researcher_status():
     require_admin()
     return jsonify(version=APP_VERSION,stimulus_render_version=STIMULUS_RENDER_VERSION,stimulus_format='webp_lossless',
-        advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,
+        advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,voice_backend='openai' if os.getenv('OPENAI_API_KEY') else 'browser',tts_voice=TTS_VOICE,
         provider=adviser.resolved_provider(),model=adviser.resolved_model(),
         has_key=adviser.has_api_key(),database_dialect=store.engine.dialect.name,study_mode=STUDY_MODE,
         adviser_mode=ADVISER_MODE,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
