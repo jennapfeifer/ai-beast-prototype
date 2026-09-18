@@ -9,7 +9,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.15-advice-bubble-natural-voice'
+APP_VERSION = 'fieldwork-2.16-voice-message-only'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -339,8 +339,9 @@ def api_voice():
         if trial is None or body.get('trial_token')!=data.get('token') or not data.get('pending'):
             return jsonify(error='Voice is not available for this trial.'),409
         pending=data['pending']
-        name=adviser_name(data,trial['condition_id'])
-        spoken=f"{name}. My estimate is {pending['advice']}. {pending['text']}"
+        # Speak exactly the generated quotation/message shown to the participant.
+        # Agent name, recommendation number, and interface labels remain visual only.
+        spoken=pending['text']
         payload=json.dumps(dict(model=TTS_MODEL,voice=TTS_VOICE,input=spoken,
             instructions=_voice_instructions(trial['condition_id']),response_format='mp3',speed=1.0)).encode('utf-8')
     req=urllib.request.Request('https://api.openai.com/v1/audio/speech',data=payload,method='POST',headers={
