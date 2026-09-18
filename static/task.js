@@ -56,7 +56,7 @@ async function prepareNaturalVoice(advice){
       if(state?.trial_token!==token)return null;
       return {kind:'buffer',buffer,durationMs:Math.ceil(buffer.duration*1000)+120,voiceId:response.headers?.get?.('X-BEAST-Voice')||null};
     }
-    return {kind:'bytes',bytes,durationMs:estimatedSpeechMs(advice.advice_text,advice.voice_tone==='persuasive'?1.06:0.92),voiceId:response.headers?.get?.('X-BEAST-Voice')||null};
+    return {kind:'bytes',bytes,mime:response.headers?.get?.('Content-Type')||'audio/wav',durationMs:estimatedSpeechMs(advice.advice_text,advice.voice_tone==='persuasive'?1.04:0.96),voiceId:response.headers?.get?.('X-BEAST-Voice')||null};
   }catch(_error){return null;}finally{if(timeout)clearTimeout(timeout);}
 }
 function loadBrowserVoices(){
@@ -83,9 +83,9 @@ async function prepareBrowserVoice(advice){
   if(!('speechSynthesis' in window)||typeof SpeechSynthesisUtterance==='undefined')return null;
   try{
     const voices=rankedBrowserVoices(await loadBrowserVoices());
-    const rate=advice.voice_tone==='persuasive'?1.06:0.92;
-    const slot=Number.isFinite(Number(advice.voice_slot))?Number(advice.voice_slot):0;
-    return {kind:'browser',voice:voices.length?voices[((slot%voices.length)+voices.length)%voices.length]:null,rate,
+    const rate=advice.voice_tone==='persuasive'?1.04:0.96;
+    // Same browser voice across conditions; delivery, not speaker identity, carries the manipulation.
+    return {kind:'browser',voice:voices.length?voices[0]:null,rate,pitch:1,
       durationMs:estimatedSpeechMs(advice.advice_text,rate)};
   }catch(_error){return null;}
 }
@@ -106,13 +106,13 @@ async function startPreparedVoice(prepared,advice){
       source.start(0);markAudioPlayed();return {durationMs:prepared.durationMs,ended,voiceId:prepared.voiceId};
     }
     if(prepared.kind==='bytes'&&typeof Audio!=='undefined'&&typeof Blob!=='undefined'&&typeof URL!=='undefined'){
-      const url=URL.createObjectURL(new Blob([prepared.bytes],{type:'audio/mpeg'})),audio=new Audio(url);
+      const url=URL.createObjectURL(new Blob([prepared.bytes],{type:prepared.mime||'audio/wav'})),audio=new Audio(url);
       activeVoiceUrl=url;activeVoiceElement=audio;let finish;const ended=new Promise(r=>finish=r);
       audio.onended=()=>{if(activeVoiceElement===audio)activeVoiceElement=null;try{URL.revokeObjectURL(url);}catch(_error){}if(activeVoiceUrl===url)activeVoiceUrl=null;finish();};
       await audio.play();markAudioPlayed();return {durationMs:prepared.durationMs,ended,voiceId:prepared.voiceId};
     }
     if(prepared.kind==='browser'){
-      const utterance=new SpeechSynthesisUtterance(advice.advice_text);utterance.lang='en-US';utterance.rate=prepared.rate;utterance.pitch=1;utterance.volume=1;
+      const utterance=new SpeechSynthesisUtterance(advice.advice_text);utterance.lang='en-US';utterance.rate=prepared.rate;utterance.pitch=prepared.pitch||1;utterance.volume=1;
       if(prepared.voice)utterance.voice=prepared.voice;
       let finish;const ended=new Promise(r=>finish=r);utterance.onstart=markAudioPlayed;utterance.onend=finish;utterance.onerror=finish;
       window.speechSynthesis.speak(utterance);return {durationMs:prepared.durationMs,ended,voiceId:prepared.voice?.name||null};
@@ -167,7 +167,7 @@ async function showStimulus(){
   }
 if(CFG.stimulus_ms>0){const exposure=await visibleSleep(CFG.stimulus_ms);timing.stimulus_visible_ms=exposure.active;phase('FIRST ESTIMATE');return await initialEstimator();}
 const t=clock();stage.insertAdjacentHTML('beforeend','<button class="button primary" id="finish-viewing">Continue to estimate</button>');await new Promise(r=>document.getElementById('finish-viewing').onclick=r);timing.stimulus_visible_ms=elapsed(t).active;return await initialEstimator();}
-async function getAdvice(initial){phase('AGENT ADVICE');stage.innerHTML=`<div class="advice-stage"><div class="adviser-label"><span class="adviser-icon">⋮</span> Agent advice</div><div class="composing"><i></i><i></i><i></i></div><h2>Preparing advice…</h2><p class="small muted" id="long-wait"></p></div>`;const slow=setTimeout(()=>{const el=document.getElementById('long-wait');if(el)el.textContent='Still preparing your advice. Please keep this tab open.';},8000);const t=clock();let result;try{const remainingStart=performance.now();if(prefetchPromise)await prefetchPromise;timing.prefetch_remaining_ms=Math.round(performance.now()-remainingStart);prefetchPromise=null;result=await recover(()=>fetchJSON('/api/initial',{trial_token:state.trial_token,estimate:initial.estimate,rt_ms:initial.active,telemetry:timing}),'We couldn’t retrieve the advice.');}finally{clearTimeout(slow);}const wait=elapsed(t).wall;if(wait<CFG.min_delay_ms)await sleep(CFG.min_delay_ms-wait);timing.advice_wait_ms=elapsed(t).wall;renderResearcher(result.researcher);if(CFG.advice_modality==='voice_text'){const voiceStarted=performance.now();voicePreparationPromise=prepareAgentVoice(result).then(prepared=>{timing.voice_prepare_ms=Math.round(performance.now()-voiceStarted);return prepared;});}return result;}
+async function getAdvice(initial){phase('AGENT ADVICE');stage.innerHTML=`<div class="advice-stage"><div class="adviser-label"><span class="adviser-icon">⋮</span> Agent advice</div><div class="composing"><i></i><i></i><i></i></div><h2>Preparing advice…</h2><p class="small muted" id="long-wait"></p></div>`;const slow=setTimeout(()=>{const el=document.getElementById('long-wait');if(el)el.textContent='Still preparing your advice. Please keep this tab open.';},8000);const t=clock();let result;try{const remainingStart=performance.now();if(prefetchPromise)await prefetchPromise;timing.prefetch_remaining_ms=Math.round(performance.now()-remainingStart);prefetchPromise=null;result=await recover(()=>fetchJSON('/api/initial',{trial_token:state.trial_token,estimate:initial.estimate,rt_ms:initial.active,telemetry:timing}),'We couldn’t retrieve the advice.');}finally{clearTimeout(slow);}if(CFG.advice_modality==='voice_text'){const voiceStarted=performance.now();voicePreparationPromise=prepareAgentVoice(result).then(prepared=>{timing.voice_prepare_ms=Math.round(performance.now()-voiceStarted);return prepared;});}const wait=elapsed(t).wall;if(wait<CFG.min_delay_ms)await sleep(CFG.min_delay_ms-wait);timing.advice_wait_ms=elapsed(t).wall;renderResearcher(result.researcher);return result;}
 function initialEstimator() {
   phase('FIRST ESTIMATE');
   return BEASTEstimate.render({stage,max:CFG.max_estimate,clock,elapsed});
