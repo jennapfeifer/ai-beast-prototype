@@ -22,3 +22,17 @@ def test_practice_and_old_sessions(client):
     with store.session_transaction(pid) as (con,data):
         data['config'].pop('adviser_names')
     assert A.adviser_name(store.session_data(pid),'C5')=='Agent'
+
+def test_agent_voice_is_constant_across_conditions_and_exposed(client):
+    state=start(client,['C3','C4'],trials=1,skip=True)
+    with client.session_transaction() as cookie:pid=cookie['pid']
+    data=store.session_data(pid)
+    voices=data['config']['adviser_voices']
+    assert len(voices)==8
+    assert set(voices.values())=={A.TTS_VOICE}
+    assert state['voice_slot']==0
+
+def test_voice_delivery_contrast_is_deliberate():
+    assert A._voice_speed('C4') > A._voice_speed('C3')
+    assert 'unmistakably more persuasive' in A._voice_instructions('C4')
+    assert 'matter-of-fact' in A._voice_instructions('C3')

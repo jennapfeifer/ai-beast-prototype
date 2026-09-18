@@ -36,11 +36,30 @@ test('advice-only exposure pauses when hidden and final UI appears afterwards',a
  assert.equal(order.at(-1),'final');
 });
 
-test('voice completion cannot hold the advice screen open',async()=>{
- const {ctx,order}=setup(3000,false);
- ctx.speakAgentAdvice=()=>new Promise(()=>{});
- const result=ctx.showAdvice({estimate:151},{advice_number:160,advice_text:'Example'});
+test('browser voice preparation keeps only the quoted message and holds speaker constant',async()=>{
+ const {ctx}=setup(0,false);
+ ctx.BEAST_CFG.advice_modality='voice_text';
+ ctx.SpeechSynthesisUtterance=function(text){this.text=text;};
+ ctx.window.SpeechSynthesisUtterance=ctx.SpeechSynthesisUtterance;
+ ctx.window.speechSynthesis={getVoices:()=>[
+   {name:'Natural A',lang:'en-US',default:true},{name:'Natural B',lang:'en-US',default:false}
+ ],speak:()=>{},cancel:()=>{}};
+ const a=await ctx.prepareBrowserVoice({advice_text:'Move a little closer to my estimate.',voice_tone:'persuasive',voice_slot:0});
+ const b=await ctx.prepareBrowserVoice({advice_text:'Move a little closer to my estimate.',voice_tone:'persuasive',voice_slot:1});
+ assert.equal(a.voice.name,b.voice.name);
+ assert.equal(a.rate,1.04);
+});
+
+test('voice mode holds the advice screen until the prepared clip duration, then stops before final scale',async()=>{
+ const {ctx,document,order,timing}=setup(3000,false);
+ ctx.BEAST_CFG.advice_modality='voice_text';
+ ctx.prepareAgentVoice=async()=>({kind:'fake'});
+ ctx.startPreparedVoice=async()=>({durationMs:5200,voiceId:'cedar'});
+ const result=ctx.showAdvice({estimate:151},{advice_number:160,advice_text:'Example',voice_tone:'persuasive',voice_slot:2});
+ assert(document.querySelector('.advice-only'));
  assert.equal((await result).estimate,119);
+ assert(timing().advice_preview_ms>=5200);
+ assert.equal(timing().voice_id,'cedar');
  assert.equal(order.at(-1),'final');
 });
 
