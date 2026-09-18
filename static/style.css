@@ -187,3 +187,21 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 /* Equal-size advice label, number and sentence. */
 .advice-only p,.advice-only h1,.advice-only strong{font-size:clamp(30px,4.4vw,42px);line-height:1.45;font-weight:560;letter-spacing:0}
 .advice-lane .reference-copy strong{font-size:32px;font-weight:720}
+
+
+/* v2.22: harden the full-screen participant surface against Safari/root/safe-area white strips. */
+html.task-root{
+  width:100%;height:100%;min-height:100%;min-height:100dvh;
+  margin:0;background:#101418!important;overflow-x:hidden;overflow-x:clip;
+}
+html.task-root body.task-surface{
+  width:100%;min-height:100vh;min-height:100svh;min-height:100dvh;
+  margin:0;background:#101418!important;overflow-x:hidden;overflow-x:clip;
+  padding-bottom:max(16px,env(safe-area-inset-bottom));
+}
+.task-surface .task-page,.task-surface .trial-card,.task-surface #stage{min-width:0;max-width:100%;overflow-x:clip}
+.task-surface::after{
+  content:"";position:fixed;left:0;right:0;bottom:0;
+  height:max(16px,env(safe-area-inset-bottom));background:#101418;
+  z-index:2147483646;pointer-events:none;
+}

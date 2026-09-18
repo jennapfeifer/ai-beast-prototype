@@ -54,9 +54,9 @@ async function prepareNaturalVoice(advice){
       if(!voiceAudioContext)voiceAudioContext=new AudioCtx();
       const buffer=await voiceAudioContext.decodeAudioData(bytes.slice(0));
       if(state?.trial_token!==token)return null;
-      return {kind:'buffer',buffer,durationMs:Math.ceil(buffer.duration*1000)+120,voiceId:response.headers?.get?.('X-BEAST-Voice')||null};
+      return {kind:'buffer',buffer,durationMs:Math.ceil(buffer.duration*1000)+120,voiceId:response.headers?.get?.('X-BEAST-Voice')||null,voiceProfile:response.headers?.get?.('X-BEAST-Voice-Profile')||null};
     }
-    return {kind:'bytes',bytes,mime:response.headers?.get?.('Content-Type')||'audio/wav',durationMs:estimatedSpeechMs(advice.advice_text,advice.voice_tone==='persuasive'?1.12:0.90),voiceId:response.headers?.get?.('X-BEAST-Voice')||null};
+    return {kind:'bytes',bytes,mime:response.headers?.get?.('Content-Type')||'audio/wav',durationMs:estimatedSpeechMs(advice.advice_text,advice.voice_tone==='persuasive'?1.08:0.92),voiceId:response.headers?.get?.('X-BEAST-Voice')||null,voiceProfile:response.headers?.get?.('X-BEAST-Voice-Profile')||null};
   }catch(_error){return null;}finally{if(timeout)clearTimeout(timeout);}
 }
 function loadBrowserVoices(){
@@ -84,10 +84,13 @@ async function prepareBrowserVoice(advice){
   try{
     const voices=rankedBrowserVoices(await loadBrowserVoices());
     const persuasive=advice.voice_tone==='persuasive';
-    const rate=persuasive?1.10:0.90,pitch=persuasive?1.04:0.97;
-    // Same browser speaker across conditions. The larger rate/pitch contrast is
-    // only a fallback; natural OpenAI TTS carries the intended prosody.
-    return {kind:'browser',voice:voices.length?voices[0]:null,rate,pitch,
+    const rate=persuasive?1.12:0.90,pitch=persuasive?1.09:0.96;
+    // Match the participant's condition-specific agent identity in the browser fallback too.
+    // Browser speech cannot express emotion as richly as OpenAI TTS, so rate/pitch carry
+    // a deliberately larger pilot contrast here.
+    const slot=Number.isFinite(Number(advice.voice_slot))?Number(advice.voice_slot):0;
+    const selected=voices.length?voices[((slot%voices.length)+voices.length)%voices.length]:null;
+    return {kind:'browser',voice:selected,rate,pitch,
       durationMs:estimatedSpeechMs(advice.advice_text,rate)};
   }catch(_error){return null;}
 }
@@ -105,13 +108,13 @@ async function startPreparedVoice(prepared,advice){
       const source=voiceAudioContext.createBufferSource();source.buffer=prepared.buffer;source.connect(voiceAudioContext.destination);
       let finish;const ended=new Promise(r=>finish=r);activeVoiceNode=source;
       source.onended=()=>{if(activeVoiceNode===source)activeVoiceNode=null;finish();};
-      source.start(0);markAudioPlayed();return {durationMs:prepared.durationMs,ended,voiceId:prepared.voiceId};
+      source.start(0);markAudioPlayed();return {durationMs:prepared.durationMs,ended,voiceId:prepared.voiceId,voiceProfile:prepared.voiceProfile||null};
     }
     if(prepared.kind==='bytes'&&typeof Audio!=='undefined'&&typeof Blob!=='undefined'&&typeof URL!=='undefined'){
       const url=URL.createObjectURL(new Blob([prepared.bytes],{type:prepared.mime||'audio/wav'})),audio=new Audio(url);
       activeVoiceUrl=url;activeVoiceElement=audio;let finish;const ended=new Promise(r=>finish=r);
       audio.onended=()=>{if(activeVoiceElement===audio)activeVoiceElement=null;try{URL.revokeObjectURL(url);}catch(_error){}if(activeVoiceUrl===url)activeVoiceUrl=null;finish();};
-      await audio.play();markAudioPlayed();return {durationMs:prepared.durationMs,ended,voiceId:prepared.voiceId};
+      await audio.play();markAudioPlayed();return {durationMs:prepared.durationMs,ended,voiceId:prepared.voiceId,voiceProfile:prepared.voiceProfile||null};
     }
     if(prepared.kind==='browser'){
       const utterance=new SpeechSynthesisUtterance(advice.advice_text);utterance.lang='en-US';utterance.rate=prepared.rate;utterance.pitch=prepared.pitch||1;utterance.volume=1;
@@ -219,7 +222,7 @@ async function showAdvice(initial,advice) {
     try{
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
       const playback=CFG.advice_modality==='voice_text'?await startPreparedVoice(prepared,advice):null;
-      if(playback?.voiceId)timing.voice_id=playback.voiceId;
+      if(playback?.voiceId)timing.voice_id=playback.voiceId;if(playback?.voiceProfile)timing.voice_profile=playback.voiceProfile;
       const holdMs=Math.max(CFG.advice_preview_ms,playback?.durationMs||0);
       timing.voice_hold_ms=Math.round(holdMs);
       if(holdMs>0){const exposure=await visibleSleep(holdMs);timing.advice_preview_ms=exposure.active;timing.advice_preview_wall_ms=exposure.wall;}

@@ -52,7 +52,7 @@ function downloadReview(json){
  let content,type,name;
  if(json){content=JSON.stringify({simulation:true,profiles:reviewProfiles,model_profile:reviewModel,complete:reviewIndex===3,rows:reviewRows},null,2);type='application/json';name='BEAST-live-review.json';}
  else{
-  const fields=['profile','adviser_name','pid','participant_index','round','condition','trial','practice','true_count','initial_estimate','advice_number','final_estimate','prescribed_weight','trust_rating','advice_text','word_count','word_count_check','source','live_model','fallback','model','prompt_version','initial_context_available','generation_ms','attempts','validation','grounding_record_check','adaptive_strategy','adaptive_summary','first_draft','displayed_draft','length_retry_used','length_retry_success','review_reasons','attempt_log'];
+  const fields=['profile','adviser_name','pid','participant_index','round','condition','trial','practice','true_count','initial_estimate','advice_number','final_estimate','prescribed_weight','trust_rating','advice_text','word_count','word_count_check','source','live_model','fallback','model','prompt_version','initial_context_available','generation_ms','attempts','validation','grounding_record_check','adaptive_strategy','adaptive_summary','adaptive_summary_in_prompt','first_draft','displayed_draft','length_retry_used','length_retry_success','review_reasons','attempt_log'];
   const cell=value=>{let s=value==null?'':typeof value==='object'?JSON.stringify(value):String(value);if(/^[=+@-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';};
   content='\uFEFF'+[fields,...reviewRows.map(r=>fields.map(k=>r[k]))].map(row=>row.map(cell).join(',')).join('\r\n');type='text/csv;charset=utf-8';name='BEAST-live-review.csv';
  }
