@@ -9,7 +9,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.28-shared-voice-prosody-only'
+APP_VERSION = 'fieldwork-2.29-shared-voice-matched-cadence'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -380,16 +380,23 @@ def _voice_profile(condition_id: str) -> str:
 
 
 def _voice_instructions(condition_id: str) -> str:
-    """Same OpenAI speaker identity; deliberately contrasting performance style."""
+    """Same speaker and matched temporal cadence; manipulate affect/conviction, not rhythm."""
     profile=_voice_profile(condition_id)
+    cadence = (
+        'Keep a steady natural conversational rhythm. Keep phrase timing, pause frequency, pause length, and sentence-final timing consistent. '
+        'Do not rush, slow down, add dramatic pauses, stretch important words, or punch the ending. Keep the speaking rate at a normal, even pace throughout. '
+    )
     if profile == 'dramatic_persuasive':
         return (
-            'Keep the same speaker identity. Perform the line as clearly persuasive: warm, energetic, assertive, personally invested, and strongly intent on convincing one listener. '
-            'Use expressive pitch movement, stronger stress on the recommendation and action words, warmer vocal energy, and a firm decisive ending. Keep a normal conversational pace comparable to the neutral delivery; do not rush or speed up. Sound human and conversational, not theatrical or like an advertisement.'
+            'Keep the same speaker identity. ' + cadence +
+            'Make the delivery clearly persuasive through vocal affect rather than timing: sound warm, engaged, confident, assertive, personally invested, and strongly intent on convincing one listener. '
+            'Use richer emotional colour, brighter warmth, stronger conviction, and clear but brief emphasis on the recommendation and action words without changing their duration. '
+            'Sound human and conversational, not theatrical, sales-like, or exaggerated.'
         )
     return (
-        'Keep the same speaker identity. Deliver the line as a neutral report: calm, cool, matter-of-fact, emotionally restrained, and not motivational. '
-        'Use narrow pitch movement, light emphasis, steady volume, and an even cadence at a normal conversational pace. Simply report the recommendation.'
+        'Keep the same speaker identity. ' + cadence +
+        'Deliver the line as a neutral report: calm, cool, matter-of-fact, emotionally restrained, and not motivational. '
+        'Use low emotional colour, restrained warmth, and light emphasis while preserving the same smooth conversational rhythm.'
     )
 
 
