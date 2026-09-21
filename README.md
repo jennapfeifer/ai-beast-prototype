@@ -1,139 +1,134 @@
-# AI-BEAST live LLM + audio prototype
+# v2.27 — shared OpenAI voice + deterministic delivery contrast + Safari scrollbar fix
 
-This prototype implements the design discussed for the screening task:
+No Hume account or extra API key is required. Voice + text uses the existing OpenAI TTS configuration with **one shared speaker identity** for every agent. Neutral and persuasive conditions still receive different acting instructions, but the browser now also applies a deterministic, pitch-preserving delivery-rate contrast (**0.88 neutral vs 1.12 persuasive**) so the manipulation remains clearly audible even when the TTS model renders the acting instructions subtly. The actual playback rate is logged as `voice_delivery_rate`.
 
-- The **experiment**, not the LLM, determines whether advice is helpful/misleading.
-- The experiment calculates the **numerical advice** from the participant's estimate and the true count.
-- A real OpenAI model is called **only to generate the wording** in either an affirming or challenging style.
-- The advice is delivered aloud using the computer/browser's **built-in text-to-speech**.
-- The same voice is used for both assistants.
-- The generated sentence, generation latency, trial condition, estimates, WOA, replay count, and other trial-level variables are logged.
-- Participant-facing adviser labels are **AI Assistant 1** and **AI Assistant 2**.
-- Which assistant is higher reliability is counterbalanced deterministically from participant ID.
+The white strip visible at the bottom of the consent page was identified from the screenshot as a Safari-style **horizontal scrollbar track**. Participant pages now suppress root horizontal overflow and explicitly hide the horizontal WebKit scrollbar while preserving vertical scrolling. See `OPENAI_VOICE_SCROLLBAR_FIX_v2.27.md`.
 
-## What this prototype is for
+## v2.26 — Hume expressive voice + Safari root-strip fix
 
-This is an 8-trial proof of concept for piloting the interaction, wording, latency, and audio delivery.
+Voice + text now prefers **Hume Octave 1** with one shared speaker identity and a deliberately large neutral-versus-persuasive acting contrast. OpenAI TTS remains a fallback. The persistent white bottom strip shown on the consent page was traced to the HTML/root scrolling canvas: only `/task` previously received the dark `task-root` class. Consent, instructions, and debrief now receive the same dark root and horizontal-overflow clipping. See `HUME_VOICE_AND_ROOT_FIX_v2.26.md`.
 
-It is **not yet the final N=200–250 research implementation**. The final version should use a longer fully counterbalanced schedule, formal practice trials, fixed preregistered scoring/exclusion rules, and a production data backend or research platform.
+## v2.25 — one speaker, deliberately dramatic delivery contrast
 
-## 1. Requirements
+All eight named agents now use the **same TTS speaker identity**. Neutral C1/C2/C3/C6 use a calm, cool, matter-of-fact delivery; persuasive C4/C5/C7/C8 use the same speaker but a deliberately strong warm/assertive/expressive performance. Static and adaptive persuasive conditions share the exact same voice-performance profile, so any additional difference between them comes from the generated language/history rather than a second vocal manipulation. The browser fallback also keeps one speaker and exaggerates rate/pitch only as a backup. See `SHARED_SPEAKER_DRAMATIC_DELIVERY_v2.25.md`.
 
-Install:
+# Latest: v2.23 free-form persuasion
 
-- Node.js 20 or later
-- An OpenAI API key
-- A modern browser such as Chrome, Edge, Safari, or Firefox
+C4/C7 and C5/C8 are no longer forced into researcher-authored persuasion tactics. Static persuasive agents may use any conversational or persuasive approach they choose. Adaptive persuasive agents receive recent completed history and may use it however they think is useful; no deterministic `recommended_strategy_family` is supplied to the model. C3/C6 remain neutral. All generated messages are asked for one short sentence of roughly 12–20 words and to include the recommendation number. The first successful model response is displayed as-is: there is no semantic repair and no length-only retry. Recent same-agent messages are supplied only to discourage copying. Current first estimates remain hidden during generation. See `FREE_PERSUASION_UPDATE_v2.23.md`.
 
-## 2. Setup
+# Latest: v2.21 social encouragement + 16–18-word matching + simulation prefetch parity
 
-Open Terminal in this folder and run:
+Persuasive C4/C5/C7/C8 agents now include brief human social encouragement (for example, “Good job”, “You’re doing great”, or “Nice work”) without tying praise to objective accuracy. All eight conditions target 16–18 spoken words. C1/C2 use a rewritten fixed bank; C3–C8 get at most one mechanical length-only retry, with the untouched first draft retained in the audit. The live-review simulator now calls the same prefetch endpoint as the real task before supplying the synthetic participant’s current estimate, so C3–C8 audits should show `initial_context_available=false`. See `SOCIAL_PRAISE_LENGTH_SIMULATION_UPDATE_v2.21.md`.
 
-    npm install
+# Latest: v2.20 prefetched advice + stronger voice contrast + dark-root fix
 
-Copy `.env.example` to `.env`:
+Generated C3-C8 agent text no longer receives the participant's current first estimate. That lets text generation begin before the dot display and lets natural TTS prepare while the participant is viewing/estimating, greatly reducing visible wait. Adaptive agents still receive completed earlier-trial behaviour and ratings. The same speaker identity is held constant across neutral and persuasive conditions, but the TTS instructions now deliberately make the neutral delivery restrained/low-affect and the persuasive delivery forceful, emotionally engaged, high-conviction, and dynamically stressed. The task root is also dark so Safari/browser overscroll no longer reveals a white bar at the bottom. See `PREFETCH_VOICE_UI_UPDATE_v2.20.md`.
 
-macOS/Linux:
+# Latest: v2.19 grounded + length-matched + genuinely adaptive agents
 
-    cp .env.example .env
+The first live-review simulation showed three issues: C1/C2/neutral messages were shorter than persuasive messages; generated agents sometimes invented visual evidence or claimed hidden accuracy; and C5/C8 adaptation was often only superficial. v2.19 gives all conditions a 14–18-word target, explicitly tells generated agents what they do and do not know, and supplies C5/C8 with a deterministic response/trust summary that must change persuasive strategy. Raw live outputs are still displayed without semantic repair. See `AGENT_GROUNDING_LENGTH_ADAPTATION_v2.19.md`.
 
-Windows PowerShell:
+# Latest: v2.18 faster voice + same speaker + stronger persuasion
 
-    Copy-Item .env.example .env
+Participant instructions no longer say ‘red’. Voice identity is now held constant across conditions, while neutral and persuasive delivery are deliberately separated much more strongly. TTS defaults to WAV for lower latency and voice preparation starts as early as possible. See `VOICE_TONE_LATENCY_UPDATE_v2.18.md`.
 
-Open `.env` in a text editor and replace:
+# Latest: v2.17 synced audio + distinct agent voices
 
-    OPENAI_API_KEY=your_api_key_here
+Voice is now prepared *before* the advice appears, starts with the advice text, and finishes before the final number line is shown. Each agent also receives a different natural TTS speaker shuffled per participant, while neutral versus persuasive conditions use a deliberately stronger delivery contrast. See `VOICE_SYNC_UPDATE.md`.
 
-with your real API key.
+# Latest: v2.16 voice reads message only
 
-Do **not** put the API key into `public/index.html` or commit `.env` to GitHub.
+Voice + text now speaks exactly the generated advice message shown in quotation marks. The agent name, recommendation number, and interface labels are visual only. See `ADVICE_UI_VOICE_FIX.md`.
 
-## 3. Start the prototype
+# Latest: v2.15 advice bubble + natural voice fix
 
-Run:
+Read `ADVICE_UI_VOICE_FIX.md`. Agent wording is now anchored in a box directly below the red advice triangle, voice playback cannot block progression, and Voice + text uses natural server-side TTS when `OPENAI_API_KEY` is available (with a better local-voice fallback).
 
-    npm start
+# Latest: v2.14 agent / raw-generation pilot
 
-Then open:
+Read AGENT_RAW_PILOT_UPDATE.md. Participant-facing framing is now AGENT, generated conditions use raw unvalidated model wording, a voice+text pilot is available, and dot layout can be switched between random/regular/jittered.
 
-    http://localhost:3000
+# Latest: v2.13 flexible current-trial advice
 
-The start screen should say **Live model ready**.
+Read FLEXIBLE_ADVICE_UPDATE.md. New sessions use 10–20-word target prompts, the current first estimate, and no prefetch. Earlier sections below describe historical versions.
 
-## 4. What happens on each trial
+# Latest: v2.11
 
-1. Dot stimulus appears briefly.
-2. Participant enters an initial estimate.
-3. Participant reports confidence.
-4. The experiment calculates a controlled numerical advice value.
-5. The server sends only:
-   - participant estimate,
-   - experiment-controlled AI estimate,
-   - required wording style
-   to the OpenAI model.
-6. The LLM returns one short sentence.
-7. The browser reads the sentence aloud.
-8. Participant enters a final estimate.
-9. True count is shown.
-10. Trial data are saved locally.
+See ADVICE_READING_UPDATE.md for consistent advice typography and the five-second default (with 0/3/4/5-second options).
 
-The LLM is never shown the true dot count or told whether the trial is intended to be helpful/misleading. This prevents the model from changing the experimental manipulation.
+# BEAST · private AI adviser pilot
 
-## 5. Local data
+The v6.1 **number line, short Gemini notes and advice prefetch** are integrated with protected pilot controls, server-side sessions, timing diagnostics and recovery. Original NEW25 numerical advice, counterbalancing and deterministic dot positions/counts are retained; visual and delivery versions are recorded.
 
-Each completed trial is appended to:
 
-    data/trials.csv
+Current update: **v2.10.1, simpler participant flow and marker layering** (`fieldwork-2.10.1-marker-layer`).
+See [SIMPLE_FLOW_UPDATE.md](SIMPLE_FLOW_UPDATE.md) for installation and protocol changes.
 
-The end screen also lets you:
+New sessions collect trust only; feeling stays null. Old sessions retain both questions.
+The following adviser description also covers historical two-rating sessions and probe tools.
 
-- download the current participant's CSV;
-- download the combined local `trials.csv`.
+Trust means trust in the AI adviser. Feeling means the reported reaction to its advice.
+These inputs now supply internal persuasion approaches rather than requiring the model
+to repeat the ratings. Both available approaches inform adaptive tone; the existing
+behaviour/trust/feeling cycle selects emphasis. Implicit influence needs comparison and
+human review. Every adaptive note with usable history must now reference the previous decision, including trust/feeling turns. The model returns a structured internal fact record and a short participant-facing message in the same request. Matching that record checks extraction, not whether ratings meaningfully changed the wording. Both persuasive conditions request clear recommendations; optional filler such as “if you wish” is rejected. Low trust and negative feeling change the framing without switching to neutral advice.
 
-Use anonymous study IDs, not participant names or emails.
+## Participant flow
 
-## 6. Audio
+Image (5 s) → first estimate on a blank number line → AI number + short note (target 6–12 words, tolerance up to 15) → final slider → occasional trust rating (selection advances immediately). The final slider starts at the participant's first estimate, as in v6.1. The first estimate uses a grey square, AI advice a bright-blue pointer below the white line, and the final choice a red square. Direct labels replace the cards and legend. A plain progress bar shows completion; scores appear only after finishing.
 
-The prototype uses the operating system/browser speech-synthesis voices. On the start screen:
+C3–C8 notes are prefetched after the image is displayed. The fixation screen is removed. By default the task shows the advice alone for three visible seconds before the final-estimate line (the researcher can restore simultaneous display); it applies to all selected conditions and does not prove reading. The model gets the fixed recommendation and, for C5/C8 only, every completed earlier trial in that block. **It never gets the current first estimate**, even if prefetch fails and synchronous generation is needed. This keeps the information supplied consistent. C1/C2 use fixed control notes and C2's number still depends on the current estimate.
 
-- choose one English voice;
-- use **Test selected voice**;
-- keep exactly the same voice, rate, and pitch across experimental conditions.
+Default live provider: `gemini`, model `gemini-3.5-flash-lite`, thinking `minimal`, up to three application-level attempts, no artificial minimum wait. All model profiles default to a 60-second total generation allowance, with per-request timeouts clipped to the remaining time. Gemini Fast uses 15 seconds per request; the server-default profile respects `ADVISER_REQUEST_TIMEOUT`. SDK retries are disabled. Recoverable failures retry; permanent API errors stop immediately. Exhausted failures produce a labelled generic fallback. Live recovery, latency and cost must be measured in the pilot.
 
-The generated sentence is hidden from participants by default. Tick **Show generated wording on screen (debug only)** when you want to inspect what the model produced during development.
+Otherwise valid notes up to three words above the target maximum are kept and flagged for review. During prefetch, explicit instructions to move right/left/up/down need repair because the current initial estimate is unavailable. “Move toward my estimate” avoids that unsupported assumption. The same settings apply across generated conditions. Mechanical validation is not a semantic guarantee.
 
-## 7. LLM controls
+## Researcher workspace
 
-The server:
+Unlock `/` with `ACCESS_CODE`, then sign in at `/researcher` with the separate `ADMIN_TOKEN`. Launch a short/full pilot with selected conditions, block length and counterbalance row. Offline mode uses labelled local templates; live mode requires the selected provider key. All researcher and pilot sessions are `TEST`, excluded from production allocation.
 
-- requires the model to state the experiment-controlled advice number exactly;
-- constrains the response to one short sentence;
-- prevents references to correctness, accuracy, reliability, or previous trials;
-- retries once if the result fails basic format checks;
-- uses a fixed fallback sentence only if both generated outputs fail validation.
+Trial diagnostics include actual/expected history length, generation source, fallback/attempts, `prefetched`, and `initial_context_available`. Exports include estimates, errors, WOA, sparse ratings, messages, and phase timing. The display records **generation time separately from visible advice wait**, plus prefetch request and remaining wait, image exposure, response/check-in/break time, hidden-tab interruptions and resume flags.
 
-Whether a fallback was used is stored in `llm_fallback`.
+The duration calculator is an assumption-based planning aid. Use human pilot data to estimate total duration. With the shorter notes the previous package's 42-minute estimate is not a measurement of this version. Aggregate tables can pool offline/live modes and interface versions; filter `adviser_mode`, `is_test`, `source`, `ui_version`, `stimulus_render_version` and `advice_preview_target_ms` before interpretation.
 
-For a formal experiment, review generated pilot outputs and decide whether fallback trials should be excluded or rerun.
+Reloading after the first answer is saved resumes advice without re-showing the image. Repeated browser submissions reuse saved advice without creating duplicate trials or starting a new generation cycle. A reload before the initial answer is saved can repeat exposure; this remains a pilot limitation. Exposure pauses in hidden tabs and browser timing is not a calibrated visual trigger.
 
-## 8. Important limitation for online deployment
+## Run locally
 
-The `data/trials.csv` approach is useful for **local piloting on one lab computer**.
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+python smoke_test.py
+export ADMIN_TOKEN="choose-a-long-researcher-token"
+export ACCESS_CODE="choose-a-different-private-code"
+python app.py
+```
 
-Do not rely on this file for a deployed multi-participant study on a serverless platform such as Vercel: local server storage may be ephemeral and concurrent writes are not a robust research database.
+The local default adviser mode is offline. To run Gemini live, set `GEMINI_API_KEY`, `ADVISER_PROVIDER=gemini` and `ADVISER_MODE=live` in the environment. `.env.example` is documentation, not automatically loaded. Never commit secrets or participant exports.
 
-For the full screening study, connect the task to a persistent database/research platform (for example JATOS/jsPsych infrastructure, a university server, or another approved backend).
+Startup generates versioned, antialiased stimuli on the protected server and serves pixel-identical lossless WebP files. The files are 1024 pixels wide and display at up to 512 CSS pixels; legacy generator output remains available. Image files are not published to GitHub. `setup_files.py` validates rather than rewriting edited assets. `gunicorn.conf.py` preserves the required 1-worker/8-thread setup even when Render starts plain `gunicorn app:app`.
 
-## 9. Files
+## Adaptation checks
 
-- `server.js` — server-side OpenAI call + local data logging
-- `public/index.html` — experiment interface and task logic
-- `.env.example` — environment-variable template
-- `package.json` — Node dependencies
-- `data/` — local pilot data are written here
+`python smoke_test.py` checks the complete 105-trial session, schedules, history routing, prefetch idempotency, stale requests, privacy, ratings, fallbacks and end-only scores. DOM interaction tests run with `npm run test:ui`. The browser test in `tests/browser_smoke.cjs` is provided to check desktop/mobile number lines, ratings, prefetch, reload and exports at normal display timings.
 
-## 10. API privacy design
+```bash
+python verify_adaptation.py
+python verify_adaptation.py --live --model-profile gemini_fast --contrast trust --repetitions 3 --out probe-trust
+python verify_adaptation.py --live --model-profile gpt_stronger --contrast feeling --repetitions 3 --out probe-feeling
+```
 
-The OpenAI request does **not** include the participant ID. It sends only the numeric initial estimate, the controlled advice number, and the requested communication style. The prototype also sets `store: false` on the model response request.
+Offline is API-free. Each example `--live` command makes 24 message generations, each with up to three API attempts by default, and incurs usage. It contrasts resistance/following histories while holding the current advice fixed, with the current estimate unavailable as in prefetch. Reports include raw messages, prompt hashes, latency, source/fallback and shuffled blind review sheets. Static prompts must stay identical across histories; adaptive prompts must differ. Different live text alone does not prove adaptation; inspect whether history claims are supported. Behavioural effects require human data.
 
+## Deployment and data
+
+GitHub: `jennapfeifer/ai-beast-prototype`; Render service: `ai-beast-prototype`, auto-deploying `main`. The source repository remains public as authorised; the task and researcher data are gated by separate private codes. Codes grant access to their holders, not named accounts. The health endpoint reveals only OK/version.
+
+Set `SECRET_KEY`, `ACCESS_CODE` and `ADMIN_TOKEN` before deploying; on Render the app refuses to start without them. Preserve provider API keys and the existing database URL when editing environment settings. `DATABASE_URL` should point to persistent Postgres for retained data; a SQLite file on the free web service can disappear when it restarts. The build stays in pilot mode. Before recruitment, finalise participant information/contact/withdrawal terms, validate live manipulation and timings, and use durable storage.
+
+The original table schema is retained and diagnostic/session tables are additive. Old browser sessions from v6.1 cannot migrate; update between sessions. Retain a data export before deployment. Read the protected `/api/researcher/status` for the deployed model/configuration and database dialect without exposing keys.
+
+## v2.21 social-praise / length-matching update
+
+C1–C8 now aim for 16–18 words. Persuasive agents may use grounded social encouragement without claiming accuracy. Live generated messages get at most one mechanical word-count retry; both the first raw draft and displayed draft are retained in the audit. The live-review simulator now uses the same prefetch-before-initial-estimate path as the participant task.

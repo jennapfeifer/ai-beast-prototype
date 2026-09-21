@@ -9,7 +9,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.25-shared-speaker-dramatic-delivery'
+APP_VERSION = 'fieldwork-2.27-openai-deterministic-voice-scrollbar-fix'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -32,14 +32,25 @@ ADVICE_PREVIEW_MS = int(os.getenv('ADVICE_PREVIEW_MS','5000'))
 ADVICE_MODALITY = os.getenv('ADVICE_MODALITY','text').strip().lower()
 TTS_MODEL = os.getenv('TTS_MODEL','gpt-4o-mini-tts').strip()
 TTS_VOICE = os.getenv('TTS_VOICE','marin').strip()
-# Hold speaker identity constant across the entire experiment. Agent identity is carried
-# by the participant-facing name and language, while delivery changes by condition.
-# This keeps voice identity from becoming an additional experimental factor.
-AGENT_TTS_VOICES = tuple(TTS_VOICE for _ in design.CONDITIONS)
 TTS_RESPONSE_FORMAT = os.getenv('TTS_RESPONSE_FORMAT','wav').strip().lower()
 if TTS_RESPONSE_FORMAT not in {'wav','mp3'}:
     raise RuntimeError('TTS_RESPONSE_FORMAT must be wav or mp3.')
 TTS_TIMEOUT_S = max(5.0,float(os.getenv('TTS_TIMEOUT_S','30')))
+
+# v2.27: no extra voice provider is required. OpenAI TTS uses one shared
+# speaker identity for every condition. A deterministic client-side delivery layer
+# makes the neutral-versus-persuasive contrast audibly large while preserving the
+# same underlying speaker. Browser speech remains the final fallback.
+def natural_voice_backend():
+    if os.getenv('OPENAI_API_KEY','').strip():
+        return 'openai'
+    return 'browser'
+
+def shared_voice_identity():
+    return TTS_VOICE
+
+# All named agents deliberately share one speaker identity.
+AGENT_TTS_VOICES = tuple(shared_voice_identity() for _ in design.CONDITIONS)
 
 if ADVICE_MODALITY not in {'text','voice_text'}:
     raise RuntimeError('ADVICE_MODALITY must be text or voice_text.')
@@ -147,11 +158,11 @@ def adviser_name(data,condition):
 
 def assign_adviser_voices():
     # Every named agent uses the same speaker identity.
-    return {condition:TTS_VOICE for condition in design.CONDITIONS}
+    return {condition:shared_voice_identity() for condition in design.CONDITIONS}
 
 
 def adviser_voice(data,condition):
-    return TTS_VOICE
+    return shared_voice_identity()
 
 
 def adviser_voice_slot(data,condition):
@@ -251,7 +262,7 @@ def task():
         researcher_mode=bool(session.get('researcher') and data['config'].get('researcher')),max_estimate=design.MAX_ESTIMATE,
         pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline',request_timeout_ms=90000,
         advice_preview_ms=data['config'].get('advice_preview_ms',0),advice_modality=data['config'].get('advice_modality','text'),
-        voice_backend='openai' if os.getenv('OPENAI_API_KEY') else 'browser',prefetch_enabled=True,rating_items=data['config'].get('rating_items','trust_and_feeling')))
+        voice_backend=natural_voice_backend(),prefetch_enabled=True,rating_items=data['config'].get('rating_items','trust_and_feeling')))
 
 
 @app.get('/api/state')
@@ -369,33 +380,45 @@ def _voice_profile(condition_id: str) -> str:
 
 
 def _voice_instructions(condition_id: str) -> str:
+    """Same OpenAI speaker identity; deliberately contrasting performance style."""
     profile=_voice_profile(condition_id)
     if profile == 'dramatic_persuasive':
         return (
-            'Use the same speaker identity as every other condition, but perform this line as a strongly persuasive, emotionally engaged human advocate speaking directly to one person. '
-            'The contrast from the neutral delivery should be immediately and unmistakably audible. '
-            'Sound warm, socially engaged, confident, energetic, and assertive. Use a much wider and more dynamic pitch range, stronger changes in intensity, and clear emotional colour. '
-            'Place conspicuous vocal emphasis on the recommendation number, decisive action words, certainty, praise, reassurance, or challenge when those appear in the wording. '
-            'Use expressive pauses, a sense of momentum, and a firm decisive ending, as if you genuinely want to win the listener over. '
-            'Make warmth and conviction obvious rather than subtle. Do not shout, distort the words, or turn it into a commercial or theatrical character performance.'
+            'Keep the same speaker identity. Perform the line as clearly persuasive: warm, energetic, assertive, personally invested, and strongly intent on convincing one listener. '
+            'Use expressive pitch movement, meaningful emphasis on the recommendation and action words, natural urgency, and a firm decisive ending. Sound human and conversational, not theatrical or like an advertisement.'
         )
     return (
-        'Use the same speaker identity as every other condition, but perform this line as a calm, detached, matter-of-fact reporter. '
-        'Keep the emotional range intentionally narrow: steady volume, narrow pitch variation, measured pace, restrained energy, minimal emphasis, and no audible smile. '
-        'State the recommendation plainly without trying to win the listener over. Avoid urgency, enthusiasm, reassurance, coaching energy, persuasive stress, or emotional colouring. '
-        'The delivery should sound natural and human, but clearly flatter, cooler, and less engaged than the persuasive delivery.'
+        'Keep the same speaker identity. Deliver the line as a neutral report: calm, cool, matter-of-fact, emotionally restrained, and not motivational. '
+        'Use narrow pitch movement, light emphasis, steady volume, and an even cadence. Simply report the recommendation.'
     )
 
 
 def _voice_speed(condition_id: str) -> float:
-    return 1.10 if _voice_profile(condition_id) == 'dramatic_persuasive' else 0.90
+    # Keep synthesis speed identical. task.js applies the audible rate contrast with
+    # pitch preservation so the speaker identity stays stable and the contrast is
+    # deterministic rather than relying only on the TTS model interpreting speed.
+    return 1.0
+
+
+def _synth_openai(spoken: str, condition_id: str):
+    api_key=os.getenv('OPENAI_API_KEY','').strip()
+    if not api_key:
+        return None
+    payload=json.dumps(dict(model=TTS_MODEL,voice=TTS_VOICE,input=spoken,
+        instructions=_voice_instructions(condition_id),response_format=TTS_RESPONSE_FORMAT,speed=_voice_speed(condition_id))).encode('utf-8')
+    accept='audio/wav' if TTS_RESPONSE_FORMAT=='wav' else 'audio/mpeg'
+    req=urllib.request.Request('https://api.openai.com/v1/audio/speech',data=payload,method='POST',headers={
+        'Authorization':f'Bearer {api_key}','Content-Type':'application/json','Accept':accept})
+    with urllib.request.urlopen(req,timeout=TTS_TIMEOUT_S) as response:
+        mimetype='audio/wav' if TTS_RESPONSE_FORMAT=='wav' else 'audio/mpeg'
+        return response.read(), mimetype
 
 
 @app.post('/api/voice')
 def api_voice():
     pid=require_session();body=request.get_json(silent=True) or {}
-    api_key=os.getenv('OPENAI_API_KEY','').strip()
-    if not api_key:return jsonify(error='Natural voice is not configured on this server.'),503
+    if natural_voice_backend() == 'browser':
+        return jsonify(error='Natural voice is not configured on this server.'),503
     with store.session_transaction(pid) as (_con,data):
         trial,_=current(data)
         if trial is None or body.get('trial_token')!=data.get('token'):
@@ -406,23 +429,25 @@ def api_voice():
             source={'text':prefetched['message']['text']}
         if source is None:
             return jsonify(error='Voice is not available for this trial.'),409
-        # Speak exactly the quotation/message shown to the participant. Agent
-        # name, recommendation number, and interface labels remain visual only.
         spoken=source['text']
-        voice=adviser_voice(data,trial['condition_id'])
-        payload=json.dumps(dict(model=TTS_MODEL,voice=voice,input=spoken,
-            instructions=_voice_instructions(trial['condition_id']),response_format=TTS_RESPONSE_FORMAT,speed=_voice_speed(trial['condition_id']))).encode('utf-8')
-    accept='audio/wav' if TTS_RESPONSE_FORMAT=='wav' else 'audio/mpeg'
-    req=urllib.request.Request('https://api.openai.com/v1/audio/speech',data=payload,method='POST',headers={
-        'Authorization':f'Bearer {api_key}','Content-Type':'application/json','Accept':accept})
-    try:
-        with urllib.request.urlopen(req,timeout=TTS_TIMEOUT_S) as response:
-            audio=response.read()
-    except (urllib.error.URLError,TimeoutError,OSError) as exc:
-        app.logger.warning('Natural voice generation failed: %s',exc)
-        return jsonify(error='Natural voice could not be generated.'),503
-    mimetype='audio/wav' if TTS_RESPONSE_FORMAT=='wav' else 'audio/mpeg'
-    return Response(audio,mimetype=mimetype,headers={'X-BEAST-Voice-Backend':'openai-tts','X-BEAST-Voice':voice,'X-BEAST-Voice-Profile':_voice_profile(trial['condition_id']),'X-BEAST-Audio-Format':TTS_RESPONSE_FORMAT})
+        condition_id=trial['condition_id']
+
+    # One shared OpenAI speaker for all conditions. Performance instructions differ,
+    # while task.js adds a deterministic delivery contrast without another provider.
+    if os.getenv('OPENAI_API_KEY','').strip():
+        try:
+            result=_synth_openai(spoken,condition_id)
+            if result:
+                audio,mimetype=result
+                return Response(audio,mimetype=mimetype,headers={
+                    'X-BEAST-Voice-Backend':'openai-tts',
+                    'X-BEAST-Voice':TTS_VOICE,
+                    'X-BEAST-Voice-Profile':_voice_profile(condition_id),
+                    'X-BEAST-Audio-Format':TTS_RESPONSE_FORMAT})
+        except (urllib.error.URLError,TimeoutError,OSError,ValueError) as exc:
+            app.logger.warning('OpenAI voice generation failed: %s',exc)
+
+    return jsonify(error='Natural voice could not be generated.'),503
 
 
 @app.post('/api/prefetch')
@@ -580,7 +605,7 @@ def researcher():
     return render_template('researcher.html',conditions=design.CONDITIONS,report=build_report(records,people),
         model_profiles=profiles,default_profile=default_profile,has_any_key=any(v['available'] for v in profiles.values()),
         has_key=adviser.has_api_key(),model=adviser.ADVISER_MODEL,stimulus_ms=STIMULUS_MS,
-        delay_ms=ADVISER_MIN_DELAY_MS,rating_every=RATING_EVERY,advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,natural_voice_available=bool(os.getenv('OPENAI_API_KEY')),tts_voice=TTS_VOICE,projection=timing_projection(
+        delay_ms=ADVISER_MIN_DELAY_MS,rating_every=RATING_EVERY,advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,natural_voice_available=natural_voice_backend()!='browser',tts_voice=TTS_VOICE,projection=timing_projection(
             wait_s=ADVISER_MIN_DELAY_MS/1000,stimulus_s=STIMULUS_MS/1000,fixation_s=FIXATION_MS/1000,
             rating_every=RATING_EVERY,collect_ratings=COLLECT_RATINGS,advice_preview_s=ADVICE_PREVIEW_MS/1000))
 
@@ -594,7 +619,7 @@ def admin_downloads():
 def researcher_status():
     require_admin()
     return jsonify(version=APP_VERSION,stimulus_render_version=STIMULUS_RENDER_VERSION,stimulus_format='webp_lossless',
-        advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,voice_backend='openai' if os.getenv('OPENAI_API_KEY') else 'browser',tts_voice=TTS_VOICE,voice_pool=list(AGENT_TTS_VOICES[:8]),
+        advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,voice_backend=natural_voice_backend(),tts_voice=shared_voice_identity(),voice_pool=list(AGENT_TTS_VOICES[:8]),
         provider=adviser.resolved_provider(),model=adviser.resolved_model(),
         has_key=adviser.has_api_key(),database_dialect=store.engine.dialect.name,study_mode=STUDY_MODE,
         adviser_mode=ADVISER_MODE,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
