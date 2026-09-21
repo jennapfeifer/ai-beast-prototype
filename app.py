@@ -9,7 +9,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.27-openai-deterministic-voice-scrollbar-fix'
+APP_VERSION = 'fieldwork-2.28-shared-voice-prosody-only'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -37,7 +37,7 @@ if TTS_RESPONSE_FORMAT not in {'wav','mp3'}:
     raise RuntimeError('TTS_RESPONSE_FORMAT must be wav or mp3.')
 TTS_TIMEOUT_S = max(5.0,float(os.getenv('TTS_TIMEOUT_S','30')))
 
-# v2.27: no extra voice provider is required. OpenAI TTS uses one shared
+# v2.28: no extra voice provider is required. OpenAI TTS uses one shared
 # speaker identity for every condition. A deterministic client-side delivery layer
 # makes the neutral-versus-persuasive contrast audibly large while preserving the
 # same underlying speaker. Browser speech remains the final fallback.
@@ -385,18 +385,17 @@ def _voice_instructions(condition_id: str) -> str:
     if profile == 'dramatic_persuasive':
         return (
             'Keep the same speaker identity. Perform the line as clearly persuasive: warm, energetic, assertive, personally invested, and strongly intent on convincing one listener. '
-            'Use expressive pitch movement, meaningful emphasis on the recommendation and action words, natural urgency, and a firm decisive ending. Sound human and conversational, not theatrical or like an advertisement.'
+            'Use expressive pitch movement, stronger stress on the recommendation and action words, warmer vocal energy, and a firm decisive ending. Keep a normal conversational pace comparable to the neutral delivery; do not rush or speed up. Sound human and conversational, not theatrical or like an advertisement.'
         )
     return (
         'Keep the same speaker identity. Deliver the line as a neutral report: calm, cool, matter-of-fact, emotionally restrained, and not motivational. '
-        'Use narrow pitch movement, light emphasis, steady volume, and an even cadence. Simply report the recommendation.'
+        'Use narrow pitch movement, light emphasis, steady volume, and an even cadence at a normal conversational pace. Simply report the recommendation.'
     )
 
 
 def _voice_speed(condition_id: str) -> float:
-    # Keep synthesis speed identical. task.js applies the audible rate contrast with
-    # pitch preservation so the speaker identity stays stable and the contrast is
-    # deterministic rather than relying only on the TTS model interpreting speed.
+    # Keep synthesis speed identical across every condition. Vocal manipulation is
+    # carried only by the acting/prosody instructions, not speaking rate.
     return 1.0
 
 
