@@ -44,19 +44,14 @@ async function prepareNaturalVoice(advice){
   let timeout=null;
   try{
     const controller=typeof AbortController!=='undefined'?new AbortController():null;
-    if(controller)timeout=setTimeout(()=>controller.abort(),12000);
+    if(controller)timeout=setTimeout(()=>controller.abort(),20000);
     const response=await fetch('/api/voice',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':CFG.csrf},body:JSON.stringify({trial_token:token}),...(controller?{signal:controller.signal}:{})});
     if(!response.ok)return null;
     const bytes=await response.arrayBuffer();
     if(state?.trial_token!==token)return null;
-    const AudioCtx=window.AudioContext||window.webkitAudioContext;
-    if(AudioCtx){
-      if(!voiceAudioContext)voiceAudioContext=new AudioCtx();
-      const buffer=await voiceAudioContext.decodeAudioData(bytes.slice(0));
-      if(state?.trial_token!==token)return null;
-      return {kind:'buffer',buffer,durationMs:Math.ceil(buffer.duration*1000)+120,voiceId:response.headers?.get?.('X-BEAST-Voice')||null,voiceProfile:response.headers?.get?.('X-BEAST-Voice-Profile')||null};
-    }
-    return {kind:'bytes',bytes,mime:response.headers?.get?.('Content-Type')||'audio/wav',durationMs:estimatedSpeechMs(advice.advice_text,advice.voice_tone==='persuasive'?1.08:0.92),voiceId:response.headers?.get?.('X-BEAST-Voice')||null,voiceProfile:response.headers?.get?.('X-BEAST-Voice-Profile')||null};
+    // Keep the generated speaker untouched here. Playback rate is applied later with
+    // pitch preservation, giving a reliable delivery contrast without changing voices.
+    return {kind:'bytes',bytes,mime:response.headers?.get?.('Content-Type')||'audio/wav',durationMs:estimatedSpeechMs(advice.advice_text,1),voiceId:response.headers?.get?.('X-BEAST-Voice')||null,voiceProfile:response.headers?.get?.('X-BEAST-Voice-Profile')||null,voiceBackend:response.headers?.get?.('X-BEAST-Voice-Backend')||null};
   }catch(_error){return null;}finally{if(timeout)clearTimeout(timeout);}
 }
 function loadBrowserVoices(){
@@ -84,10 +79,10 @@ async function prepareBrowserVoice(advice){
   try{
     const voices=rankedBrowserVoices(await loadBrowserVoices());
     const persuasive=advice.voice_tone==='persuasive';
-    const rate=persuasive?1.12:0.90,pitch=persuasive?1.14:0.94;
+    const rate=persuasive?1.12:0.88,pitch=1.0;
     // Keep speaker identity constant in the browser fallback as well. Browser speech cannot
-    // follow performance instructions, so rate/pitch provide a deliberately obvious backup
-    // contrast without changing the underlying voice.
+    // follow acting instructions reliably, so speaking rate is the deliberate backup contrast;
+    // pitch is held constant to avoid turning this into a different-sounding speaker.
     const selected=voices.length?voices[0]:null;
     return {kind:'browser',voice:selected,rate,pitch,
       durationMs:estimatedSpeechMs(advice.advice_text,rate)};
@@ -102,24 +97,37 @@ async function startPreparedVoice(prepared,advice){
   if(!prepared)return null;
   stopCurrentVoice();
   try{
-    if(prepared.kind==='buffer'){
-      if(voiceAudioContext.state==='suspended')await voiceAudioContext.resume();
-      const source=voiceAudioContext.createBufferSource();source.buffer=prepared.buffer;source.connect(voiceAudioContext.destination);
-      let finish;const ended=new Promise(r=>finish=r);activeVoiceNode=source;
-      source.onended=()=>{if(activeVoiceNode===source)activeVoiceNode=null;finish();};
-      source.start(0);markAudioPlayed();return {durationMs:prepared.durationMs,ended,voiceId:prepared.voiceId,voiceProfile:prepared.voiceProfile||null};
-    }
     if(prepared.kind==='bytes'&&typeof Audio!=='undefined'&&typeof Blob!=='undefined'&&typeof URL!=='undefined'){
+      const persuasive=advice.voice_tone==='persuasive';
+      const deliveryRate=persuasive?1.12:0.88;
       const url=URL.createObjectURL(new Blob([prepared.bytes],{type:prepared.mime||'audio/wav'})),audio=new Audio(url);
+      // Same speaker and same pitch; only the delivery rate is deterministically separated.
+      // The TTS acting instruction supplies warmth/assertiveness vs restraint, while this
+      // guarantees that the participant can actually hear a condition-level difference.
+      try{audio.preservesPitch=true;}catch(_error){}
+      try{audio.webkitPreservesPitch=true;}catch(_error){}
+      try{audio.mozPreservesPitch=true;}catch(_error){}
+      audio.playbackRate=deliveryRate;
+      audio.volume=1;
       activeVoiceUrl=url;activeVoiceElement=audio;let finish;const ended=new Promise(r=>finish=r);
       audio.onended=()=>{if(activeVoiceElement===audio)activeVoiceElement=null;try{URL.revokeObjectURL(url);}catch(_error){}if(activeVoiceUrl===url)activeVoiceUrl=null;finish();};
-      await audio.play();markAudioPlayed();return {durationMs:prepared.durationMs,ended,voiceId:prepared.voiceId,voiceProfile:prepared.voiceProfile||null};
+      let durationMs=prepared.durationMs;
+      if(!Number.isFinite(audio.duration)){
+        await new Promise(resolve=>{
+          let done=false;const finishMeta=()=>{if(done)return;done=true;clearTimeout(timer);resolve();};
+          audio.addEventListener('loadedmetadata',finishMeta,{once:true});
+          const timer=setTimeout(finishMeta,450);
+        });
+      }
+      if(Number.isFinite(audio.duration)&&audio.duration>0)durationMs=Math.ceil((audio.duration/deliveryRate)*1000)+120;
+      else durationMs=estimatedSpeechMs(advice.advice_text,deliveryRate);
+      await audio.play();markAudioPlayed();return {durationMs,ended,voiceId:prepared.voiceId,voiceProfile:prepared.voiceProfile||null,voiceBackend:prepared.voiceBackend||null,deliveryRate};
     }
     if(prepared.kind==='browser'){
       const utterance=new SpeechSynthesisUtterance(advice.advice_text);utterance.lang='en-US';utterance.rate=prepared.rate;utterance.pitch=prepared.pitch||1;utterance.volume=1;
       if(prepared.voice)utterance.voice=prepared.voice;
       let finish;const ended=new Promise(r=>finish=r);utterance.onstart=markAudioPlayed;utterance.onend=finish;utterance.onerror=finish;
-      window.speechSynthesis.speak(utterance);return {durationMs:prepared.durationMs,ended,voiceId:prepared.voice?.name||null};
+      window.speechSynthesis.speak(utterance);return {durationMs:prepared.durationMs,ended,voiceId:prepared.voice?.name||null,voiceBackend:'browser-speech',deliveryRate:prepared.rate};
     }
   }catch(_error){}
   return null;
@@ -221,7 +229,7 @@ async function showAdvice(initial,advice) {
     try{
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
       const playback=CFG.advice_modality==='voice_text'?await startPreparedVoice(prepared,advice):null;
-      if(playback?.voiceId)timing.voice_id=playback.voiceId;if(playback?.voiceProfile)timing.voice_profile=playback.voiceProfile;
+      if(playback?.voiceId)timing.voice_id=playback.voiceId;if(playback?.voiceProfile)timing.voice_profile=playback.voiceProfile;if(playback?.voiceBackend)timing.voice_backend_used=playback.voiceBackend;if(playback?.deliveryRate)timing.voice_delivery_rate=playback.deliveryRate;
       const holdMs=Math.max(CFG.advice_preview_ms,playback?.durationMs||0);
       timing.voice_hold_ms=Math.round(holdMs);
       if(holdMs>0){const exposure=await visibleSleep(holdMs);timing.advice_preview_ms=exposure.active;timing.advice_preview_wall_ms=exposure.wall;}

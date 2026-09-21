@@ -205,3 +205,27 @@ html.task-root body.task-surface{
   height:max(16px,env(safe-area-inset-bottom));background:#101418;
   z-index:2147483646;pointer-events:none;
 }
+
+/* v2.26: dark participant information pages must style the root scrolling canvas too.
+   The previous fix only applied .task-root on /task; consent/instructions/debrief left
+   the HTML canvas white, which Safari exposed as a full-width horizontal strip/track. */
+html.task-root,html.task-root body{background:#101418!important}
+html.task-root{overflow-x:hidden!important;overflow-x:clip!important;overscroll-behavior-x:none}
+html.task-root body{overflow-x:hidden!important;overflow-x:clip!important}
+@supports selector(html:has(body.task-surface)){
+  html:has(body.task-surface){background:#101418!important;overflow-x:hidden!important;overflow-x:clip!important}
+}
+
+/* v2.27: the screenshot shows a native horizontal scrollbar track, not an unpainted
+   page background. Safari can expose that track even when the overflow is only a
+   fraction of a pixel. Suppress horizontal overflow at both scrolling roots and hide
+   the horizontal WebKit scrollbar itself; vertical scrolling remains available. */
+html.task-root,html.task-root body.task-surface{
+  width:100%!important;max-width:100vw!important;
+  overflow-x:hidden!important;overscroll-behavior-x:none!important;
+}
+html.task-root::-webkit-scrollbar:horizontal,
+html.task-root body.task-surface::-webkit-scrollbar:horizontal{
+  height:0!important;display:none!important;
+}
+html.task-root body.task-surface{position:relative}
