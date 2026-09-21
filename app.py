@@ -9,7 +9,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.29-shared-voice-matched-cadence'
+APP_VERSION = 'fieldwork-2.30-shared-voice-high-contrast-persuasion'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -375,28 +375,34 @@ def prepared_advice(con,data,trial,initial):
 
 def _voice_profile(condition_id: str) -> str:
     if condition_id in {'C4','C5','C7','C8'}:
-        return 'dramatic_persuasive'
+        return 'high_contrast_persuasive'
     return 'neutral_reporter'
 
 
 def _voice_instructions(condition_id: str) -> str:
-    """Same speaker and matched temporal cadence; manipulate affect/conviction, not rhythm."""
+    """Same speaker and pace; create a deliberately large affect/conviction contrast without using tempo."""
     profile=_voice_profile(condition_id)
-    cadence = (
-        'Keep a steady natural conversational rhythm. Keep phrase timing, pause frequency, pause length, and sentence-final timing consistent. '
-        'Do not rush, slow down, add dramatic pauses, stretch important words, or punch the ending. Keep the speaking rate at a normal, even pace throughout. '
+    timing = (
+        'Keep the same speaker identity and a normal conversational speaking pace. '
+        'Do not speak faster or slower because of the condition. Avoid long dramatic pauses, rushed phrasing, or stretched words. '
+        'Keep timing natural and controlled; create the contrast through vocal attitude, emotional colour, pitch, intensity, and emphasis rather than tempo. '
     )
-    if profile == 'dramatic_persuasive':
+    if profile == 'high_contrast_persuasive':
         return (
-            'Keep the same speaker identity. ' + cadence +
-            'Make the delivery clearly persuasive through vocal affect rather than timing: sound warm, engaged, confident, assertive, personally invested, and strongly intent on convincing one listener. '
-            'Use richer emotional colour, brighter warmth, stronger conviction, and clear but brief emphasis on the recommendation and action words without changing their duration. '
-            'Sound human and conversational, not theatrical, sales-like, or exaggerated.'
+            timing +
+            'Make the persuasive intent unmistakable. Speak as if you genuinely and strongly want a skeptical listener to follow this recommendation. '
+            'Use substantially more warmth, social engagement, confidence, conviction, and assertiveness than a neutral report. '
+            'Sound personally invested and compelling: use an audible sense of encouragement, a fuller and more energetic vocal presence, a wider but still natural pitch range, and stronger dynamic intensity. '
+            'Give clear, decisive vocal emphasis to the recommendation number and to words that ask the listener to act, while keeping those words at a normal duration. '
+            'Let certainty and interpersonal pressure be audible in the tone: confident, encouraging, direct, and slightly insistent. '
+            'The contrast from the neutral delivery should be immediately noticeable to a listener. '
+            'Stay natural and one-to-one, not like an advertisement, announcer, stage actor, or cartoon character.'
         )
     return (
-        'Keep the same speaker identity. ' + cadence +
-        'Deliver the line as a neutral report: calm, cool, matter-of-fact, emotionally restrained, and not motivational. '
-        'Use low emotional colour, restrained warmth, and light emphasis while preserving the same smooth conversational rhythm.'
+        timing +
+        'Deliver the line as a deliberately neutral informational report. Sound calm, cool, matter-of-fact, and emotionally restrained. '
+        'Use little social warmth, little motivational energy, a relatively narrow natural pitch range, modest intensity, and only functional emphasis needed for intelligibility. '
+        'Do not sound encouraging, excited, persuasive, personally invested, or as though you are trying to influence the listener.'
     )
 
 
