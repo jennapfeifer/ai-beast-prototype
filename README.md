@@ -1,3 +1,11 @@
+## v2.29 — shared voice with matched cadence
+
+Voice timing is now explicitly matched across neutral and persuasive conditions. Persuasion is carried by warmth/engagement/confidence rather than faster rhythm, dramatic pauses, stretched words, or a punched ending. See `SHARED_VOICE_MATCHED_CADENCE_v2.29.md`.
+
+# v2.28 — shared speaker, prosody-only voice contrast
+
+All conditions now use the same OpenAI TTS speaker at the same synthesis and playback rate (`1.0`). Neutral versus persuasive delivery differs only through acting/prosody instructions. Persuasive speech is warmer, more assertive, more expressive, and more emphatic, but is explicitly told not to speak faster than neutral. Browser speech fallback also uses rate `1.0` in every condition. The Safari bottom-scrollbar fix from v2.27 is retained.
+
 # v2.27 — shared OpenAI voice + deterministic delivery contrast + Safari scrollbar fix
 
 No Hume account or extra API key is required. Voice + text uses the existing OpenAI TTS configuration with **one shared speaker identity** for every agent. Neutral and persuasive conditions still receive different acting instructions, but the browser now also applies a deterministic, pitch-preserving delivery-rate contrast (**0.88 neutral vs 1.12 persuasive**) so the manipulation remains clearly audible even when the TTS model renders the acting instructions subtly. The actual playback rate is logged as `voice_delivery_rate`.
