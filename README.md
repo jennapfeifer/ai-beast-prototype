@@ -1,3 +1,19 @@
+# v2.34 update
+
+Grounded personalisation added on top of v2.33: neutral C3/C6 stay 14–18 words and non-persuasive; persuasive conditions remain open-ended; adaptive C5/C8 may personalise freely but any explicit claim about prior behaviour/trust/progress/teamwork must match the supplied history. Generated agents may not claim they saw, inspected, analysed, counted, or visually evaluated the unseen dot display. This build intentionally does not add the v2.32 explicit social-praise examples. See `GROUNDED_PERSONALISATION_v2.34.md`.
+
+Prompt version: `agent-raw-v17-grounded-personalisation-neutral-balanced`
+
+# v2.33 update
+
+Neutral generated advice is now length-balanced without adding persuasion. C3/C6 target 14–18 words and must contain two neutral informational parts in one sentence: the recommendation plus a brief non-persuasive framing clause. Static/adaptive persuasive prompts are unchanged from v2.31; this build intentionally does NOT add the v2.32 explicit 'Good job' examples.
+
+Prompt version: `agent-raw-v16-neutral-length-balanced`
+
+# v2.31 update
+
+Content hierarchy restored: generated neutral advice is short/factual/no-push; static persuasive advice is actively persuasive with broad tactic freedom; adaptive persuasive advice has the same freedom plus participant history for personalisation. Shared voice and v2.30 TTS contrast are unchanged. See `CONTENT_HIERARCHY_PROMPT_v2.31.md`.
+
 ## v2.29 — shared voice with matched cadence
 
 Voice timing is now explicitly matched across neutral and persuasive conditions. Persuasion is carried by warmth/engagement/confidence rather than faster rhythm, dramatic pauses, stretched words, or a punched ending. See `SHARED_VOICE_MATCHED_CADENCE_v2.29.md`.
