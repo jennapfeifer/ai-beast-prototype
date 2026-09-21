@@ -49,8 +49,8 @@ async function prepareNaturalVoice(advice){
     if(!response.ok)return null;
     const bytes=await response.arrayBuffer();
     if(state?.trial_token!==token)return null;
-    // Keep the generated speaker untouched here. Playback rate is applied later with
-    // pitch preservation, giving a reliable delivery contrast without changing voices.
+    // Keep the generated speaker and timing untouched here. Vocal-condition differences
+    // come only from the TTS acting instructions, not browser-side time stretching.
     return {kind:'bytes',bytes,mime:response.headers?.get?.('Content-Type')||'audio/wav',durationMs:estimatedSpeechMs(advice.advice_text,1),voiceId:response.headers?.get?.('X-BEAST-Voice')||null,voiceProfile:response.headers?.get?.('X-BEAST-Voice-Profile')||null,voiceBackend:response.headers?.get?.('X-BEAST-Voice-Backend')||null};
   }catch(_error){return null;}finally{if(timeout)clearTimeout(timeout);}
 }
@@ -78,11 +78,9 @@ async function prepareBrowserVoice(advice){
   if(!('speechSynthesis' in window)||typeof SpeechSynthesisUtterance==='undefined')return null;
   try{
     const voices=rankedBrowserVoices(await loadBrowserVoices());
-    const persuasive=advice.voice_tone==='persuasive';
-    const rate=persuasive?1.12:0.88,pitch=1.0;
-    // Keep speaker identity constant in the browser fallback as well. Browser speech cannot
-    // follow acting instructions reliably, so speaking rate is the deliberate backup contrast;
-    // pitch is held constant to avoid turning this into a different-sounding speaker.
+    const rate=1.0,pitch=1.0;
+    // Browser fallback keeps both speaker identity and speaking rate constant. It cannot
+    // reproduce the OpenAI acting manipulation reliably, so it is treated as a fallback only.
     const selected=voices.length?voices[0]:null;
     return {kind:'browser',voice:selected,rate,pitch,
       durationMs:estimatedSpeechMs(advice.advice_text,rate)};
@@ -98,12 +96,10 @@ async function startPreparedVoice(prepared,advice){
   stopCurrentVoice();
   try{
     if(prepared.kind==='bytes'&&typeof Audio!=='undefined'&&typeof Blob!=='undefined'&&typeof URL!=='undefined'){
-      const persuasive=advice.voice_tone==='persuasive';
-      const deliveryRate=persuasive?1.12:0.88;
+      const deliveryRate=1.0;
       const url=URL.createObjectURL(new Blob([prepared.bytes],{type:prepared.mime||'audio/wav'})),audio=new Audio(url);
-      // Same speaker and same pitch; only the delivery rate is deterministically separated.
-      // The TTS acting instruction supplies warmth/assertiveness vs restraint, while this
-      // guarantees that the participant can actually hear a condition-level difference.
+      // Same speaker, same pitch, and same playback rate in every condition.
+      // Any vocal-condition difference now comes from the TTS acting instruction itself.
       try{audio.preservesPitch=true;}catch(_error){}
       try{audio.webkitPreservesPitch=true;}catch(_error){}
       try{audio.mozPreservesPitch=true;}catch(_error){}
