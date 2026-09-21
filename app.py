@@ -9,7 +9,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.30-shared-voice-high-contrast-persuasion'
+APP_VERSION = 'fieldwork-2.31-content-hierarchy-free-persuasion'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -233,7 +233,7 @@ def start():
     advice_modality=(request.form.get('advice_modality',ADVICE_MODALITY) if researcher else ADVICE_MODALITY).strip().lower()
     if advice_modality not in {'text','voice_text'}:return 'Invalid advice modality.',400
     conf=dict(conditions=conditions,trials_per_block=n,skip_practice=researcher and request.form.get('skip_practice')=='1',
-              adviser_protocol='raw_agent_v14',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),adviser_voices=assign_adviser_voices(),
+              adviser_protocol='raw_agent_v15',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),adviser_voices=assign_adviser_voices(),
               test_index=integer(request.form.get('test_index','0'),0,7) if researcher else 0,
               adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
               model_profile_id=profile_id,model_profile=profile,
@@ -324,7 +324,7 @@ def prepared_advice(con,data,trial,initial):
     style=condition_agent_style(trial['condition_id'], trial.get('adviser_style'))
     advice=design.clamp_int(initial*1.05) if practice else design.advice_number(trial['condition_id'],trial['true_count'],initial or 100)
     protocol=data['config'].get('adviser_protocol')
-    no_current_estimate=protocol in {'raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14'}
+    no_current_estimate=protocol in {'raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14','raw_agent_v15'}
     cached=data.get('prefetched')
     if cached and cached.get('token')==data.get('token'):
         # Fixed messages are independent of the current estimate even when C2's
@@ -335,7 +335,7 @@ def prepared_advice(con,data,trial,initial):
     rows=[] if practice else store.block_history(data['_pid'],trial['condition_id'],con)
     history=rows if style=='adaptive' else []
     generator=adviser.generate_offline_message if data['config']['adviser_mode']=='offline' else adviser.generate_message
-    if protocol in {'flexible_v8','raw_agent_v9','raw_agent_v10','raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14'} and data['config']['adviser_mode']=='live':
+    if protocol in {'flexible_v8','raw_agent_v9','raw_agent_v10','raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14','raw_agent_v15'} and data['config']['adviser_mode']=='live':
         generator=adviser_flexible.generate_message
     # For v14 generated conditions, the model never receives the current first
     # estimate. Fixed/practice controls remain scripted and may still use the
@@ -444,8 +444,7 @@ def api_voice():
         spoken=source['text']
         condition_id=trial['condition_id']
 
-    # One shared OpenAI speaker for all conditions. Performance instructions differ,
-    # while task.js adds a deterministic delivery contrast without another provider.
+    # One shared OpenAI speaker for all conditions. Only the TTS performance instructions differ by condition; browser playback rate/pitch are matched.
     if os.getenv('OPENAI_API_KEY','').strip():
         try:
             result=_synth_openai(spoken,condition_id)

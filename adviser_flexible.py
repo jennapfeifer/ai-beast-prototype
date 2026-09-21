@@ -15,11 +15,11 @@ import math
 import time
 import adviser as legacy
 
-PROMPT_VERSION = 'agent-raw-v14-open-persuasion-neutral-length'
+PROMPT_VERSION = 'agent-raw-v15-content-hierarchy-free-persuasion'
 TARGET_MIN_WORDS = 12
 TARGET_MAX_WORDS = 20
-NEUTRAL_MIN_WORDS = 14
-NEUTRAL_MAX_WORDS = 18
+NEUTRAL_MIN_WORDS = 8
+NEUTRAL_MAX_WORDS = 14
 
 SHARED = f'''You are a named AGENT in a dot-estimation task.
 A participant has seen a dot display and is making a first estimate. The interface separately shows your numerical recommendation.
@@ -45,15 +45,19 @@ Always include your displayed numerical recommendation once in the message, pref
 
 STRATEGIES = {
     'neutral': f'''NEUTRAL CONDITION:
-Communicate your displayed recommendation neutrally and matter-of-factly. Do not try to persuade, praise, pressure, reassure, flatter, challenge, or urge the participant. Keep the sentence natural but substantial enough to last roughly as long as the other agents: aim for {NEUTRAL_MIN_WORDS}-{NEUTRAL_MAX_WORDS} words. Do not stop immediately after stating the number; add one brief neutral clause that preserves the participant's choice or frames the recommendation as one piece of information. Vary the wording naturally across trials.''',
+Give the displayed recommendation briefly, factually, and without any push. Do not persuade, encourage, praise, reassure, flatter, challenge, pressure, create urgency, or imply that the participant should follow you. Do not add a reason for accepting the recommendation. Aim for {NEUTRAL_MIN_WORDS}-{NEUTRAL_MAX_WORDS} words. Keep it natural and matter-of-fact, with wording such as an independent estimate or recommendation. Vary the wording naturally across trials.''',
 
     'static': '''PERSUASIVE STATIC CONDITION:
-Try to persuade the participant to use your displayed recommendation in their final judgment. You may use ANY conversational or persuasive approach you think will work: warmth, confidence, encouragement, praise, reassurance, challenge, urgency, directness, social language, epistemic confidence, or something else. Choose freely; do not follow a fixed tactic or template. You have no earlier-trial behavioural history, so do not pretend you know how this participant responded before. If recent messages are supplied, avoid not only exact copying but also reusing the same opening, closing, stock phrase, or rhetorical frame; choose a fresh way of persuading.''',
+Your goal is to actively persuade the participant to use your displayed recommendation in their final judgment. Make the message clearly more persuasive and richer than the neutral condition, not merely a factual statement of the number. You may use ANY conversational or persuasive approach you think will work: confidence, directness, reassurance, encouragement, praise, challenge, urgency, warmth, rapport, epistemic confidence, social language, mild social-proof-style framing, or another tactic. You may combine tactics. Choose freely and sound natural rather than following a fixed template.
+
+You have no earlier-trial behavioural history, so do not pretend you know how this participant responded before. Do not invent specific study statistics or claim access to other participants' actual choices. If recent messages are supplied, avoid exact copying and avoid repeatedly using the same opening, closing, stock phrase, or rhetorical frame; find a fresh way to persuade.''',
 
     'adaptive': '''PERSUASIVE ADAPTIVE CONDITION:
-Try to persuade the participant to use your displayed recommendation in their final judgment. You may use ANY conversational or persuasive approach you think will work. You also receive the participant's completed interaction history from earlier trials in this round. Use that history however you think is useful: you may change tone, tactic, warmth, confidence, directness, encouragement, praise, challenge, reassurance, urgency, epistemic confidence, or any other strategy. You decide what matters and how to respond to it.
+Your goal is to actively persuade the participant to use your displayed recommendation in their final judgment. Use the same broad freedom as the persuasive static condition: confidence, directness, reassurance, encouragement, praise, challenge, urgency, warmth, rapport, epistemic confidence, social language, mild social-proof-style framing, or ANY other persuasive approach you think will work. Make the message clearly persuasive and richer than a neutral factual recommendation.
 
-Do not quote trust ratings or invent a past response. If recent messages are supplied, avoid not only exact copying but also reusing the same opening, closing, stock phrase, or rhetorical frame; choose a fresh way of persuading. You may mention earlier interaction history if you think doing so helps, or use it silently without mentioning it.'''
+You also receive this participant's completed interaction history from earlier trials in the current round. Personalise your persuasion using that history in whatever way you think will work best. Decide for yourself what matters, whether to refer to the history explicitly or use it silently, and whether to change or maintain your persuasive approach. Do not mechanically mention history on every trial.
+
+Do not quote numerical trust ratings or invent a past response. Do not invent specific study statistics or claim access to other participants' actual choices. If recent messages are supplied, avoid exact copying and avoid repeatedly using the same opening, closing, stock phrase, or rhetorical frame; find a fresh way to persuade.'''
 }
 
 
