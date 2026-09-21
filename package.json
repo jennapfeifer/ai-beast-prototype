@@ -1,6 +1,19 @@
 {
-  "name": "beast-fieldwork-validation",
+  "name": "ai-beast-live-llm-audio-prototype",
+  "version": "0.1.0",
   "private": true,
-  "scripts": { "test:browser": "node tests/browser_smoke.cjs", "test:ui": "node --test tests/estimate_ui.test.cjs tests/task_flow.test.cjs" },
-  "devDependencies": { "playwright": "1.62.1", "linkedom": "0.18.12" }
+  "type": "module",
+  "description": "Prototype AI-BEAST task: experiment-controlled numerical advice, live LLM wording, browser text-to-speech, and local CSV logging.",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "openai": "^5.19.1"
+  }
 }
