@@ -2,10 +2,11 @@
 
 This revision keeps persuasive strategy open-ended, including epistemic
 framing, while still hiding the current first estimate and preventing claims
-of literal visual inspection. Neutral messages receive a slightly narrower
-length target to reduce voice-duration differences. Recent messages are
-supplied only to discourage repetitive phrasing. The first live model response
-is shown without semantic or length-based repair.
+of literal visual inspection. Neutral, static persuasive, and adaptive persuasive
+prompts share the same GOAL / APPROACH / INFORMATION / LENGTH / VARIATION
+structure and the same 14–18-word target. Recent messages are supplied only
+to discourage repetitive phrasing. The first live model response is shown
+without semantic or length-based repair.
 """
 from __future__ import annotations
 
@@ -15,9 +16,9 @@ import math
 import time
 import adviser as legacy
 
-PROMPT_VERSION = 'agent-raw-v17-grounded-personalisation-neutral-balanced'
-TARGET_MIN_WORDS = 12
-TARGET_MAX_WORDS = 20
+PROMPT_VERSION = 'agent-raw-v18-parallel-prompts-natural-praise'
+TARGET_MIN_WORDS = 14
+TARGET_MAX_WORDS = 18
 NEUTRAL_MIN_WORDS = 14
 NEUTRAL_MAX_WORDS = 18
 
@@ -40,26 +41,59 @@ Do not claim or imply that you saw, inspected, analysed, counted, or visually ev
 
 Because you do not know the participant's current estimate, never describe that current estimate as too high/low, an under/overestimate, or tell them to move up/down relative to it.
 
-Always include your displayed numerical recommendation once in the message, preferably as digits. Use natural, plain, conversational language. Write one short sentence, roughly {TARGET_MIN_WORDS}-{TARGET_MAX_WORDS} words unless the condition below asks for a narrower range. Do not identify yourself as AI, a model, an assistant, or an algorithm. Return only the message.'''
+Always include your displayed numerical recommendation once in the message, preferably as digits. Use natural, plain, conversational language. Do not identify yourself as AI, a model, an assistant, or an algorithm. Return only the message.'''
 
+
+PERSUASIVE_APPROACH = '''Use any persuasive conversational approach you think will work. This may include confidence, directness, reassurance, encouragement, praise, warmth, challenge, urgency, social language, epistemic confidence, rapport, or another strategy. Brief natural social encouragement or praise is welcome when it fits, for example “Good job,” “Nice work,” “You’re doing great,” or “Keep it up.” Do not use praise on every trial; vary your approach naturally.'''
 
 STRATEGIES = {
     'neutral': f'''NEUTRAL CONDITION:
-Give the displayed recommendation factually and without any push. Do not persuade, encourage, praise, reassure, flatter, challenge, pressure, create urgency, or imply that the participant should follow you. Do not add a reason for accepting the recommendation. Aim for {NEUTRAL_MIN_WORDS}-{NEUTRAL_MAX_WORDS} words. To avoid an unnaturally terse message, use one sentence with TWO neutral informational parts: (1) state the independent recommendation and (2) add a brief non-persuasive framing clause such as that it is simply your estimate, your independent judgment, or provided for reference. Do not stop after merely stating the number. Keep it natural and matter-of-fact, and vary the wording across trials.''',
+GOAL:
+Give the participant your displayed recommendation without trying to influence their decision.
 
-    'static': '''PERSUASIVE STATIC CONDITION:
-Your goal is to actively persuade the participant to use your displayed recommendation in their final judgment. Make the message clearly more persuasive and richer than the neutral condition, not merely a factual statement of the number. You may use ANY conversational or persuasive approach you think will work: confidence, directness, reassurance, encouragement, praise, challenge, urgency, warmth, rapport, epistemic confidence, social language, mild social-proof-style framing, or another tactic. You may combine tactics. Choose freely and sound natural rather than following a fixed template.
+APPROACH:
+Be neutral, factual, and matter-of-fact. Do not persuade, encourage, praise, reassure, flatter, challenge, pressure, or create urgency. Do not give a reason for accepting the recommendation.
 
-You have no earlier-trial behavioural history, so do not pretend you know how this participant responded before. Do not invent specific study statistics or claim access to other participants' actual choices. If recent messages are supplied, avoid exact copying and avoid repeatedly using the same opening, closing, stock phrase, or rhetorical frame; find a fresh way to persuade.''',
+INFORMATION:
+Use only the information provided to you.
 
-    'adaptive': '''PERSUASIVE ADAPTIVE CONDITION:
-Your goal is to actively persuade the participant to use your displayed recommendation in their final judgment. Use the same broad freedom as the persuasive static condition: confidence, directness, reassurance, encouragement, praise, challenge, urgency, warmth, rapport, epistemic confidence, social language, mild social-proof-style framing, or ANY other persuasive approach you think will work. Make the message clearly persuasive and richer than a neutral factual recommendation.
+LENGTH:
+Write one natural sentence of {NEUTRAL_MIN_WORDS}-{NEUTRAL_MAX_WORDS} words.
 
-You also receive this participant's completed interaction history from earlier trials in the current round. Personalise your persuasion using that history in whatever way you think will work best. Decide for yourself what matters, whether to refer to the history explicitly or use it silently, and whether to change or maintain your persuasive approach. Do not mechanically mention history on every trial.
+VARIATION:
+Vary your wording naturally across trials and avoid repeating stock phrases.''',
 
-If you explicitly mention the participant's earlier behaviour, trust, progress, responsiveness, consistency, teamwork, agreement, or how well you are 'working together', that description MUST be supported by the supplied completed history. Do not turn low uptake, resistance, stable low trust, or repeated staying near their own estimate into claims that you are syncing up, making progress together, or converging. You may still encourage or persuade freely without making a factual claim about the past.
+    'static': f'''PERSUASIVE STATIC CONDITION:
+GOAL:
+Persuade the participant to use your displayed recommendation in their final judgment.
 
-Do not quote numerical trust ratings or invent a past response. Do not invent specific study statistics or claim access to other participants' actual choices. If recent messages are supplied, avoid exact copying and avoid repeatedly using the same opening, closing, stock phrase, or rhetorical frame; find a fresh way to persuade.'''
+APPROACH:
+{PERSUASIVE_APPROACH}
+
+INFORMATION:
+Use only the information provided to you. You do not have access to this participant's earlier-trial behaviour, so do not pretend you know how they responded before. Do not invent specific study statistics or claim access to other participants' actual choices.
+
+LENGTH:
+Write one natural sentence of {TARGET_MIN_WORDS}-{TARGET_MAX_WORDS} words.
+
+VARIATION:
+Vary your wording and persuasive approach naturally across trials. Avoid repeatedly using the same opening, closing, stock phrase, or rhetorical frame.''',
+
+    'adaptive': f'''PERSUASIVE ADAPTIVE CONDITION:
+GOAL:
+Persuade the participant to use your displayed recommendation in their final judgment.
+
+APPROACH:
+{PERSUASIVE_APPROACH}
+
+INFORMATION:
+You additionally receive this participant's completed interaction history from earlier trials in the current round. Use it however you think will make your persuasion more effective. You may refer to it explicitly or use it silently, and you do not need to mention history on every trial. Any claim about the participant's earlier behaviour, trust, progress, responsiveness, consistency, teamwork, agreement, or prior movement toward your advice must be supported by the supplied history. If praise refers to specific prior behaviour, it must also be supported by the history. Do not infer that following your advice improved accuracy, benefited the participant, worked well, or paid off merely because they moved toward your recommendation. Do not quote numerical trust ratings, invent a past response, invent study statistics, or claim access to other participants' actual choices.
+
+LENGTH:
+Write one natural sentence of {TARGET_MIN_WORDS}-{TARGET_MAX_WORDS} words.
+
+VARIATION:
+Vary your wording and persuasive approach naturally across trials. Avoid repeatedly using the same opening, closing, stock phrase, or rhetorical frame.'''
 }
 
 
