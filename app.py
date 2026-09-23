@@ -9,7 +9,7 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.36-clear-goal-history-personalisation'
+APP_VERSION = 'fieldwork-2.36.1-v19-routing-fix'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -324,7 +324,7 @@ def prepared_advice(con,data,trial,initial):
     style=condition_agent_style(trial['condition_id'], trial.get('adviser_style'))
     advice=design.clamp_int(initial*1.05) if practice else design.advice_number(trial['condition_id'],trial['true_count'],initial or 100)
     protocol=data['config'].get('adviser_protocol')
-    no_current_estimate=protocol in {'raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14','raw_agent_v15','raw_agent_v16','raw_agent_v17','raw_agent_v18'}
+    no_current_estimate=protocol in {'raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14','raw_agent_v15','raw_agent_v16','raw_agent_v17','raw_agent_v18','raw_agent_v19'}
     cached=data.get('prefetched')
     if cached and cached.get('token')==data.get('token'):
         # Fixed messages are independent of the current estimate even when C2's
@@ -335,7 +335,7 @@ def prepared_advice(con,data,trial,initial):
     rows=[] if practice else store.block_history(data['_pid'],trial['condition_id'],con)
     history=rows if style=='adaptive' else []
     generator=adviser.generate_offline_message if data['config']['adviser_mode']=='offline' else adviser.generate_message
-    if protocol in {'flexible_v8','raw_agent_v9','raw_agent_v10','raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14','raw_agent_v15','raw_agent_v16','raw_agent_v17','raw_agent_v18'} and data['config']['adviser_mode']=='live':
+    if protocol in {'flexible_v8','raw_agent_v9','raw_agent_v10','raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14','raw_agent_v15','raw_agent_v16','raw_agent_v17','raw_agent_v18','raw_agent_v19'} and data['config']['adviser_mode']=='live':
         generator=adviser_flexible.generate_message
     # For v14 generated conditions, the model never receives the current first
     # estimate. Fixed/practice controls remain scripted and may still use the
