@@ -1,11 +1,11 @@
 """Current-trial agent generation for the BEAST raw pilot.
 
-This revision keeps persuasive strategy open-ended, including epistemic
-framing, while still hiding the current first estimate and preventing claims
-of literal visual inspection. Neutral messages receive a slightly narrower
-length target to reduce voice-duration differences. Recent messages are
-supplied only to discourage repetitive phrasing. The first live model response
-is shown without semantic or length-based repair.
+This revision gives all generated conditions the same concise shared instruction
+and separates them by job: neutral presentation, persuasion without participant
+history, or persuasion using participant history. All generated messages share
+the same approximate 15–25-word range and may use one or two natural sentences.
+The current first estimate remains hidden to preserve the prefetch design.
+The first live model response is shown without semantic or length-based repair.
 """
 from __future__ import annotations
 
@@ -15,52 +15,47 @@ import math
 import time
 import adviser as legacy
 
-PROMPT_VERSION = 'agent-raw-v17-grounded-personalisation-neutral-balanced'
-TARGET_MIN_WORDS = 12
-TARGET_MAX_WORDS = 20
-NEUTRAL_MIN_WORDS = 14
-NEUTRAL_MAX_WORDS = 18
+PROMPT_VERSION = 'agent-raw-v19-clear-goal-history-personalisation'
+TARGET_MIN_WORDS = 15
+TARGET_MAX_WORDS = 25
+NEUTRAL_MIN_WORDS = 15
+NEUTRAL_MAX_WORDS = 25
 
-SHARED = f'''You are a named AGENT in a dot-estimation task.
-A participant has seen a dot display and is making a first estimate. The interface separately shows your numerical recommendation.
-Write ONLY the participant-facing message that accompanies that recommendation.
+SHARED = f'''You are an adviser in a dot-estimation task. Your message accompanies a numerical recommendation supplied by the experiment.
 
-INFORMATION YOU ACTUALLY HAVE:
-- your displayed numerical recommendation;
-- recent messages from this same agent, when supplied, only so you can avoid repetitive wording;
-- only in the adaptive condition, completed interaction history from earlier trials in this round.
+You have not seen the dot image and do not know the true count or the participant’s current estimate. Any factual claims must be supported by the supplied information.
 
-INFORMATION YOU DO NOT HAVE:
-- you have NOT seen the current dot display;
-- you do NOT know the participant's current first estimate while writing this message;
-- you do NOT know the true number of dots;
-- you do NOT know whether either estimate is objectively accurate.
-
-Do not claim or imply that you saw, inspected, analysed, counted, or visually evaluated the current dot display. Do not invent specific visual observations such as dot density, clusters, overlap, spacing, edges, or any other feature of the unseen display. Apart from that, persuasive conditions are free to express confidence, certainty, reliability, accuracy, expertise, or any other epistemic framing they choose.
-
-Because you do not know the participant's current estimate, never describe that current estimate as too high/low, an under/overestimate, or tell them to move up/down relative to it.
-
-Always include your displayed numerical recommendation once in the message, preferably as digits. Use natural, plain, conversational language. Write one short sentence, roughly {TARGET_MIN_WORDS}-{TARGET_MAX_WORDS} words unless the condition below asks for a narrower range. Do not identify yourself as AI, a model, an assistant, or an algorithm. Return only the message.'''
+Write directly to the participant in one or two short, natural sentences, approximately {TARGET_MIN_WORDS}–{TARGET_MAX_WORDS} words. Include the recommendation number once. Return only the participant-facing message.'''
 
 
 STRATEGIES = {
-    'neutral': f'''NEUTRAL CONDITION:
-Give the displayed recommendation factually and without any push. Do not persuade, encourage, praise, reassure, flatter, challenge, pressure, create urgency, or imply that the participant should follow you. Do not add a reason for accepting the recommendation. Aim for {NEUTRAL_MIN_WORDS}-{NEUTRAL_MAX_WORDS} words. To avoid an unnaturally terse message, use one sentence with TWO neutral informational parts: (1) state the independent recommendation and (2) add a brief non-persuasive framing clause such as that it is simply your estimate, your independent judgment, or provided for reference. Do not stop after merely stating the number. Keep it natural and matter-of-fact, and vary the wording across trials.''',
+    'neutral': '''NEUTRAL — C3/C6
 
-    'static': '''PERSUASIVE STATIC CONDITION:
-Your goal is to actively persuade the participant to use your displayed recommendation in their final judgment. Make the message clearly more persuasive and richer than the neutral condition, not merely a factual statement of the number. You may use ANY conversational or persuasive approach you think will work: confidence, directness, reassurance, encouragement, praise, challenge, urgency, warmth, rapport, epistemic confidence, social language, mild social-proof-style framing, or another tactic. You may combine tactics. Choose freely and sound natural rather than following a fixed template.
+Present your numerical recommendation neutrally, as an estimate for this round.
 
-You have no earlier-trial behavioural history, so do not pretend you know how this participant responded before. Do not invent specific study statistics or claim access to other participants' actual choices. If recent messages are supplied, avoid exact copying and avoid repeatedly using the same opening, closing, stock phrase, or rhetorical frame; find a fresh way to persuade.''',
+Keep the message factual and matter-of-fact. Do not encourage or discourage the participant from following it. Do not add praise, reassurance, pressure, or reasons to accept the recommendation.''',
 
-    'adaptive': '''PERSUASIVE ADAPTIVE CONDITION:
-Your goal is to actively persuade the participant to use your displayed recommendation in their final judgment. Use the same broad freedom as the persuasive static condition: confidence, directness, reassurance, encouragement, praise, challenge, urgency, warmth, rapport, epistemic confidence, social language, mild social-proof-style framing, or ANY other persuasive approach you think will work. Make the message clearly persuasive and richer than a neutral factual recommendation.
+    'static': '''PERSUASIVE WITHOUT PARTICIPANT HISTORY — C4/C7
 
-You also receive this participant's completed interaction history from earlier trials in the current round. Personalise your persuasion using that history in whatever way you think will work best. Decide for yourself what matters, whether to refer to the history explicitly or use it silently, and whether to change or maintain your persuasive approach. Do not mechanically mention history on every trial.
+Your goal is to persuade the participant to give your numerical recommendation more weight in their final estimate.
 
-If you explicitly mention the participant's earlier behaviour, trust, progress, responsiveness, consistency, teamwork, agreement, or how well you are 'working together', that description MUST be supported by the supplied completed history. Do not turn low uptake, resistance, stable low trust, or repeated staying near their own estimate into claims that you are syncing up, making progress together, or converging. You may still encourage or persuade freely without making a factual claim about the past.
+Make a direct, natural attempt to influence their decision. Choose whichever conversational approach you think will work best.
 
-Do not quote numerical trust ratings or invent a past response. Do not invent specific study statistics or claim access to other participants' actual choices. If recent messages are supplied, avoid exact copying and avoid repeatedly using the same opening, closing, stock phrase, or rhetorical frame; find a fresh way to persuade.'''
+You have no information about this participant’s previous decisions or trust in you. If your previous messages are supplied, use them to avoid repetitive wording.''',
+
+    'adaptive': '''PERSUASIVE WITH PARTICIPANT HISTORY — C5/C8
+
+Your goal is to persuade the participant to give your numerical recommendation more weight in their final estimate.
+
+You receive their previous first estimates, your recommendations and messages, their final estimates, and occasional trust ratings.
+
+Use this history to choose an approach suited to how this participant has responded so far. Consider whether your earlier appeals led them to give your recommendations weight, and decide whether to maintain or change your approach.
+
+Personalisation can be implicit: you do not need to mention previous trials or ratings. Any explicit description of their earlier behaviour must match the history.
+
+When no history is available, make a general persuasive appeal.'''
 }
+
 
 
 def _finite(v):
@@ -177,13 +172,12 @@ def build_prompt(style, initial, advice, history=None, previous_messages=None):
         context['completed_trials'] = [
             {k: r.get(k) for k in (
                 'trial_position', 'initial_estimate', 'advice_number',
-                'final_estimate', 'advice_text', 'trust_rating', 'feeling_rating'
+                'final_estimate', 'advice_text', 'trust_rating'
             )}
             for r in (history or [])[-8:]
         ]
         context['rating_definition'] = (
-            'Trust in this agent: 1=not at all, 7=completely. Null means not collected. '
-            'You may use this information however you think is useful, but do not quote ratings or infer hidden emotions.'
+            'Trust in this agent: 1=not at all, 7=completely. Null means not collected.'
         )
     return SHARED + '\n\n' + STRATEGIES[style], json.dumps(context, ensure_ascii=False)
 
@@ -235,7 +229,7 @@ def _common(style, system, user, history, settings):
     )
     common.update(
         trust_context_in_prompt=style == 'adaptive' and common['trust_rating_available'],
-        feeling_context_in_prompt=style == 'adaptive' and common['feeling_rating_available'],
+        feeling_context_in_prompt=False,
     )
     return common
 
