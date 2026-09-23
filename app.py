@@ -9,7 +9,30 @@ from sqlalchemy import update
 import adviser, design, store
 from pilot import build_report, timing_projection
 
-APP_VERSION = 'fieldwork-2.36.2-firm-word-range'
+# v2.36.3 researcher-only model-comparison presets. These extend the existing
+# adviser presets without changing participant prompts or generation logic.
+_BASE_MODEL_PROFILES = adviser.model_profiles
+
+def _model_profiles_with_midrange_options():
+    profiles = _BASE_MODEL_PROFILES()
+    common = dict(
+        attempts=adviser.ADVISER_MAX_ATTEMPTS,
+        budget=adviser.ADVISER_TOTAL_BUDGET_SECONDS,
+        retry_policy_version=adviser.RETRY_POLICY_VERSION,
+    )
+    profiles['gpt_terra'] = dict(
+        label='GPT-5.6 Terra · no reasoning',
+        provider='openai', model='gpt-5.6-terra', reasoning='none', timeout=15, **common
+    )
+    profiles['gemini_36'] = dict(
+        label='Gemini 3.6 Flash · minimal thinking',
+        provider='gemini', model='gemini-3.6-flash', reasoning='minimal', timeout=15, **common
+    )
+    return profiles
+
+adviser.model_profiles = _model_profiles_with_midrange_options
+
+APP_VERSION = 'fieldwork-2.36.3-midrange-model-test'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
