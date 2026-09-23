@@ -15,7 +15,7 @@ import math
 import time
 import adviser as legacy
 
-PROMPT_VERSION = 'agent-raw-v19-clear-goal-history-personalisation'
+PROMPT_VERSION = 'agent-raw-v20-clear-goal-history-firm-length'
 TARGET_MIN_WORDS = 15
 TARGET_MAX_WORDS = 25
 NEUTRAL_MIN_WORDS = 15
@@ -25,7 +25,7 @@ SHARED = f'''You are an adviser in a dot-estimation task. Your message accompani
 
 You have not seen the dot image and do not know the true count or the participant’s current estimate. Any factual claims must be supported by the supplied information.
 
-Write directly to the participant in one or two short, natural sentences, approximately {TARGET_MIN_WORDS}–{TARGET_MAX_WORDS} words. Include the recommendation number once. Return only the participant-facing message.'''
+Write directly to the participant in one or two short, natural sentences of {TARGET_MIN_WORDS}–{TARGET_MAX_WORDS} words. Include the recommendation number once. Return only the participant-facing message.'''
 
 
 STRATEGIES = {
