@@ -146,6 +146,12 @@ def export_rows(table) -> List[Dict[str, Any]]:
         rows = con.execute(select(table)).mappings().all()
     return [dict(r) for r in rows]
 
+def participant_trials(pid: str) -> List[Dict[str, Any]]:
+    with engine.begin() as con:
+        rows=con.execute(select(trials).where(trials.c.pid==pid).order_by(trials.c.id)).mappings().all()
+    return [dict(r) for r in rows]
+
+
 def messages_for_rating(rater_id: str, limit: int = 40) -> List[Dict[str, Any]]:
     done = select(message_ratings.c.trial_id).where(message_ratings.c.rater_id == rater_id)
     with engine.begin() as con:

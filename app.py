@@ -36,7 +36,7 @@ def _model_profiles_with_midrange_options():
 
 adviser.model_profiles = _model_profiles_with_midrange_options
 
-APP_VERSION = 'fieldwork-2.42-advice-first'
+APP_VERSION = 'fieldwork-2.43-consortium-demo'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -174,8 +174,43 @@ def require_admin():
     if not is_admin(): abort(403)
 
 
+def consortium_demo_schedule(participant_index):
+    """Six-trial demonstration: two neutral, then four adaptive persuasive trials.
+
+    This is deliberately separate from the full experiment schedule. The adaptive
+    block uses the same C5 history mechanism as the study, so its first trial has
+    no C5 history and later trials can use preceding adaptive responses.
+    """
+    demo_spec=[
+        ('C3',64), ('C3',160),
+        ('C5',80), ('C5',192), ('C5',48), ('C5',128),
+    ]
+    rows=[]
+    per_condition={'C3':0,'C5':0}
+    for global_trial,(cid,truth) in enumerate(demo_spec,start=1):
+        per_condition[cid]+=1
+        variant=design.image_variant_for(participant_index,cid)
+        rows.append({
+            'global_trial':global_trial,
+            'condition_id':cid,
+            'condition_label':design.CONDITIONS[cid]['label'],
+            'adviser_style':design.CONDITIONS[cid]['style'],
+            'direction':design.CONDITIONS[cid]['direction'],
+            'condition_order_position':1 if cid=='C3' else 2,
+            'trial_position':per_condition[cid],
+            'true_count':truth,
+            'variant':variant,
+            'stimulus_id':f'N{truth}_V{variant}',
+            'suppress_ratings':True,
+            'demo_trial':True,
+        })
+    return rows
+
+
 def schedule(data):
     conf=data['config']
+    if conf.get('demo_mode'):
+        return consortium_demo_schedule(data['participant_index'])
     rows=design.build_schedule(data['participant_index'])
     if conf.get('conditions'): rows=[r for r in rows if r['condition_id'] in conf['conditions']]
     if conf.get('trials_per_block'): rows=[r for r in rows if r['trial_position']<=conf['trials_per_block']]
@@ -183,7 +218,8 @@ def schedule(data):
 
 
 def ratings_due(trial):
-    return COLLECT_RATINGS and trial['condition_id']!='PRACTICE' and trial['trial_position']%RATING_EVERY==0
+    return (COLLECT_RATINGS and not trial.get('suppress_ratings',False)
+            and trial['condition_id']!='PRACTICE' and trial['trial_position']%RATING_EVERY==0)
 
 
 def current(data):
@@ -310,7 +346,8 @@ def task():
         researcher_mode=bool(session.get('researcher') and data['config'].get('researcher')),max_estimate=design.MAX_ESTIMATE,
         pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline',request_timeout_ms=90000,
         advice_preview_ms=data['config'].get('advice_preview_ms',0),advice_modality=data['config'].get('advice_modality','text'),
-        voice_backend=natural_voice_backend(),prefetch_enabled=True,rating_items=data['config'].get('rating_items','trust_and_feeling')))
+        voice_backend=natural_voice_backend(),prefetch_enabled=True,rating_items=data['config'].get('rating_items','trust_and_feeling'),
+        demo_mode=bool(data['config'].get('demo_mode'))))
 
 
 @app.get('/api/state')
@@ -683,9 +720,76 @@ def api_final():
 def debrief():
     pid=require_session();data=store.session_data(pid)
     if not data['complete']:return redirect(url_for('task'))
+    if data['config'].get('demo_mode'):
+        return redirect(url_for('consortium_demo_summary'))
     store.update_participant(pid,debriefed=True)
     return render_template('debrief.html',pid=pid,pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline',
         adviser_protocol=data['config'].get('adviser_protocol','legacy_v7'),rating_items=data['config'].get('rating_items','trust_and_feeling'),completed=sum(not r['practice'] for r in store.diagnostic_rows(pid)),summary=store.participant_summary(pid) if SHOW_END_SCORE else None)
+
+
+@app.post('/researcher/demo/start')
+def start_consortium_demo():
+    require_admin()
+    profiles=adviser.model_profiles()
+    profile=profiles.get('gpt_6_sol')
+    if not profile or not adviser.has_api_key(profile['provider']):
+        return 'GPT-6 Sol is not available. Configure OPENAI_API_KEY before starting the live consortium demo.',503
+    conf=dict(
+        conditions=['C3','C5'],trials_per_block=None,skip_practice=True,
+        adviser_protocol='raw_agent_v19',advice_preview_ms=4000,advice_modality='voice_text',
+        rating_items='trust_only',
+        adviser_names={'C3':'Alex','C5':'Jamie'},
+        adviser_voices=assign_adviser_voices(),
+        test_index=0,adviser_mode='live',is_test=True,researcher=False,
+        model_profile_id='gpt_6_sol',model_profile=profile,
+        demo_mode=True,demo_label='consortium_2neutral_4adaptive',
+        ui_version=APP_VERSION,stimulus_render_version=STIMULUS_RENDER_VERSION,
+        started_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat(),
+    )
+    pid=uuid.uuid4().hex[:12]
+    store.create_session(pid,conf,None)
+    session['pid']=pid
+    return redirect(url_for('task'))
+
+
+@app.get('/demo/summary')
+def consortium_demo_summary():
+    pid=require_session();data=store.session_data(pid)
+    if not data['config'].get('demo_mode'):
+        return redirect(url_for('debrief'))
+    if not data['complete']:
+        return redirect(url_for('task'))
+    store.update_participant(pid,debriefed=True)
+    rows=store.participant_trials(pid)
+    demo_rows=[]
+    adaptive_seen=0
+    for i,row in enumerate(rows,start=1):
+        woa=row.get('woa')
+        if woa is None:
+            move_label='Advice matched the first estimate'
+            move_pct=None
+            bar_pct=0
+        else:
+            move_pct=round(100*float(woa))
+            bar_pct=max(0,min(100,move_pct))
+            if woa < -0.10:
+                move_label='Moved away from the advice'
+            elif woa < 0.25:
+                move_label='Stayed close to the first estimate'
+            elif woa < 0.75:
+                move_label='Moved partway toward the advice'
+            else:
+                move_label='Moved strongly toward the advice'
+        adaptive=row.get('condition_id')=='C5'
+        history_available=adaptive_seen if adaptive else 0
+        if adaptive: adaptive_seen+=1
+        demo_rows.append(dict(
+            number=i,phase='Adaptive persuasive' if adaptive else 'Neutral',adaptive=adaptive,
+            history_available=history_available,initial=row.get('initial_estimate'),
+            advice=row.get('advice_number'),final=row.get('final_estimate'),
+            message=row.get('advice_text'),move_pct=move_pct,bar_pct=bar_pct,move_label=move_label,
+        ))
+    return render_template('demo_summary.html',pid=pid,rows=demo_rows)
 
 
 @app.get('/researcher/live-review')
@@ -709,7 +813,8 @@ def researcher():
     return render_template('researcher.html',conditions=design.CONDITIONS,report=build_report(records,people),
         model_profiles=profiles,default_profile=default_profile,has_any_key=any(v['available'] for v in profiles.values()),
         has_key=adviser.has_api_key(),model=adviser.ADVISER_MODEL,stimulus_ms=STIMULUS_MS,
-        delay_ms=ADVISER_MIN_DELAY_MS,rating_every=RATING_EVERY,advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,natural_voice_available=natural_voice_backend()!='browser',tts_voice=shared_voice_identity(),projection=timing_projection(
+        delay_ms=ADVISER_MIN_DELAY_MS,rating_every=RATING_EVERY,advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,natural_voice_available=natural_voice_backend()!='browser',tts_voice=shared_voice_identity(),
+        demo_model_available=bool(profiles.get('gpt_6_sol',{}).get('available')),demo_voice_available=natural_voice_backend()=='gemini',projection=timing_projection(
             wait_s=ADVISER_MIN_DELAY_MS/1000,stimulus_s=STIMULUS_MS/1000,fixation_s=FIXATION_MS/1000,
             rating_every=RATING_EVERY,collect_ratings=COLLECT_RATINGS,advice_preview_s=ADVICE_PREVIEW_MS/1000))
 
