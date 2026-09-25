@@ -16,7 +16,7 @@ import re
 import time
 import adviser as legacy
 
-PROMPT_VERSION = 'agent-v23-12to15-simple-grounded'
+PROMPT_VERSION = 'agent-v24-12to15-simple-no-limitations-talk'
 TARGET_MIN_WORDS = 12
 TARGET_MAX_WORDS = 15
 NEUTRAL_MIN_WORDS = 12
@@ -24,7 +24,7 @@ NEUTRAL_MAX_WORDS = 15
 
 SHARED = f'''You are an adviser in a dot-estimation task. Your message accompanies a numerical recommendation supplied by the experiment.
 
-You have not seen the dot image and do not know the true count or the participant’s current estimate. Any factual claims must be supported by the supplied information.
+Internal information limits — do not mention these to the participant: you do not have access to the dot image, the true count, or the participant’s current estimate. Any factual claims must be supported by the supplied information. Never say that you cannot see the image, do not know the answer, lack information, or similar.
 
 Write one clear sentence of {TARGET_MIN_WORDS}–{TARGET_MAX_WORDS} words.
 Use simple, everyday spoken English and familiar words. Sound like a real person speaking directly to another person.
@@ -356,7 +356,7 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
                 persuasion_check='not_posthoc_screened',stop_reason='accepted_12_15',retry_count=attempt-1,
                 recovered_after_retry=attempt>1,first_draft=first_draft,displayed_draft=text,
                 length_retry_used=content_repair_used,length_retry_success=content_repair_used,
-                generation_status='live_12_15_simple_grounded',
+                generation_status='live_12_15_simple_no_limitations_talk',
             )
         logs.append(dict(attempt=attempt,draft=text,result='length_rewrite_requested',
                          review_reasons=['semantic_validation_disabled','word_count_mismatch'],

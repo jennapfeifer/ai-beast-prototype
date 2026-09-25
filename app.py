@@ -36,7 +36,7 @@ def _model_profiles_with_midrange_options():
 
 adviser.model_profiles = _model_profiles_with_midrange_options
 
-APP_VERSION = 'fieldwork-2.40-gpt6-gemini38tts-stable-voice'
+APP_VERSION = 'fieldwork-2.41-render-fast-stable-voice'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -96,9 +96,20 @@ if ADVICE_PREVIEW_MS not in {0,3000,4000,5000}:
 STUDY_CONTACT = os.getenv('STUDY_CONTACT','')
 ETHICS_DETAILS = os.getenv('ETHICS_DETAILS','')
 logging.basicConfig(level=logging.INFO)
-from assets import ensure_stimuli, STIMULUS_DIR, STIMULUS_RENDER_VERSION
-ensure_stimuli()
+from assets import ensure_stimuli, ensure_stimulus, STIMULUS_DIR, STIMULUS_RENDER_VERSION
 store.init_db()
+
+# Warm the deterministic stimulus cache after import without blocking Gunicorn startup.
+def _warm_stimuli_in_background():
+    try:
+        # Let Gunicorn bind its port before doing CPU-heavy image generation.
+        time.sleep(2.0)
+        ensure_stimuli()
+    except Exception as exc:
+        app.logger.warning('Background stimulus warmup failed: %s', exc)
+
+import threading
+threading.Thread(target=_warm_stimuli_in_background, name='stimulus-warmup', daemon=True).start()
 
 
 def csrf():
@@ -335,7 +346,9 @@ def api_state():
 def stimulus(token):
     pid=require_session();data=store.session_data(pid);trial,_=current(data)
     if not trial or data.get('pending') or not data.get('token') or not hmac.compare_digest(token,data['token']):abort(404)
-    return send_file(STIMULUS_DIR/f"{trial['stimulus_id']}.webp",mimetype='image/webp',max_age=0,download_name='dot-field.webp')
+    # Generate only this deterministic image if the background cache has not reached it yet.
+    path=ensure_stimulus(trial['stimulus_id'],trial['true_count'],trial['variant'])
+    return send_file(path,mimetype='image/webp',max_age=0,download_name='dot-field.webp')
 
 
 def advice_payload(pending,data):
@@ -412,20 +425,24 @@ def prepared_advice(con,data,trial,initial):
 
 def _voice_profile(condition_id: str) -> str:
     if condition_id in {'C4','C5','C7','C8'}:
-        return 'stable_slightly_warm'
-    return 'stable_neutral'
+        return 'same_voice_persuasive_high_contrast'
+    return 'same_voice_neutral_restrained'
 
 
 def _voice_instructions(condition_id: str) -> str:
-    """Keep one stable speaker identity; use only a small prosody difference by condition."""
-    base = (
-        'Natural conversational delivery. Calm, clear, and understated. Use a moderate pace. '
-        'Keep pitch, energy, and emphasis restrained. Do not act, exaggerate, or sound theatrical. '
-    )
+    """Keep one speaker identity; manipulate only delivery tone."""
     if condition_id in {'C4','C5','C7','C8'}:
-        return base + 'Be only slightly warmer and more encouraging than a neutral reading.'
-    return base + 'Keep the delivery matter-of-fact, without added warmth or pressure.'
-
+        return (
+            'Keep exactly the same speaker identity and the same moderate speaking pace as every other trial. '
+            'Use a clearly persuasive tone: noticeably warmer, more confident, socially engaged, encouraging, and slightly insistent. '
+            'Use stronger conviction and clear vocal emphasis on the recommendation and action words. '
+            'Make the persuasive intent easy to hear, but stay natural and one-to-one, never theatrical or like an advertisement.'
+        )
+    return (
+        'Keep exactly the same speaker identity and the same moderate speaking pace as every other trial. '
+        'Use a clearly neutral tone: calm, restrained, matter-of-fact, and low in warmth and motivational energy. '
+        'Use only ordinary emphasis needed for clarity. Do not sound encouraging, persuasive, excited, or personally invested.'
+    )
 
 def _voice_speed(condition_id: str) -> float:
     # Keep synthesis speed identical across every condition. Vocal manipulation is
