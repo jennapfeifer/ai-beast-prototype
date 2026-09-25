@@ -40,9 +40,9 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-luna").strip()
 ADVISER_THINKING_LEVEL = os.getenv("ADVISER_THINKING_LEVEL", "minimal").strip().lower()
 ADVISER_REASONING_EFFORT = os.getenv("ADVISER_REASONING_EFFORT", "none").strip().lower()
-ADVISER_MIN_WORDS = int(os.getenv("ADVISER_MIN_WORDS", "6"))
-ADVISER_MAX_WORDS = int(os.getenv("ADVISER_MAX_WORDS", "12"))
-ADVISER_WORD_TOLERANCE = max(0,min(4,int(os.getenv("ADVISER_WORD_TOLERANCE", "3"))))
+ADVISER_MIN_WORDS = int(os.getenv("ADVISER_MIN_WORDS", "15"))
+ADVISER_MAX_WORDS = int(os.getenv("ADVISER_MAX_WORDS", "15"))
+ADVISER_WORD_TOLERANCE = max(0,min(4,int(os.getenv("ADVISER_WORD_TOLERANCE", "0"))))
 # Explicit v2.7 policy keys replace the old one-attempt/12-second settings.
 # Old Render entries may remain; they do not silently disable the new policy.
 ADVISER_MAX_ATTEMPTS = max(1,min(5,int(os.getenv("ADVISER_MAX_ATTEMPTS", "3"))))
@@ -72,22 +72,21 @@ def resolved_model() -> str:
 
 ADVISER_MODEL = resolved_model()
 
-# C1/C2 share a short, non-persuasive wording bank. The advice NUMBER is rendered
-# elsewhere, so these notes intentionally contain no number.
+# C1/C2 share simple, non-persuasive 15-word sentences. The recommendation is included once, naturally in the sentence.
 CONTROL_MESSAGE_BANK = [
-    "That is simply the estimate I would use myself if I were completing this particular dot-counting trial.",
-    "This is just the estimate I would personally enter if I were making this judgment on my own.",
-    "My own estimate for this display lands there, based only on the judgment I would make independently.",
-    "That is where I would place the total if I were answering this particular trial by myself.",
-    "This is the estimate I would choose independently if I were judging the current display on my own.",
-    "That is simply where my own estimate falls when I make this dot-counting judgment independently myself.",
-    "I would enter this estimate myself if I were making the same dot-counting judgment right now.",
-    "My independent estimate for this display is the one I would personally use if I were answering.",
-    "That is the estimate I would select for this particular display using only my own independent judgment.",
-    "I would personally choose this estimate if I were completing this dot-counting trial on my own.",
-    "This is where my own estimate lands when I make the dot-counting judgment independently for myself.",
-    "That is simply the estimate I would submit for this display if I were making the judgment myself.",
-    "My own judgment would lead me to use this estimate for the dot display in front of me.",
+    "My estimate for this round is {advice}, which is what I would choose independently myself.",
+    "I would choose {advice} for this round if I were making the estimate independently myself.",
+    "For this round, my own independent estimate would be {advice} if I answered by myself.",
+    "My own estimate is {advice}, which is the number I would choose for this round.",
+    "If I were answering this round independently, I would choose {advice} as my own estimate.",
+    "I would use {advice} here if I were making this estimate entirely on my own.",
+    "My independent estimate for this display is {advice}, which is what I would submit myself.",
+    "For these dots, I would choose {advice} if I were making the judgment independently myself.",
+    "My own judgment would lead me to choose {advice} as my estimate for this round.",
+    "I would submit {advice} for this display if I were making the estimate independently myself.",
+    "For this display, my own estimate would be {advice} if I were answering independently myself.",
+    "I would enter {advice} here if I were making this same estimate independently by myself.",
+    "My estimate would be {advice} for this round if I were making the judgment independently.",
 ]
 ADVISER_SHARED = f"""You are an AI adviser in a dot-estimation task. Your note will be shown after a participant
 has seen a dot image and entered an estimate. The note may be prepared before that estimate is available.
@@ -324,7 +323,7 @@ def control_message(advice: int, key: str) -> Dict[str, Any]:
         participant_index, condition_id, trial_position = 0, "CONTROL", 1
     offset = _stable_seed(f"control|{participant_index}|{condition_id}") % len(CONTROL_MESSAGE_BANK)
     idx = (offset + trial_position - 1) % len(CONTROL_MESSAGE_BANK)
-    text = CONTROL_MESSAGE_BANK[idx]
+    text = CONTROL_MESSAGE_BANK[idx].format(advice=advice)
     return {
         "text": text,
         "source": f"control_template:{idx:02d}",

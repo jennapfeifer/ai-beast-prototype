@@ -1,7 +1,7 @@
 """BEAST Fieldwork: the human experiment, with separate protected pilot tools."""
 from __future__ import annotations
 import adviser_flexible
-import csv, datetime as dt, hashlib, hmac, io, json, logging, math, os, secrets, time, uuid, zipfile, urllib.error, urllib.request
+import base64, csv, datetime as dt, hashlib, hmac, io, json, logging, math, os, secrets, time, uuid, zipfile, urllib.error, urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, session, url_for, send_file
@@ -28,11 +28,15 @@ def _model_profiles_with_midrange_options():
         label='Gemini 3.6 Flash · minimal thinking',
         provider='gemini', model='gemini-3.6-flash', reasoning='minimal', timeout=15, **common
     )
+    profiles['gpt_6_sol'] = dict(
+        label='GPT-6 Sol · no reasoning',
+        provider='openai', model='gpt-6-sol', reasoning='none', timeout=15, **common
+    )
     return profiles
 
 adviser.model_profiles = _model_profiles_with_midrange_options
 
-APP_VERSION = 'fieldwork-2.36.3-midrange-model-test'
+APP_VERSION = 'fieldwork-2.39-gpt6-gemini38tts-exact15'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -51,8 +55,11 @@ COLLECT_RATINGS = os.getenv('COLLECT_RATINGS','1').lower() not in {'0','false'}
 RATING_EVERY = max(1,int(os.getenv('RATING_EVERY','2')))
 PREFILL_FINAL = True  # The v6 final slider starts at the participant's initial estimate.
 SHOW_END_SCORE = os.getenv('SHOW_END_SCORE','1').lower() not in {'0','false'}
-ADVICE_PREVIEW_MS = int(os.getenv('ADVICE_PREVIEW_MS','5000'))
+ADVICE_PREVIEW_MS = int(os.getenv('ADVICE_PREVIEW_MS','0'))
 ADVICE_MODALITY = os.getenv('ADVICE_MODALITY','text').strip().lower()
+TTS_PROVIDER = os.getenv('TTS_PROVIDER','gemini').strip().lower()
+GEMINI_TTS_MODEL = os.getenv('GEMINI_TTS_MODEL','gemini-3.8-flash-tts').strip()
+GEMINI_TTS_VOICE = os.getenv('GEMINI_TTS_VOICE','Kore').strip()
 TTS_MODEL = os.getenv('TTS_MODEL','gpt-4o-mini-tts').strip()
 TTS_VOICE = os.getenv('TTS_VOICE','marin').strip()
 TTS_RESPONSE_FORMAT = os.getenv('TTS_RESPONSE_FORMAT','wav').strip().lower()
@@ -60,19 +67,20 @@ if TTS_RESPONSE_FORMAT not in {'wav','mp3'}:
     raise RuntimeError('TTS_RESPONSE_FORMAT must be wav or mp3.')
 TTS_TIMEOUT_S = max(5.0,float(os.getenv('TTS_TIMEOUT_S','30')))
 
-# v2.28: no extra voice provider is required. OpenAI TTS uses one shared
-# speaker identity for every condition. A deterministic client-side delivery layer
-# makes the neutral-versus-persuasive contrast audibly large while preserving the
-# same underlying speaker. Browser speech remains the final fallback.
+# Natural speech defaults to Gemini 3.8 Flash TTS for stronger, more controllable prosody.
+# The same speaker identity is used across conditions; only delivery style changes.
 def natural_voice_backend():
+    if TTS_PROVIDER == 'gemini' and os.getenv('GEMINI_API_KEY','').strip():
+        return 'gemini'
     if os.getenv('OPENAI_API_KEY','').strip():
         return 'openai'
+    if os.getenv('GEMINI_API_KEY','').strip():
+        return 'gemini'
     return 'browser'
 
 def shared_voice_identity():
-    return TTS_VOICE
+    return GEMINI_TTS_VOICE if natural_voice_backend() == 'gemini' else TTS_VOICE
 
-# All named agents deliberately share one speaker identity.
 AGENT_TTS_VOICES = tuple(shared_voice_identity() for _ in design.CONDITIONS)
 
 if ADVICE_MODALITY not in {'text','voice_text'}:
@@ -176,7 +184,7 @@ def assign_adviser_names():
 
 
 def adviser_name(data,condition):
-    return data['config'].get('adviser_names',{}).get(condition,'Practice Agent' if condition=='PRACTICE' else 'Agent')
+    return data['config'].get('adviser_names',{}).get(condition,'Practice adviser' if condition=='PRACTICE' else 'Adviser')
 
 
 def assign_adviser_voices():
@@ -233,9 +241,9 @@ def consent():
 def start():
     if request.form.get('consent')!='yes': return 'Please confirm your consent before starting.',400
     researcher=bool(session.get('researcher') and request.form.get('researcher_test')=='1')
-    mode=request.form.get('adviser_mode',ADVISER_MODE) if researcher else ADVISER_MODE
+    mode=request.form.get('adviser_mode',ADVISER_MODE) if researcher else 'live'
     if mode not in {'offline','live'}: return 'Invalid adviser mode.',400
-    profile_id=request.form.get('model_profile','server') if researcher else 'server'
+    profile_id=request.form.get('model_profile','server') if researcher else 'gpt_6_sol'
     profiles=adviser.model_profiles()
     if profile_id not in profiles:return 'Unknown model choice. Reload the researcher workspace.',400
     profile=profiles[profile_id]
@@ -250,10 +258,10 @@ def start():
         conditions=[x for x in request.form.getlist('conditions') if x in design.CONDITIONS]
         try: n=integer(request.form.get('trials','13'),1,13)
         except ValueError as e: return str(e),400
-    try:preview_ms=integer(request.form.get('advice_preview_ms',str(ADVICE_PREVIEW_MS)),0,5000) if researcher else ADVICE_PREVIEW_MS
+    try:preview_ms=integer(request.form.get('advice_preview_ms',str(ADVICE_PREVIEW_MS)),0,5000) if researcher else 0
     except ValueError:return 'Invalid advice display setting.',400
     if preview_ms not in {0,3000,4000,5000}:return 'Invalid advice display setting.',400
-    advice_modality=(request.form.get('advice_modality',ADVICE_MODALITY) if researcher else ADVICE_MODALITY).strip().lower()
+    advice_modality=(request.form.get('advice_modality',ADVICE_MODALITY) if researcher else 'voice_text').strip().lower()
     if advice_modality not in {'text','voice_text'}:return 'Invalid advice modality.',400
     conf=dict(conditions=conditions,trials_per_block=n,skip_practice=researcher and request.form.get('skip_practice')=='1',
               adviser_protocol='raw_agent_v19',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),adviser_voices=assign_adviser_voices(),
@@ -398,34 +406,20 @@ def prepared_advice(con,data,trial,initial):
 
 def _voice_profile(condition_id: str) -> str:
     if condition_id in {'C4','C5','C7','C8'}:
-        return 'high_contrast_persuasive'
-    return 'neutral_reporter'
+        return 'warm_persuasive'
+    return 'neutral_conversational'
 
 
 def _voice_instructions(condition_id: str) -> str:
-    """Same speaker and pace; create a deliberately large affect/conviction contrast without using tempo."""
-    profile=_voice_profile(condition_id)
-    timing = (
-        'Keep the same speaker identity and a normal conversational speaking pace. '
-        'Do not speak faster or slower because of the condition. Avoid long dramatic pauses, rushed phrasing, or stretched words. '
-        'Keep timing natural and controlled; create the contrast through vocal attitude, emotional colour, pitch, intensity, and emphasis rather than tempo. '
-    )
-    if profile == 'high_contrast_persuasive':
+    """One shared voice; vary only delivery style while keeping pace natural."""
+    if condition_id in {'C4','C5','C7','C8'}:
         return (
-            timing +
-            'Make the persuasive intent unmistakable. Speak as if you genuinely and strongly want a skeptical listener to follow this recommendation. '
-            'Use substantially more warmth, social engagement, confidence, conviction, and assertiveness than a neutral report. '
-            'Sound personally invested and compelling: use an audible sense of encouragement, a fuller and more energetic vocal presence, a wider but still natural pitch range, and stronger dynamic intensity. '
-            'Give clear, decisive vocal emphasis to the recommendation number and to words that ask the listener to act, while keeping those words at a normal duration. '
-            'Let certainty and interpersonal pressure be audible in the tone: confident, encouraging, direct, and slightly insistent. '
-            'The contrast from the neutral delivery should be immediately noticeable to a listener. '
-            'Stay natural and one-to-one, not like an advertisement, announcer, stage actor, or cartoon character.'
+            'Warm, natural, and conversational. Sound confident, engaged, and encouraging, with clear persuasive intent. '
+            'Use a moderate speaking pace and gentle emphasis on the recommendation. Keep it one-to-one and believable, not theatrical.'
         )
     return (
-        timing +
-        'Deliver the line as a deliberately neutral informational report. Sound calm, cool, matter-of-fact, and emotionally restrained. '
-        'Use little social warmth, little motivational energy, a relatively narrow natural pitch range, modest intensity, and only functional emphasis needed for intelligibility. '
-        'Do not sound encouraging, excited, persuasive, personally invested, or as though you are trying to influence the listener.'
+        'Natural, clear, and conversational. Sound calm, neutral, and matter-of-fact, with restrained emotion. '
+        'Use a moderate speaking pace and only normal emphasis needed for clarity.'
     )
 
 
@@ -449,6 +443,36 @@ def _synth_openai(spoken: str, condition_id: str):
         return response.read(), mimetype
 
 
+_gemini_tts_client = None
+
+def _synth_gemini(spoken: str, condition_id: str):
+    global _gemini_tts_client
+    key=os.getenv('GEMINI_API_KEY','').strip()
+    if not key:
+        return None
+    from google import genai
+    if _gemini_tts_client is None:
+        _gemini_tts_client=genai.Client(api_key=key)
+    interaction=_gemini_tts_client.interactions.create(
+        model=GEMINI_TTS_MODEL,
+        input=[{
+            'type':'user_input',
+            'content':[{
+                'type':'text',
+                'text':spoken,
+                'annotations':[{'type':'speech_metadata','style':_voice_instructions(condition_id)}],
+            }],
+        }],
+        response_format={'type':'audio'},
+        generation_config={'speech_config':[{'voice':GEMINI_TTS_VOICE}]},
+    )
+    audio_block=getattr(interaction,'output_audio',None)
+    data=getattr(audio_block,'data',None) if audio_block is not None else None
+    if not data:
+        return None
+    return base64.b64decode(data), 'audio/wav'
+
+
 @app.post('/api/voice')
 def api_voice():
     pid=require_session();body=request.get_json(silent=True) or {}
@@ -461,20 +485,33 @@ def api_voice():
         source=data.get('pending')
         prefetched=data.get('prefetched')
         if source is None and prefetched and prefetched.get('token')==data.get('token'):
-            source={'text':prefetched['message']['text']}
+            source={'text':prefetched['message']['text'],'advice':prefetched.get('advice')}
         if source is None:
             return jsonify(error='Voice is not available for this trial.'),409
         spoken=source['text']
         condition_id=trial['condition_id']
 
-    # One shared OpenAI speaker for all conditions. Only the TTS performance instructions differ by condition; browser playback rate/pitch are matched.
+    # Prefer Gemini 3.8 Flash TTS; retain OpenAI TTS as a server-side fallback.
+    if natural_voice_backend() == 'gemini':
+        try:
+            result=_synth_gemini(spoken,condition_id)
+            if result:
+                audio,mimetype=result
+                return Response(audio,mimetype=mimetype,headers={
+                    'X-BEAST-Voice-Backend':'gemini-3.8-flash-tts',
+                    'X-BEAST-Voice':GEMINI_TTS_VOICE,
+                    'X-BEAST-Voice-Profile':_voice_profile(condition_id),
+                    'X-BEAST-Audio-Format':'wav'})
+        except Exception as exc:
+            app.logger.warning('Gemini voice generation failed: %s',exc)
+
     if os.getenv('OPENAI_API_KEY','').strip():
         try:
             result=_synth_openai(spoken,condition_id)
             if result:
                 audio,mimetype=result
                 return Response(audio,mimetype=mimetype,headers={
-                    'X-BEAST-Voice-Backend':'openai-tts',
+                    'X-BEAST-Voice-Backend':'openai-tts-fallback',
                     'X-BEAST-Voice':TTS_VOICE,
                     'X-BEAST-Voice-Profile':_voice_profile(condition_id),
                     'X-BEAST-Audio-Format':TTS_RESPONSE_FORMAT})
@@ -639,7 +676,7 @@ def researcher():
     return render_template('researcher.html',conditions=design.CONDITIONS,report=build_report(records,people),
         model_profiles=profiles,default_profile=default_profile,has_any_key=any(v['available'] for v in profiles.values()),
         has_key=adviser.has_api_key(),model=adviser.ADVISER_MODEL,stimulus_ms=STIMULUS_MS,
-        delay_ms=ADVISER_MIN_DELAY_MS,rating_every=RATING_EVERY,advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,natural_voice_available=natural_voice_backend()!='browser',tts_voice=TTS_VOICE,projection=timing_projection(
+        delay_ms=ADVISER_MIN_DELAY_MS,rating_every=RATING_EVERY,advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,natural_voice_available=natural_voice_backend()!='browser',tts_voice=shared_voice_identity(),projection=timing_projection(
             wait_s=ADVISER_MIN_DELAY_MS/1000,stimulus_s=STIMULUS_MS/1000,fixation_s=FIXATION_MS/1000,
             rating_every=RATING_EVERY,collect_ratings=COLLECT_RATINGS,advice_preview_s=ADVICE_PREVIEW_MS/1000))
 
@@ -653,7 +690,7 @@ def admin_downloads():
 def researcher_status():
     require_admin()
     return jsonify(version=APP_VERSION,stimulus_render_version=STIMULUS_RENDER_VERSION,stimulus_format='webp_lossless',
-        advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,voice_backend=natural_voice_backend(),tts_voice=shared_voice_identity(),voice_pool=list(AGENT_TTS_VOICES[:8]),
+        advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,voice_backend=natural_voice_backend(),tts_voice=shared_voice_identity(),tts_model=(GEMINI_TTS_MODEL if natural_voice_backend()=='gemini' else TTS_MODEL),voice_pool=list(AGENT_TTS_VOICES[:8]),
         provider=adviser.resolved_provider(),model=adviser.resolved_model(),
         has_key=adviser.has_api_key(),database_dialect=store.engine.dialect.name,study_mode=STUDY_MODE,
         adviser_mode=ADVISER_MODE,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],

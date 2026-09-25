@@ -3,37 +3,42 @@
 This revision gives all generated conditions the same concise shared instruction
 and separates them by job: neutral presentation, persuasion without participant
 history, or persuasion using participant history. All generated messages share
-the same approximate 15–25-word range and may use one or two natural sentences.
+the same exact 15-word length and a simple, conversational spoken style.
 The current first estimate remains hidden to preserve the prefetch design.
-The first live model response is shown without semantic or length-based repair.
+There is no semantic filtering; only exact-length rewriting is used when needed.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import math
+import re
 import time
 import adviser as legacy
 
-PROMPT_VERSION = 'agent-raw-v20-clear-goal-history-firm-length'
+PROMPT_VERSION = 'agent-v22-exact15-simple-style'
 TARGET_MIN_WORDS = 15
-TARGET_MAX_WORDS = 25
+TARGET_MAX_WORDS = 15
 NEUTRAL_MIN_WORDS = 15
-NEUTRAL_MAX_WORDS = 25
+NEUTRAL_MAX_WORDS = 15
 
 SHARED = f'''You are an adviser in a dot-estimation task. Your message accompanies a numerical recommendation supplied by the experiment.
 
 You have not seen the dot image and do not know the true count or the participant’s current estimate. Any factual claims must be supported by the supplied information.
 
-Write directly to the participant in one or two short, natural sentences of {TARGET_MIN_WORDS}–{TARGET_MAX_WORDS} words. Include the recommendation number once. Return only the participant-facing message.'''
+Write exactly {TARGET_MIN_WORDS} words in one clear sentence. Count the words before answering.
+Use simple, everyday English and common words. Keep the sentence natural, conversational, and easy to understand aloud.
+Avoid jargon, technical language, abstract phrasing, metaphors, and complicated words.
+Include the supplied recommendation number exactly once, naturally within the sentence. Do not begin with the bare number or use a format like “187; …”.
+Return only the participant-facing sentence.'''
 
 
 STRATEGIES = {
     'neutral': '''NEUTRAL — C3/C6
 
-Present your numerical recommendation neutrally, as an estimate for this round.
+Present your estimate neutrally and matter-of-factly.
 
-Keep the message factual and matter-of-fact. Do not encourage or discourage the participant from following it. Do not add praise, reassurance, pressure, or reasons to accept the recommendation.''',
+Do not encourage or discourage the participant from following it. Do not add praise, reassurance, pressure, or reasons to accept it.''',
 
     'static': '''PERSUASIVE WITHOUT PARTICIPANT HISTORY — C4/C7
 
@@ -163,7 +168,7 @@ def adaptive_summary(history):
 
 def build_prompt(style, initial, advice, history=None, previous_messages=None):
     context = {
-        'displayed_recommendation': advice,
+        'recommendation_to_include_once': advice,
         'recent_agent_messages_to_avoid_copying': [m for m in (previous_messages or []) if m][-8:],
     }
     if style == 'adaptive':
@@ -234,24 +239,23 @@ def _common(style, system, user, history, settings):
     return common
 
 
-def _fallback_message(style, history=None):
-    # Technical fallbacks are deliberately length-matched and grounded. They are
-    # not used to repair model content; only when the provider fails entirely.
+def _fallback_message(style, advice, history=None):
+    # Every fallback is exactly 15 words and uses the same simple spoken style.
     if style == 'neutral':
-        return 'This is simply the estimate I would use myself if I were making this dot-counting judgment independently.'
+        return 'This is my estimate for this round, offered as another number for you to consider.'
     if style == 'static':
-        return 'You’re doing great; I strongly recommend giving my estimate substantial weight before you settle on your final answer.'
+        return f'Please give {advice} more weight before choosing your final estimate for this round today.'
     summary = adaptive_summary(history)
     latest = summary['latest_response_behaviour']
     if latest == 'moved_strongly_toward_advice':
-        return 'Nice adjustment last time; you moved toward my estimate, so give it substantial weight again on this trial.'
+        return f'You followed my advice closely before, so I recommend giving {advice} strong weight again now.'
     if latest == 'moved_partway_toward_advice':
-        return 'Good job engaging with my estimate last time; this time, I recommend moving even closer toward it.'
+        return f'You moved partway toward my advice before, so consider moving closer to {advice} this time.'
     if latest == 'moved_away':
-        return 'Good job staying with the task; this time, I strongly recommend giving my estimate substantially more weight.'
+        return f'You moved away from my advice before, so reconsider and give {advice} more weight now.'
     if latest == 'stayed_near_own_estimate':
-        return 'You’re doing great sticking with the task; this time, give my recommendation substantially more weight in your answer.'
-    return 'You’re doing great; I strongly recommend giving my estimate substantial weight before you settle on your final answer.'
+        return f'You stayed near your own estimate before, so consider giving {advice} more weight this time.'
+    return f'Please give {advice} more weight before choosing your final estimate for this round today.'
 
 
 def generate_message(style, initial, advice, history=None, previous_messages=None, key='', **kwargs):
@@ -285,11 +289,12 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
     received = False
     stop = 'attempt_limit'
 
-    # Semantic validation and length-based rewriting are OFF. We display the
-    # first successful model response. Word count is audited only. Transport
-    # failures may still retry so a temporary provider problem does not strand
-    # the session.
+    # No semantic validation is used. The only content-level repair is word count:
+    # participant-facing advice is held at exactly 15 words across all conditions.
+    # If a successful draft misses 15 words, the same model gets a brief rewrite request.
     first_draft = None
+    repair_draft = None
+    content_repair_used = False
     for attempt in range(1, limit + 1):
         remaining = budget - (time.perf_counter() - started)
         if remaining < .05:
@@ -300,73 +305,67 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
         schema_token = legacy._response_schema.set(None)
         timeout_token = legacy._request_timeout.set(timeout)
         try:
-            raw = legacy._model_text(system, user)
+            if repair_draft is None:
+                raw = legacy._model_text(system, user)
+            else:
+                repair_user = user + (
+                    '\n\nYour previous draft was: ' + json.dumps(repair_draft, ensure_ascii=False) +
+                    '\nRewrite that same message in exactly 15 words. Keep the meaning and strategy. '
+                    'Use simple everyday English. Keep the supplied recommendation number exactly once, naturally inside the sentence. Add no new facts. Return only the sentence.'
+                )
+                raw = legacy._model_text(system, repair_user)
             received = True
         except Exception as error:
             reason = 'api_error:' + type(error).__name__
             retry = legacy.retryable_api_error(error)
-            logs.append(dict(
-                attempt=attempt,
-                result=reason,
-                retryable=retry,
-                ms=round((time.perf_counter() - began) * 1000),
-            ))
+            logs.append(dict(attempt=attempt,result=reason,retryable=retry,
+                             ms=round((time.perf_counter()-began)*1000)))
             if not retry:
-                stop = 'permanent_api_error'
-                break
+                stop = 'permanent_api_error'; break
             if attempt < limit:
                 delay = legacy.api_retry_delay(error, attempt)
                 if delay >= budget - (time.perf_counter() - started):
-                    stop = 'time_budget'
-                    break
+                    stop = 'time_budget'; break
                 time.sleep(delay)
             continue
         finally:
             legacy._response_schema.reset(schema_token)
             legacy._request_timeout.reset(timeout_token)
 
-        text = str(raw).strip()
+        text = re.sub(r'\s+', ' ', str(raw)).strip().strip('"“”')
         wc = legacy.words(text)
-        first_draft = text
+        if first_draft is None:
+            first_draft = text
         status = _word_count_status(wc, style)
-        logs.append(dict(
-            attempt=attempt, draft=text, result='accepted_first_raw_response',
-            review_reasons=['semantic_validation_disabled','length_audit_only'],
-            word_count=wc, word_count_check=status,
-            ms=round((time.perf_counter() - began) * 1000),
-        ))
-        return dict(
-            common,
-            text=text,
-            source=f'{legacy.resolved_provider()}:{legacy.resolved_model()}',
-            word_count=wc,
-            word_count_check=status,
-            attempts=attempt,
-            attempt_log=logs,
-            validation='disabled_raw_response',
-            live_model=True,
-            model_response_received=True,
-            review_required=True,
-            review_reasons=['semantic_validation_disabled','length_audit_only'],
-            history_check='not_posthoc_screened',
-            adaptation_check='model_decides_from_raw_history' if style == 'adaptive' else 'not_applicable',
-            rating_influence_status='not_posthoc_screened',
-            repetition_similarity=None,
-            repetition_check='prompt_only_recent_messages_supplied',
-            direction_check='not_posthoc_screened',
-            persuasion_check='not_posthoc_screened',
-            stop_reason='accepted_raw',
-            retry_count=attempt - 1,
-            recovered_after_retry=attempt > 1,
-            first_draft=first_draft,
-            displayed_draft=text,
-            length_retry_used=False,
-            length_retry_success=False,
-            generation_status='live_raw_response_free_persuasion',
-        )
+        if wc == 15:
+            logs.append(dict(attempt=attempt,draft=text,result='accepted_exact_15',
+                             review_reasons=['semantic_validation_disabled','exact_length_only'],
+                             word_count=wc,word_count_check=status,
+                             ms=round((time.perf_counter()-began)*1000)))
+            return dict(
+                common,text=text,source=f'{legacy.resolved_provider()}:{legacy.resolved_model()}',
+                word_count=wc,word_count_check=status,attempts=attempt,attempt_log=logs,
+                validation='exact_length_only',live_model=True,model_response_received=True,
+                review_required=True,review_reasons=['semantic_validation_disabled','exact_length_only'],
+                history_check='not_posthoc_screened',
+                adaptation_check='model_decides_from_raw_history' if style == 'adaptive' else 'not_applicable',
+                rating_influence_status='not_posthoc_screened',repetition_similarity=None,
+                repetition_check='prompt_only_recent_messages_supplied',direction_check='not_posthoc_screened',
+                persuasion_check='not_posthoc_screened',stop_reason='accepted_exact_15',retry_count=attempt-1,
+                recovered_after_retry=attempt>1,first_draft=first_draft,displayed_draft=text,
+                length_retry_used=content_repair_used,length_retry_success=content_repair_used,
+                generation_status='live_exact15_simple_style',
+            )
+        logs.append(dict(attempt=attempt,draft=text,result='length_rewrite_requested',
+                         review_reasons=['semantic_validation_disabled','word_count_mismatch'],
+                         word_count=wc,word_count_check=status,
+                         ms=round((time.perf_counter()-began)*1000)))
+        repair_draft = text
+        content_repair_used = True
+        stop = 'length_attempt_limit'
 
     # Technical fallback only, never a content repair path.
-    text = _fallback_message(style, history)
+    text = _fallback_message(style, advice, history)
     wc = legacy.words(text)
     return dict(
         common,
@@ -394,6 +393,6 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
         recovered_after_retry=False,
         first_draft=first_draft,
         displayed_draft=text,
-        length_retry_used=False,
+        length_retry_used=content_repair_used,
         length_retry_success=False,
     )

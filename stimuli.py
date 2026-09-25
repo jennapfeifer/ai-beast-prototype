@@ -3,8 +3,8 @@
 
 Experimental images use the same generator and seed key as the final simulation:
     stable_seed(f"stimulus|{STUDY_SEED}|N{truth}|V{variant}")
-The legacy renderer remains available for simulation compatibility. The human
-pilot uses the same logical coordinates with supersampled, high-resolution dots.
+The default human-study renderer uses a Ginsburg-inspired deterministic random
+position lattice, with stable seeds and supersampled high-resolution dots.
 """
 from __future__ import annotations
 
@@ -21,10 +21,10 @@ from PIL import Image, ImageDraw
 import design
 
 HERE = Path(__file__).resolve().parent
-STIMULUS_LAYOUT = os.getenv('DOT_LAYOUT','random').strip().lower()
-if STIMULUS_LAYOUT not in {'random','regular','jittered'}:
-    raise RuntimeError('DOT_LAYOUT must be random, regular, or jittered.')
-STIMULUS_RENDER_VERSION = f'dots-aa-v2-{STIMULUS_LAYOUT}'
+STIMULUS_LAYOUT = os.getenv('DOT_LAYOUT','ginsburg_random').strip().lower()
+if STIMULUS_LAYOUT not in {'ginsburg_random','random','regular','jittered'}:
+    raise RuntimeError('DOT_LAYOUT must be ginsburg_random, random, regular, or jittered.')
+STIMULUS_RENDER_VERSION = f'dots-aa-v3-{STIMULUS_LAYOUT}'
 LOGICAL_SIZE = 512
 PIXEL_RATIO = 2
 SUPERSAMPLE = 4
@@ -51,6 +51,49 @@ def _random_dot_positions(n_dots: int, seed: int, size: int = 512) -> List[Tuple
         raise RuntimeError(f"Could not place {n_dots} non-overlapping dots after {attempts} attempts")
     return points
 
+
+
+def _ginsburg_random_positions(n_dots: int, seed: int, size: int = 512) -> List[Tuple[int,int]]:
+    """Seeded random occupancy of a fixed concentric-ring position lattice.
+
+    Ginsburg's 1976/1978 random arrays used a central dot plus evenly spaced
+    concentric circles containing candidate positions; occupied positions were
+    selected using random-number tables. This adaptation keeps that principle
+    while expanding the lattice to support the study's larger numerosities.
+
+    Rules held constant across stimuli:
+    - same square canvas and circular extent;
+    - same dot size;
+    - 12 evenly spaced rings plus a central position;
+    - ring k contains 6*k candidate positions, giving near-uniform areal density;
+    - exactly n_dots positions are sampled without replacement using the stable seed.
+    """
+    n_dots = int(n_dots)
+    if n_dots <= 0:
+        return []
+    rng = random.Random(seed)
+    center = size / 2
+    rings = 12
+    outer = size / 2 - 40
+    candidates: List[Tuple[int,int]] = [(round(center), round(center))]
+    # A seeded global rotation and alternating half-step offsets create variants
+    # without changing the candidate density or overall occupied area.
+    global_phase = rng.random() * 2 * math.pi
+    for k in range(1, rings + 1):
+        radius = outer * k / rings
+        count = 6 * k
+        phase = global_phase + (math.pi / count if k % 2 == 0 else 0.0)
+        for j in range(count):
+            angle = phase + 2 * math.pi * j / count
+            candidates.append((round(center + radius * math.cos(angle)),
+                               round(center + radius * math.sin(angle))))
+    if n_dots > len(candidates):
+        raise ValueError(f'{n_dots} dots exceed the {len(candidates)} available Ginsburg-style positions')
+    # Retain the central dot, following the original stimuli, and sample the rest.
+    if n_dots == 1:
+        return [candidates[0]]
+    occupied = rng.sample(candidates[1:], n_dots - 1)
+    return [candidates[0], *occupied]
 
 def _ring_counts(n_dots: int) -> List[int]:
     """Allocate n-1 dots over concentric rings with density increasing by radius."""
@@ -117,13 +160,15 @@ def _regular_dot_positions(n_dots: int, seed: int, size: int = 512, jitter: floa
 def dot_positions(n_dots: int, seed: int, size: int = 512, layout: str | None = None) -> List[Tuple[int,int]]:
     """Return deterministic dot positions for random, regular, or jittered layouts."""
     layout = (layout or STIMULUS_LAYOUT).strip().lower()
+    if layout == 'ginsburg_random':
+        return _ginsburg_random_positions(n_dots, seed, size)
     if layout == 'random':
         return _random_dot_positions(n_dots, seed, size)
     if layout == 'regular':
         return _regular_dot_positions(n_dots, seed, size, jitter=0.0)
     if layout == 'jittered':
         return _regular_dot_positions(n_dots, seed, size, jitter=3.0)
-    raise ValueError('layout must be random, regular, or jittered')
+    raise ValueError('layout must be ginsburg_random, random, regular, or jittered')
 
 
 def generate_dot_stimulus(path: Path, n_dots: int, seed: int, size: int = 512, force: bool = False,
@@ -168,11 +213,11 @@ def main() -> None:
     ap.add_argument("--size", type=int, default=512)
     ap.add_argument("--force", action="store_true", help="overwrite existing PNGs")
     ap.add_argument('--smooth',action='store_true',help='Use the high-resolution antialiased pilot renderer')
-    ap.add_argument('--layout',choices=['random','regular','jittered'],default=STIMULUS_LAYOUT,help='Dot arrangement for this generated set')
+    ap.add_argument('--layout',choices=['ginsburg_random','random','regular','jittered'],default=STIMULUS_LAYOUT,help='Dot arrangement for this generated set')
     ap.add_argument("--out", default=str(HERE / "static" / "stimuli"))
     args = ap.parse_args()
 
-    out = Path(args.out)/((f'dots-aa-v2-{args.layout}') if args.smooth else '')
+    out = Path(args.out)/((f'dots-aa-v3-{args.layout}') if args.smooth else '')
     out.mkdir(parents=True, exist_ok=True)
 
     n = 0
