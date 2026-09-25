@@ -29,11 +29,14 @@ def test_agent_voice_is_constant_across_conditions_and_exposed(client):
     data=store.session_data(pid)
     voices=data['config']['adviser_voices']
     assert len(voices)==8
-    assert set(voices.values())=={A.TTS_VOICE}
+    assert set(voices.values())=={A.shared_voice_identity()}
     assert state['voice_slot']==0
 
 def test_voice_delivery_contrast_is_deliberate():
     assert A._voice_speed('C4') > A._voice_speed('C3')
-    assert 'immediately and unmistakably audible' in A._voice_instructions('C4')
+    assert 'strongly persuasive' in A._voice_instructions('C4')
     assert 'matter-of-fact' in A._voice_instructions('C3')
     assert A._voice_profile('C4') == A._voice_profile('C5') == 'dramatic_persuasive'
+    assert 'intensely persuasive' in A._hume_acting_instruction('C4')
+    assert 'cool, flat, detached' in A._hume_acting_instruction('C3')
+    assert A._hume_speed('C4') > A._hume_speed('C3')
