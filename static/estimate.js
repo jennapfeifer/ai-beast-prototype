@@ -25,7 +25,7 @@ window.BEASTEstimate = (() => {
           ${final?`<span class="previous-marker" style="left:${percent(first,max)}%" aria-hidden="true"></span>
           <span class="advice-marker" style="left:${percent(ai,max)}%" aria-hidden="true"></span>
           <div class="advice-bubble ai-colour" id="advice-copy" style="left:${percent(ai,max)}%">
-            <div class="advice-bubble-head"><span>${escape(advice.adviser_name||'Agent')} · AGENT</span><strong>${ai}</strong></div>
+            <div class="advice-bubble-head"><span>${escape(advice.adviser_name||'Adviser')} advises:</span></div>
             <div class="advice-words">“${escape(advice.advice_text)}”</div>
           </div>
           <input class="estimate-range" id="est" type="range" min="1" max="${max}" step="1" value="${first}" aria-labelledby="estimate-title" aria-describedby="previous-copy advice-copy" aria-valuetext="${first} dots">`:''}

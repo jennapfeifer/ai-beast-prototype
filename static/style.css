@@ -67,32 +67,32 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
 /* Response roles use both shape and colour. Never place the rail above a marker. */
-.task-root{background:#101418;min-height:100%;overscroll-behavior-y:none}
-.task-root body{background:#101418}
+.task-root{background:#eef1f4;min-height:100%;overscroll-behavior-y:none}
+.task-root body{background:#eef1f4}
 .task-surface{
-  --paper:#101418;--ink:#edf2f7;--muted:#aab4be;--line:#35404a;--soft:#222a32;
-  --previous:#bac2cc;--advice:#d6666c;--choice:#6fa8ff;--track:#edf2f7;
-  background:var(--paper);color:var(--ink);min-height:100vh;min-height:100dvh;color-scheme:dark;overscroll-behavior-y:none;
+  --paper:#eef1f4;--ink:#20262d;--muted:#606a74;--line:#cbd2d9;--soft:#ffffff;
+  --previous:#59636e;--advice:#a94f59;--choice:#2f6fd6;--track:#59636e;
+  background:var(--paper);color:var(--ink);min-height:100vh;min-height:100dvh;color-scheme:light;overscroll-behavior-y:none;
 }
 .task-surface .site-header{border:0;min-height:60px;padding:14px 5%}
 .task-surface .brand b{color:var(--previous);font-size:15px}
 .task-surface .chip{border-color:var(--line);color:var(--muted)}
 .task-surface .task-page{width:min(100% - 40px,1040px);max-width:1040px;margin:16px auto 40px}
-.task-surface .progress{height:3px;background:#29323a;margin:0 8px 10px}
+.task-surface .progress{height:3px;background:#d6dce2;margin:0 8px 10px}
 .task-surface .progress i{background:var(--previous)}
 .task-surface .pilot-strip{padding:0 8px;margin:0 0 10px;font-size:12px}
 .task-surface .trial-card{background:transparent;min-height:510px;padding:32px 0;border:0}
 .task-surface .card{background:var(--paper)}
 .task-surface .button{background:var(--soft);border-color:var(--line);color:var(--ink);font-size:18px;min-height:52px}
-.task-surface .button.primary{background:var(--previous);color:#101418;border-color:var(--previous)}
+.task-surface .button.primary{background:var(--ink);color:white;border-color:var(--ink)}
 .task-surface .button:hover{filter:brightness(1.08)}
 .task-surface .fixation{color:var(--previous)}
-.task-surface .stimulus{width:512px;max-width:100%;border:0;border-radius:10px;image-rendering:auto;box-shadow:0 6px 26px #0003}
+.task-surface .stimulus{width:512px;max-width:100%;border:0;border-radius:10px;image-rendering:auto;box-shadow:0 5px 22px #34405424}
 .task-surface .visibility-cover{background:var(--paper)}
 .task-surface .visibility-cover .card{border-color:var(--line)}
 .task-surface .scale legend{color:var(--ink);font-size:20px}
 .task-surface .scale-options span{border-color:#73808b;font-size:20px;height:52px}
-.task-surface .scale-options input:checked+span{background:var(--previous);color:#101418;border-color:var(--previous)}
+.task-surface .scale-options input:checked+span{background:var(--ink);color:white;border-color:var(--ink)}
 .task-surface .scale-anchors{font-size:15px}
 .task-surface .researcher-overlay{margin-top:20px}
 .task-surface .researcher-overlay summary{font-size:14px}
@@ -126,13 +126,13 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 .value-stem{position:absolute;top:0;left:-1px;height:38px;width:2px;background:currentColor;z-index:2}
 .value-square{position:absolute;top:34px;left:0;transform:translateX(-50%);display:grid;place-items:center;width:64px;height:64px;border-radius:4px;background:currentColor;box-shadow:0 0 0 3px var(--paper);font-size:32px;font-weight:700;font-variant-numeric:tabular-nums;z-index:5}
 .initial-marker{color:var(--previous)}.final-marker{color:var(--choice)}
-.initial-marker .value-square{background:var(--previous);color:#101418}
-.final-marker .value-square{background:var(--choice);color:#101418}
-.scale-end{position:absolute;top:62px;color:#edf2f7;font-size:14px;font-variant-numeric:tabular-nums;pointer-events:none}
+.initial-marker .value-square{background:var(--previous);color:white}
+.final-marker .value-square{background:var(--choice);color:white}
+.scale-end{position:absolute;top:62px;color:var(--ink);font-size:14px;font-variant-numeric:tabular-nums;pointer-events:none}
 .scale-start{left:0}.scale-finish{right:0}
 .task-surface .estimate-confirm{min-width:160px;font-size:20px;min-height:56px;padding:14px 34px;border:0;border-radius:6px}
-.task-surface .confirm-initial{background:var(--previous);color:#101418}
-.task-surface .confirm-final{background:var(--choice);color:#101418}
+.task-surface .confirm-initial{background:var(--previous);color:white}
+.task-surface .confirm-final{background:var(--choice);color:white}
 @media(max-width:600px){
   .task-surface .task-page{width:calc(100% - 28px);margin-top:8px}
   .task-surface .trial-card{min-height:470px;padding:28px 0 12px}
@@ -192,28 +192,28 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 /* v2.22: harden the full-screen participant surface against Safari/root/safe-area white strips. */
 html.task-root{
   width:100%;height:100%;min-height:100%;min-height:100dvh;
-  margin:0;background:#101418!important;overflow-x:hidden;overflow-x:clip;
+  margin:0;background:#eef1f4!important;overflow-x:hidden;overflow-x:clip;
 }
 html.task-root body.task-surface{
   width:100%;min-height:100vh;min-height:100svh;min-height:100dvh;
-  margin:0;background:#101418!important;overflow-x:hidden;overflow-x:clip;
+  margin:0;background:#eef1f4!important;overflow-x:hidden;overflow-x:clip;
   padding-bottom:max(16px,env(safe-area-inset-bottom));
 }
 .task-surface .task-page,.task-surface .trial-card,.task-surface #stage{min-width:0;max-width:100%;overflow-x:clip}
 .task-surface::after{
   content:"";position:fixed;left:0;right:0;bottom:0;
-  height:max(16px,env(safe-area-inset-bottom));background:#101418;
+  height:max(16px,env(safe-area-inset-bottom));background:#eef1f4;
   z-index:2147483646;pointer-events:none;
 }
 
 /* v2.26: dark participant information pages must style the root scrolling canvas too.
    The previous fix only applied .task-root on /task; consent/instructions/debrief left
    the HTML canvas white, which Safari exposed as a full-width horizontal strip/track. */
-html.task-root,html.task-root body{background:#101418!important}
+html.task-root,html.task-root body{background:#eef1f4!important}
 html.task-root{overflow-x:hidden!important;overflow-x:clip!important;overscroll-behavior-x:none}
 html.task-root body{overflow-x:hidden!important;overflow-x:clip!important}
 @supports selector(html:has(body.task-surface)){
-  html:has(body.task-surface){background:#101418!important;overflow-x:hidden!important;overflow-x:clip!important}
+  html:has(body.task-surface){background:#eef1f4!important;overflow-x:hidden!important;overflow-x:clip!important}
 }
 
 /* v2.27: the screenshot shows a native horizontal scrollbar track, not an unpainted

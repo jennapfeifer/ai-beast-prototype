@@ -39,7 +39,7 @@ function estimatedSpeechMs(text,rate=1){
   return clamp(Math.round((Math.max(words,3)/(158*Math.max(rate,0.5)))*60000+350),900,15000);
 }
 async function prepareNaturalVoice(advice){
-  if(CFG.voice_backend!=='openai'||typeof fetch!=='function')return null;
+  if(!['openai','gemini'].includes(CFG.voice_backend)||typeof fetch!=='function')return null;
   const token=state?.trial_token;if(!token)return null;
   let timeout=null;
   try{
@@ -166,7 +166,7 @@ function beginAdvicePrefetch(){
   }).catch(()=>null);
 }
 function renderProgress(){document.getElementById('round-title').textContent=state.practice?'Practice':`Round ${state.block} of ${state.n_blocks}`;document.getElementById('meta').textContent=state.practice?'Practice':`${state.completed} / ${state.overall_total}`;const percent=100*state.completed/Math.max(1,state.overall_total);document.getElementById('bar').style.width=percent+'%';document.querySelector('[role=progressbar]').setAttribute('aria-valuenow',String(Math.round(percent)));}
-async function checkpoint(warmup=false){phase('BREAK');stage.innerHTML=`<div class="checkpoint-card"><h1>${warmup?'Practice complete':`Round ${state.block-1} complete`}</h1><p>Next agent: ${esc(state.adviser_name||'Agent')}</p><p>Take a break if you like.</p><button class="button primary" id="continue-round">Start round ${state.block}</button></div>`;const t=clock();await new Promise(r=>document.getElementById('continue-round').onclick=r);timing.break_ms=elapsed(t).wall;}
+async function checkpoint(warmup=false){phase('BREAK');stage.innerHTML=`<div class="checkpoint-card"><h1>${warmup?'Practice complete':`Round ${state.block-1} complete`}</h1><p>Next: ${esc(state.adviser_name||'Adviser')}</p><p>Take a break if you like.</p><button class="button primary" id="continue-round">Start round ${state.block}</button></div>`;const t=clock();await new Promise(r=>document.getElementById('continue-round').onclick=r);timing.break_ms=elapsed(t).wall;}
 function inputMarkup(prompt,button='Record estimate',prefill=''){return `<div class="answer-stage"><span class="eyebrow">YOUR ESTIMATE</span><h2>${prompt}</h2><p class="helper">Enter a whole number from 1 to ${CFG.max_estimate}.</p><form id="estimate-form"><div class="estimate-row"><label class="sr-only" for="estimate">Your estimate</label><input id="estimate" type="number" min="1" max="${CFG.max_estimate}" step="1" inputmode="numeric" autocomplete="off" required value="${prefill}"><button class="button primary" type="submit">${button} →</button></div><p class="error" id="estimate-error" role="alert"></p></form></div>`;}
 function waitEstimate(){return new Promise(resolve=>{const input=document.getElementById('estimate'),form=document.getElementById('estimate-form');input.focus();if(input.value)input.select();const t=clock();let submitted=false;form.onsubmit=event=>{event.preventDefault();if(submitted)return;const value=Number(input.value);if(!input.value.trim()||!Number.isInteger(value)||value<1||value>CFG.max_estimate){document.getElementById('estimate-error').textContent=`Enter a whole number from 1 to ${CFG.max_estimate}.`;return;}submitted=true;form.querySelector('button').disabled=true;resolve({estimate:value,...elapsed(t)});};});}
 function prepareStimulus(){
@@ -188,8 +188,8 @@ async function showStimulus(){
 if(CFG.stimulus_ms>0){const exposure=await visibleSleep(CFG.stimulus_ms);timing.stimulus_visible_ms=exposure.active;phase('FIRST ESTIMATE');return await initialEstimator();}
 const t=clock();stage.insertAdjacentHTML('beforeend','<button class="button primary" id="finish-viewing">Continue to estimate</button>');await new Promise(r=>document.getElementById('finish-viewing').onclick=r);timing.stimulus_visible_ms=elapsed(t).active;return await initialEstimator();}
 async function getAdvice(initial){
-  phase('AGENT ADVICE');
-  stage.innerHTML=`<div class="advice-stage"><div class="adviser-label"><span class="adviser-icon">⋮</span> Agent advice</div><div class="composing"><i></i><i></i><i></i></div><h2>Preparing advice…</h2><p class="small muted" id="long-wait"></p></div>`;
+  phase('ADVICE');
+  stage.innerHTML=`<div class="advice-stage"><div class="adviser-label"><span class="adviser-icon">⋮</span> ${esc(state.adviser_name||'Adviser')} advises</div><div class="composing"><i></i><i></i><i></i></div><h2>Preparing advice…</h2><p class="small muted" id="long-wait"></p></div>`;
   const slow=setTimeout(()=>{const el=document.getElementById('long-wait');if(el)el.textContent='Still preparing your advice. Please keep this tab open.';},8000);
   const t=clock();let result;
   try{
@@ -218,33 +218,30 @@ async function showAdvice(initial,advice) {
     prepared=voicePreparationPromise?await voicePreparationPromise:await prepareAgentVoice(advice);
     voicePreparationPromise=null;
   }
-  const focusAdvice=CFG.advice_preview_ms>0||CFG.advice_modality==='voice_text';
-  if(focusAdvice){
-    phase('AGENT ADVICE');document.body.classList.add('advice-focus');
-    stage.innerHTML=`<section class="advice-only ai-colour"><p>${esc(advice.adviser_name||'Agent')} · AGENT: <strong>${esc(advice.advice_number)}</strong></p><h1>“${esc(advice.advice_text)}”</h1></section>`;
-    try{
-      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-      const playback=CFG.advice_modality==='voice_text'?await startPreparedVoice(prepared,advice):null;
-      if(playback?.voiceId)timing.voice_id=playback.voiceId;if(playback?.voiceProfile)timing.voice_profile=playback.voiceProfile;if(playback?.voiceBackend)timing.voice_backend_used=playback.voiceBackend;if(playback?.deliveryRate)timing.voice_delivery_rate=playback.deliveryRate;
-      const holdMs=Math.max(CFG.advice_preview_ms,playback?.durationMs||0);
-      timing.voice_hold_ms=Math.round(holdMs);
-      if(holdMs>0){const exposure=await visibleSleep(holdMs);timing.advice_preview_ms=exposure.active;timing.advice_preview_wall_ms=exposure.wall;}
-    }finally{
-      // Never allow speech to continue over the response scale. The timed hold is bounded by the
-      // generated clip duration (or an estimate for the browser fallback), so a missing end event cannot trap the task.
-      stopCurrentVoice();document.body.classList.remove('advice-focus');
-    }
-  }
+
+  // Show the advice only once on the final-decision scale. The model includes the recommendation naturally within its sentence.
   phase('YOUR FINAL DECISION');
-  return BEASTEstimate.render({stage,initial:Number(initial.estimate),advice,max:CFG.max_estimate,clock,elapsed});
+  const decision=BEASTEstimate.render({stage,initial:Number(initial.estimate),advice,max:CFG.max_estimate,clock,elapsed});
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  const playback=CFG.advice_modality==='voice_text'?await startPreparedVoice(prepared,advice):null;
+  if(playback?.voiceId)timing.voice_id=playback.voiceId;
+  if(playback?.voiceProfile)timing.voice_profile=playback.voiceProfile;
+  if(playback?.voiceBackend)timing.voice_backend_used=playback.voiceBackend;
+  if(playback?.deliveryRate)timing.voice_delivery_rate=playback.deliveryRate;
+  timing.voice_hold_ms=playback?.durationMs?Math.round(playback.durationMs):0;
+  try{
+    return await decision;
+  }finally{
+    stopCurrentVoice();
+  }
 }
 
 function scale(name,label,low,high){return `<fieldset class="scale"><legend>${esc(label)}</legend><div class="scale-options">${Array.from({length:7},(_,i)=>`<label><input type="radio" name="${name}" value="${i+1}" required><span>${i+1}</span></label>`).join('')}</div><div class="scale-anchors"><span>${low}</span><span>${high}</span></div></fieldset>`;}
 async function ratings(){
   timing.rating_ms=0;if(!state.ratings_due)return {};
-  phase('AGENT TRUST');
+  phase('TRUST');
   const paired=CFG.rating_items==='trust_and_feeling';
-  stage.innerHTML=`<div class="rating-stage"><form id="rating-form">${scale('trust',`How much did you trust ${state.adviser_name||'the agent'} over the last ${state.rating_window} trials?`,'Not at all','Completely')}${paired?scale('feeling','How did the agent advice make you feel?','Very negative','Very positive'):''}</form></div>`;
+  stage.innerHTML=`<div class="rating-stage"><form id="rating-form">${scale('trust',`How much did you trust ${state.adviser_name||'this adviser'} over the last ${state.rating_window} trials?`,'Not at all','Completely')}${paired?scale('feeling','How did the advice make you feel?','Very negative','Very positive'):''}</form></div>`;
   const t=clock();return await new Promise(resolve=>{
     const form=document.getElementById('rating-form');let submitted=false;
     form.onsubmit=e=>e.preventDefault();
