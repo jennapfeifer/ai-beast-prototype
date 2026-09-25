@@ -16,7 +16,7 @@ import re
 import time
 import adviser as legacy
 
-PROMPT_VERSION = 'agent-v24-12to15-simple-no-limitations-talk'
+PROMPT_VERSION = 'agent-v25-diverse-neutral-no-frame-repeat'
 TARGET_MIN_WORDS = 12
 TARGET_MAX_WORDS = 15
 NEUTRAL_MIN_WORDS = 12
@@ -30,6 +30,7 @@ Write one clear sentence of {TARGET_MIN_WORDS}–{TARGET_MAX_WORDS} words.
 Use simple, everyday spoken English and familiar words. Sound like a real person speaking directly to another person.
 Avoid formal, academic, technical, abstract, or complicated wording.
 Include the supplied recommendation number exactly once, naturally within the sentence. Do not begin with the bare number or use a format like “187; …”.
+If recent agent messages are supplied, do not reuse the same sentence opening or sentence frame. Vary the wording naturally while keeping the same job.
 Return only the participant-facing sentence.'''
 
 
@@ -39,7 +40,8 @@ STRATEGIES = {
 
 Present your estimate neutrally and matter-of-factly.
 
-Do not encourage or discourage the participant from following it. Do not add praise, reassurance, pressure, or reasons to accept it.''',
+Do not encourage or discourage the participant from following it. Do not add praise, reassurance, pressure, or reasons to accept it.
+Vary how you phrase the estimate across trials. In particular, do not repeat a recent sentence pattern just by swapping the recommendation number.''',
 
     'static': '''PERSUASIVE WITHOUT PARTICIPANT HISTORY — C4/C7
 
@@ -207,6 +209,18 @@ def _word_count_status(n, style=None):
     return 'below_target' if n < lo else 'above_target'
 
 
+def _sentence_frame(text):
+    """Normalize wording while ignoring the trial's recommendation number."""
+    value = re.sub(r'\b\d+\b', '<number>', str(text or '').lower())
+    value = re.sub(r'[^a-z<>\s]', '', value)
+    return re.sub(r'\s+', ' ', value).strip()
+
+
+def _repeats_recent_frame(text, previous_messages):
+    frame = _sentence_frame(text)
+    return bool(frame and any(frame == _sentence_frame(prev) for prev in (previous_messages or []) if prev))
+
+
 def _common(style, system, user, history, settings):
     trust = legacy.trust_context(history)
     feeling = legacy.feeling_context(history)
@@ -312,7 +326,7 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
             else:
                 repair_user = user + (
                     '\n\nYour previous draft was: ' + json.dumps(repair_draft, ensure_ascii=False) +
-                    '\nRewrite that same message in 12–15 words. Keep the meaning and strategy. '
+                    '\nRewrite that same message in 12–15 words. Keep the meaning and strategy, but use a different sentence opening and sentence frame from the draft and recent messages. '
                     'Use simple everyday spoken English. Keep the supplied recommendation number exactly once, naturally inside the sentence. Add no new facts. Return only the sentence.'
                 )
                 raw = legacy._model_text(system, repair_user)
@@ -339,9 +353,10 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
         if first_draft is None:
             first_draft = text
         status = _word_count_status(wc, style)
-        if TARGET_MIN_WORDS <= wc <= TARGET_MAX_WORDS:
+        repeated_frame = _repeats_recent_frame(text, previous_messages)
+        if TARGET_MIN_WORDS <= wc <= TARGET_MAX_WORDS and not repeated_frame:
             logs.append(dict(attempt=attempt,draft=text,result='accepted_12_15',
-                             review_reasons=['semantic_validation_disabled','length_range_only'],
+                             review_reasons=['semantic_validation_disabled','length_range_only','recent_frame_unique'],
                              word_count=wc,word_count_check=status,
                              ms=round((time.perf_counter()-began)*1000)))
             return dict(
@@ -358,6 +373,15 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
                 length_retry_used=content_repair_used,length_retry_success=content_repair_used,
                 generation_status='live_12_15_simple_no_limitations_talk',
             )
+        if repeated_frame and TARGET_MIN_WORDS <= wc <= TARGET_MAX_WORDS:
+            logs.append(dict(attempt=attempt,draft=text,result='recent_frame_rewrite_requested',
+                             review_reasons=['semantic_validation_disabled','recent_sentence_frame_duplicate'],
+                             word_count=wc,word_count_check=status,
+                             ms=round((time.perf_counter()-began)*1000)))
+            repair_draft = text
+            content_repair_used = True
+            stop = 'recent_frame_attempt_limit'
+            continue
         logs.append(dict(attempt=attempt,draft=text,result='length_rewrite_requested',
                          review_reasons=['semantic_validation_disabled','word_count_mismatch'],
                          word_count=wc,word_count_check=status,

@@ -36,7 +36,7 @@ def _model_profiles_with_midrange_options():
 
 adviser.model_profiles = _model_profiles_with_midrange_options
 
-APP_VERSION = 'fieldwork-2.43-consortium-demo'
+APP_VERSION = 'fieldwork-2.44-demo-visual-summary'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -789,7 +789,17 @@ def consortium_demo_summary():
             advice=row.get('advice_number'),final=row.get('final_estimate'),
             message=row.get('advice_text'),move_pct=move_pct,bar_pct=bar_pct,move_label=move_label,
         ))
-    return render_template('demo_summary.html',pid=pid,rows=demo_rows)
+
+    condition_summaries=[]
+    for adaptive,label in ((False,'Neutral'),(True,'Adaptive persuasive')):
+        group=[r for r in demo_rows if r['adaptive']==adaptive and r['move_pct'] is not None]
+        raw_mean=(sum(r['move_pct'] for r in group)/len(group)) if group else None
+        mean_pct=round(raw_mean) if raw_mean is not None else None
+        condition_summaries.append(dict(
+            label=label,adaptive=adaptive,n=len(group),mean_pct=mean_pct,
+            bar_pct=0 if mean_pct is None else max(0,min(100,mean_pct)),
+        ))
+    return render_template('demo_summary.html',pid=pid,rows=demo_rows,condition_summaries=condition_summaries)
 
 
 @app.get('/researcher/live-review')
