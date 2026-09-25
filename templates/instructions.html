@@ -1,14 +1,14 @@
 {% extends "base.html" %}{% block html_class %}task-root{% endblock %}
-{% block theme_colour %}#101418{% endblock %}{% block body_class %}task-surface info-surface{% endblock %}
+{% block theme_colour %}#eef1f4{% endblock %}{% block body_class %}task-surface info-surface{% endblock %}
 {% block body %}<main class="page narrow">
 <h1>How it works</h1><p class="lead">{{n_trials}} images · {{n_blocks}} rounds</p>
-<section class="card instruction-copy"><p>Each round has a different named agent. The name stays the same throughout that round.</p><ol>
+<section class="card instruction-copy"><p>During the task, you will receive advice from several named AI agents.</p><ol>
 <li>{% if stimulus_seconds %}Look at the dots for {{'%g'|format(stimulus_seconds)}} seconds.{% else %}Look at the dots.{% endif %}</li>
 <li>Enter your first estimate.</li>
-<li>{% if advice_modality=='voice_text' %}Read and listen to the agent advice.{% else %}Read the agent advice.{% endif %}{% if advice_preview_ms %} It appears alone for {{advice_preview_ms//1000}} seconds.{% endif %}</li>
+<li>{% if advice_modality=='voice_text' %}Read and listen to their advice.{% else %}Read their advice.{% endif %}</li>
 <li>Choose your final estimate with the blue square, then confirm.</li>
 </ol>
-{% if ratings %}<p>Every {{rating_every}} trials, {% if rating_items=='trust_and_feeling' %}answer the trust and feeling questions.{% else %}rate your trust in the agent.{% endif %} Selecting {% if rating_items=='trust_and_feeling' %}both ratings{% else %}a rating{% endif %} continues the task.</p>{% endif %}
+{% if ratings %}<p>Every {{rating_every}} trials, {% if rating_items=='trust_and_feeling' %}answer the trust and feeling questions.{% else %}rate how much you trusted them.{% endif %} Selecting {% if rating_items=='trust_and_feeling' %}both ratings{% else %}a rating{% endif %} continues the task.</p>{% endif %}
 <p>You can rest between rounds. Timed displays pause if you leave this tab.</p></section>
 <a class="button primary" href="/task">{% if practice %}Start practice{% else %}Start{% endif %}</a>
 </main>{% endblock %}
