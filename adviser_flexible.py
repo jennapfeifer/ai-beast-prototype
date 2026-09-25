@@ -2,10 +2,10 @@
 
 This revision gives all generated conditions the same concise shared instruction
 and separates them by job: neutral presentation, persuasion without participant
-history, or persuasion using participant history. All generated messages share
-the same exact 15-word length and a simple, conversational spoken style.
+history, or persuasion using participant history. All generated messages use the
+same 12–15-word range and a simple, conversational spoken style.
 The current first estimate remains hidden to preserve the prefetch design.
-There is no semantic filtering; only exact-length rewriting is used when needed.
+There is no semantic filtering; only out-of-range length rewriting is used.
 """
 from __future__ import annotations
 
@@ -16,21 +16,22 @@ import re
 import time
 import adviser as legacy
 
-PROMPT_VERSION = 'agent-v22-exact15-simple-style'
-TARGET_MIN_WORDS = 15
+PROMPT_VERSION = 'agent-v23-12to15-simple-grounded'
+TARGET_MIN_WORDS = 12
 TARGET_MAX_WORDS = 15
-NEUTRAL_MIN_WORDS = 15
+NEUTRAL_MIN_WORDS = 12
 NEUTRAL_MAX_WORDS = 15
 
 SHARED = f'''You are an adviser in a dot-estimation task. Your message accompanies a numerical recommendation supplied by the experiment.
 
 You have not seen the dot image and do not know the true count or the participant’s current estimate. Any factual claims must be supported by the supplied information.
 
-Write exactly {TARGET_MIN_WORDS} words in one clear sentence. Count the words before answering.
-Use simple, everyday English and common words. Keep the sentence natural, conversational, and easy to understand aloud.
-Avoid jargon, technical language, abstract phrasing, metaphors, and complicated words.
+Write one clear sentence of {TARGET_MIN_WORDS}–{TARGET_MAX_WORDS} words.
+Use simple, everyday spoken English and familiar words. Sound like a real person speaking directly to another person.
+Avoid formal, academic, technical, abstract, or complicated wording.
 Include the supplied recommendation number exactly once, naturally within the sentence. Do not begin with the bare number or use a format like “187; …”.
 Return only the participant-facing sentence.'''
+
 
 
 STRATEGIES = {
@@ -57,6 +58,7 @@ You receive their previous first estimates, your recommendations and messages, t
 Use this history to choose an approach suited to how this participant has responded so far. Consider whether your earlier appeals led them to give your recommendations weight, and decide whether to maintain or change your approach.
 
 Personalisation can be implicit: you do not need to mention previous trials or ratings. Any explicit description of their earlier behaviour must match the history.
+When referring to history, describe only observable behaviour or trust ratings. Do not claim that earlier advice was helpful, useful, accurate, successful, or improved their estimates.
 
 When no history is available, make a general persuasive appeal.'''
 }
@@ -240,22 +242,22 @@ def _common(style, system, user, history, settings):
 
 
 def _fallback_message(style, advice, history=None):
-    # Every fallback is exactly 15 words and uses the same simple spoken style.
+    # Technical fallbacks stay within the same 12–15-word range and simple spoken style.
     if style == 'neutral':
-        return 'This is my estimate for this round, offered as another number for you to consider.'
+        return f'My estimate for this round is {advice}, offered simply as another number to consider.'
     if style == 'static':
-        return f'Please give {advice} more weight before choosing your final estimate for this round today.'
+        return f'Please give {advice} more weight when choosing your final estimate for this round.'
     summary = adaptive_summary(history)
     latest = summary['latest_response_behaviour']
     if latest == 'moved_strongly_toward_advice':
-        return f'You followed my advice closely before, so I recommend giving {advice} strong weight again now.'
+        return f'You followed my advice closely before, so consider giving {advice} strong weight again.'
     if latest == 'moved_partway_toward_advice':
-        return f'You moved partway toward my advice before, so consider moving closer to {advice} this time.'
+        return f'You moved toward my advice before, so consider moving closer to {advice} this time.'
     if latest == 'moved_away':
-        return f'You moved away from my advice before, so reconsider and give {advice} more weight now.'
+        return f'You moved away from my advice before, so please give {advice} more weight now.'
     if latest == 'stayed_near_own_estimate':
-        return f'You stayed near your own estimate before, so consider giving {advice} more weight this time.'
-    return f'Please give {advice} more weight before choosing your final estimate for this round today.'
+        return f'You stayed near your own estimate before, so consider giving {advice} more weight now.'
+    return f'Please give {advice} more weight when choosing your final estimate for this round.'
 
 
 def generate_message(style, initial, advice, history=None, previous_messages=None, key='', **kwargs):
@@ -290,8 +292,8 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
     stop = 'attempt_limit'
 
     # No semantic validation is used. The only content-level repair is word count:
-    # participant-facing advice is held at exactly 15 words across all conditions.
-    # If a successful draft misses 15 words, the same model gets a brief rewrite request.
+    # participant-facing advice is kept within 12–15 words across all generated conditions.
+    # If a successful draft falls outside that range, the same model gets a brief rewrite request.
     first_draft = None
     repair_draft = None
     content_repair_used = False
@@ -310,8 +312,8 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
             else:
                 repair_user = user + (
                     '\n\nYour previous draft was: ' + json.dumps(repair_draft, ensure_ascii=False) +
-                    '\nRewrite that same message in exactly 15 words. Keep the meaning and strategy. '
-                    'Use simple everyday English. Keep the supplied recommendation number exactly once, naturally inside the sentence. Add no new facts. Return only the sentence.'
+                    '\nRewrite that same message in 12–15 words. Keep the meaning and strategy. '
+                    'Use simple everyday spoken English. Keep the supplied recommendation number exactly once, naturally inside the sentence. Add no new facts. Return only the sentence.'
                 )
                 raw = legacy._model_text(system, repair_user)
             received = True
@@ -337,24 +339,24 @@ def generate_message(style, initial, advice, history=None, previous_messages=Non
         if first_draft is None:
             first_draft = text
         status = _word_count_status(wc, style)
-        if wc == 15:
-            logs.append(dict(attempt=attempt,draft=text,result='accepted_exact_15',
-                             review_reasons=['semantic_validation_disabled','exact_length_only'],
+        if TARGET_MIN_WORDS <= wc <= TARGET_MAX_WORDS:
+            logs.append(dict(attempt=attempt,draft=text,result='accepted_12_15',
+                             review_reasons=['semantic_validation_disabled','length_range_only'],
                              word_count=wc,word_count_check=status,
                              ms=round((time.perf_counter()-began)*1000)))
             return dict(
                 common,text=text,source=f'{legacy.resolved_provider()}:{legacy.resolved_model()}',
                 word_count=wc,word_count_check=status,attempts=attempt,attempt_log=logs,
-                validation='exact_length_only',live_model=True,model_response_received=True,
-                review_required=True,review_reasons=['semantic_validation_disabled','exact_length_only'],
+                validation='length_range_only',live_model=True,model_response_received=True,
+                review_required=True,review_reasons=['semantic_validation_disabled','length_range_only'],
                 history_check='not_posthoc_screened',
                 adaptation_check='model_decides_from_raw_history' if style == 'adaptive' else 'not_applicable',
                 rating_influence_status='not_posthoc_screened',repetition_similarity=None,
                 repetition_check='prompt_only_recent_messages_supplied',direction_check='not_posthoc_screened',
-                persuasion_check='not_posthoc_screened',stop_reason='accepted_exact_15',retry_count=attempt-1,
+                persuasion_check='not_posthoc_screened',stop_reason='accepted_12_15',retry_count=attempt-1,
                 recovered_after_retry=attempt>1,first_draft=first_draft,displayed_draft=text,
                 length_retry_used=content_repair_used,length_retry_success=content_repair_used,
-                generation_status='live_exact15_simple_style',
+                generation_status='live_12_15_simple_grounded',
             )
         logs.append(dict(attempt=attempt,draft=text,result='length_rewrite_requested',
                          review_reasons=['semantic_validation_disabled','word_count_mismatch'],
