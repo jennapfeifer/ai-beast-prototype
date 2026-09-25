@@ -88,8 +88,7 @@ async function prepareBrowserVoice(advice){
 }
 async function prepareAgentVoice(advice){
   if(CFG.advice_modality!=='voice_text')return null;
-  if(CFG.voice_backend==='browser')return prepareBrowserVoice(advice);
-  // For server voices, never fall back to a different browser speaker.
+  // Keep one speaker identity across the experiment. Never switch to a browser voice.
   return prepareNaturalVoice(advice);
 }
 async function startPreparedVoice(prepared,advice){
