@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}BEAST · Consortium demo summary{% endblock %}
+{% block html_class %}task-root{% endblock %}
+{% block theme_colour %}#eef1f4{% endblock %}
+{% block body_class %}task-surface info-surface{% endblock %}
+{% block body %}
+<main class="page demo-summary-page">
+  <section class="finish-hero demo-hero">
+    <div class="eyebrow">CONSORTIUM DEMO</div>
+    <h1>What happened?</h1>
+    <p class="lead">The first two trials used neutral wording. The next four used a persuasive adviser that could build on its own previous adaptive trials.</p>
+  </section>
+
+  <section class="card demo-explainer">
+    <div class="eyebrow">YOUR RESPONSE TO THE ADVICE</div>
+    <h2>How far did the estimate move?</h2>
+    <p>The bar shows movement from the first estimate toward the AI recommendation. This is the intuition behind weight on advice.</p>
+  </section>
+
+  <div class="demo-trial-list">
+  {% for row in rows %}
+    <section class="card demo-trial-card {% if row.adaptive %}is-adaptive{% endif %}">
+      <div class="demo-trial-head"><span class="demo-phase">{{row.phase}}</span><span>Trial {{row.number}}</span></div>
+      <div class="demo-number-row"><div><span>First</span><b>{{row.initial}}</b></div><div><span>AI</span><b>{{row.advice}}</b></div><div><span>Final</span><b>{{row.final}}</b></div></div>
+      <blockquote>“{{row.message}}”</blockquote>
+      <div class="demo-move"><div class="demo-move-track"><i style="width:{{row.bar_pct}}%"></i></div><div class="demo-move-caption"><b>{{row.move_label}}</b>{% if row.move_pct is not none %}<span>{{row.move_pct}}% toward advice</span>{% endif %}</div></div>
+      {% if row.adaptive %}<p class="small muted demo-history">Before this message, Jamie had {{row.history_available}} earlier adaptive response{% if row.history_available != 1 %}s{% endif %} available.</p>{% endif %}
+    </section>
+  {% endfor %}
+  </div>
+
+  <section class="card demo-reveal">
+    <div class="eyebrow">WHAT THE ADAPTIVE AI COULD SEE</div>
+    <h2>The loop closes after each adaptive trial.</h2>
+    <p>Jamie could receive the earlier first estimate, its recommendation and message, the final estimate, and any collected trust rating. In this demo, trust ratings are intentionally skipped to keep the interaction short.</p>
+    <div class="demo-flow">First estimate <span>→</span> AI advice <span>→</span> Final estimate <span>→</span> History for the next adaptive trial</div>
+  </section>
+
+  <section class="card demo-question">
+    <div class="eyebrow">THE RESEARCH QUESTION</div>
+    <h2>Does an AI that responds to how you behave become more influential over time?</h2>
+    <p>And does that incremental influence differ with loneliness? Six demonstration trials cannot answer that question; they make the experimental mechanism visible.</p>
+    <div class="button-row"><form method="post" action="/researcher/demo/start"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><button class="button primary">Run demo again →</button></form>{% if is_researcher %}<a class="button" href="/researcher">Back to researcher workspace</a>{% endif %}</div>
+  </section>
+</main>
+{% endblock %}
