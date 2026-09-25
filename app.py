@@ -36,7 +36,7 @@ def _model_profiles_with_midrange_options():
 
 adviser.model_profiles = _model_profiles_with_midrange_options
 
-APP_VERSION = 'fieldwork-2.39-gpt6-gemini38tts-exact15'
+APP_VERSION = 'fieldwork-2.40-gpt6-gemini38tts-stable-voice'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -70,16 +70,22 @@ TTS_TIMEOUT_S = max(5.0,float(os.getenv('TTS_TIMEOUT_S','30')))
 # Natural speech defaults to Gemini 3.8 Flash TTS for stronger, more controllable prosody.
 # The same speaker identity is used across conditions; only delivery style changes.
 def natural_voice_backend():
-    if TTS_PROVIDER == 'gemini' and os.getenv('GEMINI_API_KEY','').strip():
-        return 'gemini'
-    if os.getenv('OPENAI_API_KEY','').strip():
-        return 'openai'
-    if os.getenv('GEMINI_API_KEY','').strip():
-        return 'gemini'
-    return 'browser'
+    # Never change speaker/provider silently. Use only the configured backend.
+    if TTS_PROVIDER == 'gemini':
+        return 'gemini' if os.getenv('GEMINI_API_KEY','').strip() else 'unavailable'
+    if TTS_PROVIDER == 'openai':
+        return 'openai' if os.getenv('OPENAI_API_KEY','').strip() else 'unavailable'
+    if TTS_PROVIDER == 'browser':
+        return 'browser'
+    return 'unavailable'
 
 def shared_voice_identity():
-    return GEMINI_TTS_VOICE if natural_voice_backend() == 'gemini' else TTS_VOICE
+    backend=natural_voice_backend()
+    if backend == 'gemini':
+        return GEMINI_TTS_VOICE
+    if backend == 'openai':
+        return TTS_VOICE
+    return GEMINI_TTS_VOICE
 
 AGENT_TTS_VOICES = tuple(shared_voice_identity() for _ in design.CONDITIONS)
 
@@ -406,21 +412,19 @@ def prepared_advice(con,data,trial,initial):
 
 def _voice_profile(condition_id: str) -> str:
     if condition_id in {'C4','C5','C7','C8'}:
-        return 'warm_persuasive'
-    return 'neutral_conversational'
+        return 'stable_slightly_warm'
+    return 'stable_neutral'
 
 
 def _voice_instructions(condition_id: str) -> str:
-    """One shared voice; vary only delivery style while keeping pace natural."""
-    if condition_id in {'C4','C5','C7','C8'}:
-        return (
-            'Warm, natural, and conversational. Sound confident, engaged, and encouraging, with clear persuasive intent. '
-            'Use a moderate speaking pace and gentle emphasis on the recommendation. Keep it one-to-one and believable, not theatrical.'
-        )
-    return (
-        'Natural, clear, and conversational. Sound calm, neutral, and matter-of-fact, with restrained emotion. '
-        'Use a moderate speaking pace and only normal emphasis needed for clarity.'
+    """Keep one stable speaker identity; use only a small prosody difference by condition."""
+    base = (
+        'Natural conversational delivery. Calm, clear, and understated. Use a moderate pace. '
+        'Keep pitch, energy, and emphasis restrained. Do not act, exaggerate, or sound theatrical. '
     )
+    if condition_id in {'C4','C5','C7','C8'}:
+        return base + 'Be only slightly warmer and more encouraging than a neutral reading.'
+    return base + 'Keep the delivery matter-of-fact, without added warmth or pressure.'
 
 
 def _voice_speed(condition_id: str) -> float:
@@ -476,8 +480,11 @@ def _synth_gemini(spoken: str, condition_id: str):
 @app.post('/api/voice')
 def api_voice():
     pid=require_session();body=request.get_json(silent=True) or {}
-    if natural_voice_backend() == 'browser':
-        return jsonify(error='Natural voice is not configured on this server.'),503
+    backend=natural_voice_backend()
+    if backend == 'unavailable':
+        return jsonify(error='The configured natural voice is not available on this server.'),503
+    if backend == 'browser':
+        return jsonify(error='Server-side natural voice is not configured.'),503
     with store.session_transaction(pid) as (_con,data):
         trial,_=current(data)
         if trial is None or body.get('trial_token')!=data.get('token'):
@@ -491,32 +498,41 @@ def api_voice():
         spoken=source['text']
         condition_id=trial['condition_id']
 
-    # Prefer Gemini 3.8 Flash TTS; retain OpenAI TTS as a server-side fallback.
-    if natural_voice_backend() == 'gemini':
-        try:
-            result=_synth_gemini(spoken,condition_id)
-            if result:
-                audio,mimetype=result
-                return Response(audio,mimetype=mimetype,headers={
-                    'X-BEAST-Voice-Backend':'gemini-3.8-flash-tts',
-                    'X-BEAST-Voice':GEMINI_TTS_VOICE,
-                    'X-BEAST-Voice-Profile':_voice_profile(condition_id),
-                    'X-BEAST-Audio-Format':'wav'})
-        except Exception as exc:
-            app.logger.warning('Gemini voice generation failed: %s',exc)
+    # Never switch providers on failure: this prevents speaker identity from
+    # changing between trials. Gemini gets one immediate retry; after that the
+    # trial remains text-only rather than substituting another speaker.
+    if backend == 'gemini':
+        for attempt in (1, 2):
+            try:
+                result=_synth_gemini(spoken,condition_id)
+                if result:
+                    audio,mimetype=result
+                    return Response(audio,mimetype=mimetype,headers={
+                        'X-BEAST-Voice-Backend':'gemini-3.8-flash-tts',
+                        'X-BEAST-Voice':GEMINI_TTS_VOICE,
+                        'X-BEAST-Voice-Profile':_voice_profile(condition_id),
+                        'X-BEAST-Voice-Attempt':str(attempt),
+                        'X-BEAST-Audio-Format':'wav'})
+            except Exception as exc:
+                app.logger.warning('Gemini voice generation failed on attempt %s: %s',attempt,exc)
+                if attempt == 1:
+                    time.sleep(0.15)
+        return jsonify(error='Gemini voice could not be generated for this trial.'),503
 
-    if os.getenv('OPENAI_API_KEY','').strip():
+    if backend == 'openai':
         try:
             result=_synth_openai(spoken,condition_id)
             if result:
                 audio,mimetype=result
                 return Response(audio,mimetype=mimetype,headers={
-                    'X-BEAST-Voice-Backend':'openai-tts-fallback',
+                    'X-BEAST-Voice-Backend':'openai-tts',
                     'X-BEAST-Voice':TTS_VOICE,
                     'X-BEAST-Voice-Profile':_voice_profile(condition_id),
+                    'X-BEAST-Voice-Attempt':'1',
                     'X-BEAST-Audio-Format':TTS_RESPONSE_FORMAT})
         except (urllib.error.URLError,TimeoutError,OSError,ValueError) as exc:
             app.logger.warning('OpenAI voice generation failed: %s',exc)
+        return jsonify(error='OpenAI voice could not be generated for this trial.'),503
 
     return jsonify(error='Natural voice could not be generated.'),503
 
