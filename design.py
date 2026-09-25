@@ -17,12 +17,8 @@ import math
 import random
 from typing import Dict, List
 
-# --- Fixed stimulus set -----------------------------------------------------
-
 TRUE_COUNTS = [32, 40, 48, 64, 80, 96, 112, 128, 144, 160, 192, 224, 256]
-N_VARIANTS = 8  # 13 counts x 8 arrangements = 104 images
-
-# --- Fixed advice schedules -------------------------------------------------
+N_VARIANTS = 8
 
 C1_ADVICE = [33, 41, 47, 66, 78, 93, 109, 131, 144, 155, 187, 230, 262]
 OVER_ADVICE = [43, 48, 58, 74, 100, 134, 151, 166, 144, 208, 259, 258, 320]
@@ -46,53 +42,35 @@ CONDITIONS: Dict[str, Dict[str, str]] = {
     "C8": {"label": "under_adaptive", "direction": "DOWN", "style": "adaptive"},
 }
 
-# Practice counts deliberately outside the experimental set.
 PRACTICE_COUNTS = [88]
-
-
-# --- Helpers ----------------------------------------------------------------
 
 def stable_seed(text: str) -> int:
     return int(hashlib.sha256(text.encode("utf-8")).hexdigest()[:16], 16) % (2 ** 32 - 1)
 
-
 def clamp_int(x: float, lo: int = 1, hi: int = MAX_ESTIMATE) -> int:
     return int(max(lo, min(hi, round(x))))
-
 
 def signed_pct(value: float, truth: float) -> float:
     return 100.0 * (value - truth) / truth
 
-
-# --- Counterbalancing -------------------------------------------------------
-
 def balanced_condition_order(participant_index: int) -> List[str]:
-    """8-row balanced Latin-square-like rotation over C1..C8."""
     ids = list(CONDITIONS.keys())
     n = len(ids)
     base_idx = [0]
     low, high = 1, n - 1
     while len(base_idx) < n:
         if low <= high:
-            base_idx.append(low)
-            low += 1
+            base_idx.append(low); low += 1
         if low <= high:
-            base_idx.append(high)
-            high -= 1
+            base_idx.append(high); high -= 1
     row = participant_index % n
     return [ids[(x + row) % n] for x in base_idx]
 
-
 def image_variant_for(participant_index: int, condition_id: str) -> int:
-    """Each participant uses variants 1..8 exactly once across C1..C8,
-    so every participant sees all 104 images exactly once."""
     ci = int(condition_id[1:]) - 1
     return ((ci + participant_index) % N_VARIANTS) + 1
 
-
 def trial_order(participant_index: int, condition_id: str, seed: int = STUDY_SEED) -> List[int]:
-    """Shuffle true counts within a block, with the 144 trial placed at a
-    position that rotates across participants x conditions."""
     ci = int(condition_id[1:]) - 1
     rng = random.Random(stable_seed(f"trialorder|{seed}|{participant_index}|{condition_id}"))
     others = [x for x in TRUE_COUNTS if x != 144]
@@ -100,12 +78,7 @@ def trial_order(participant_index: int, condition_id: str, seed: int = STUDY_SEE
     target_pos = (participant_index * 8 + ci) % 13
     return others[:target_pos] + [144] + others[target_pos:]
 
-
-# --- Advice numbers ---------------------------------------------------------
-
 def c2_advice_from_initial(truth: int, initial: int) -> int:
-    """C2: apply C1's signed % deviation to the participant's own estimate,
-    keeping |change| strictly below 4% of the initial estimate."""
     c1 = TRUE_TO_C1[truth]
     deviation = (c1 - truth) / truth
     change = int(round(initial * deviation))
@@ -114,27 +87,14 @@ def c2_advice_from_initial(truth: int, initial: int) -> int:
         change = int(math.copysign(max_abs_change, change)) if change != 0 else 0
     return clamp_int(initial + change)
 
-
 def advice_number(condition_id: str, truth: int, initial: int) -> int:
-    if condition_id == "C1":
-        return TRUE_TO_C1[truth]
-    if condition_id == "C2":
-        return c2_advice_from_initial(truth, initial)
-    if condition_id in {"C3", "C4", "C5"}:
-        return TRUE_TO_OVER[truth]
-    if condition_id in {"C6", "C7", "C8"}:
-        return TRUE_TO_UNDER[truth]
+    if condition_id == "C1": return TRUE_TO_C1[truth]
+    if condition_id == "C2": return c2_advice_from_initial(truth, initial)
+    if condition_id in {"C3", "C4", "C5"}: return TRUE_TO_OVER[truth]
+    if condition_id in {"C6", "C7", "C8"}: return TRUE_TO_UNDER[truth]
     raise KeyError(condition_id)
 
-
-# --- Full trial schedule ----------------------------------------------------
-
 def build_schedule(participant_index: int, seed: int = STUDY_SEED) -> List[Dict]:
-    """Return the participant's full 104-trial schedule.
-
-    Advice numbers for C2 depend on the initial estimate and are resolved at
-    runtime; everything else is fixed here before the session starts.
-    """
     schedule: List[Dict] = []
     global_trial = 0
     for cond_pos, cid in enumerate(balanced_condition_order(participant_index), start=1):
@@ -155,29 +115,17 @@ def build_schedule(participant_index: int, seed: int = STUDY_SEED) -> List[Dict]
             })
     return schedule
 
-
 def practice_schedule() -> List[Dict]:
     return [{
-        "global_trial": -(i + 1),
-        "condition_id": "PRACTICE",
-        "condition_label": "practice",
-        "adviser_style": "neutral",
-        "direction": "CONTROL",
-        "condition_order_position": 0,
-        "trial_position": i + 1,
-        "true_count": c,
-        "variant": 0,
-        "stimulus_id": f"N{c}_V0",
+        "global_trial": -(i + 1), "condition_id": "PRACTICE", "condition_label": "practice",
+        "adviser_style": "neutral", "direction": "CONTROL", "condition_order_position": 0,
+        "trial_position": i + 1, "true_count": c, "variant": 0, "stimulus_id": f"N{c}_V0",
     } for i, c in enumerate(PRACTICE_COUNTS)]
 
-
 def woa(initial: float, final: float, advice: float):
-    """Weight of advice. Undefined when advice == initial."""
     denom = advice - initial
-    if denom == 0:
-        return None
+    if denom == 0: return None
     return (final - initial) / denom
-
 
 if __name__ == "__main__":
     for name, sched in [("C1", C1_ADVICE), ("OVER", OVER_ADVICE), ("UNDER", UNDER_ADVICE)]:

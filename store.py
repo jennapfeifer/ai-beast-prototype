@@ -19,7 +19,7 @@ from sqlalchemy import (
 )
 
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///beast.db")
-if DB_URL.startswith("postgres://"):  # Render hands out the legacy scheme
+if DB_URL.startswith("postgres://"):
     DB_URL = DB_URL.replace("postgres://", "postgresql://", 1)
 
 engine = create_engine(DB_URL, pool_pre_ping=True, future=True)
@@ -77,7 +77,6 @@ trials = Table(
     Column("created_at", DateTime),
 )
 
-# Blind text-only ratings of adviser messages (raters never see condition).
 message_ratings = Table(
     "message_ratings", meta,
     Column("id", Integer, primary_key=True, autoincrement=True),
@@ -91,19 +90,15 @@ message_ratings = Table(
     Column("created_at", DateTime),
 )
 
-
 def init_db() -> None:
     meta.create_all(engine)
 
-
 def next_participant_index() -> int:
-    """Next PRODUCTION counterbalancing index. Researcher TEST rows do not consume it."""
     with engine.begin() as con:
         n = con.execute(
             select(func.count()).select_from(participants).where(participants.c.notes.is_(None))
         ).scalar_one()
     return int(n)
-
 
 def create_participant(pid: str, participant_index: int, external_id: Optional[str],
                        modality: str, condition_order: List[str], notes: Optional[str] = None) -> None:
@@ -114,11 +109,9 @@ def create_participant(pid: str, participant_index: int, external_id: Optional[s
             consented=True, started_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None), notes=notes,
         ))
 
-
 def update_participant(pid: str, **fields: Any) -> None:
     with engine.begin() as con:
         con.execute(update(participants).where(participants.c.pid == pid).values(**fields))
-
 
 def save_trial(row: Dict[str, Any], connection=None) -> int:
     row = dict(row)
@@ -132,9 +125,7 @@ def save_trial(row: Dict[str, Any], connection=None) -> int:
             res = con.execute(insert(trials).values(**row))
     return int(res.inserted_primary_key[0])
 
-
 def block_history(pid: str, condition_id: str, connection=None) -> List[Dict[str, Any]]:
-    """Completed trials in the current block, for the adaptive adviser."""
     def read(con):
         return con.execute(
             select(trials.c.trial_position, trials.c.initial_estimate, trials.c.advice_number,
@@ -150,15 +141,12 @@ def block_history(pid: str, condition_id: str, connection=None) -> List[Dict[str
             rows = read(con)
     return [dict(r) for r in rows]
 
-
 def export_rows(table) -> List[Dict[str, Any]]:
     with engine.begin() as con:
         rows = con.execute(select(table)).mappings().all()
     return [dict(r) for r in rows]
 
-
 def messages_for_rating(rater_id: str, limit: int = 40) -> List[Dict[str, Any]]:
-    """Adviser messages this rater has not yet rated, with no condition info."""
     done = select(message_ratings.c.trial_id).where(message_ratings.c.rater_id == rater_id)
     with engine.begin() as con:
         rows = con.execute(
@@ -169,15 +157,12 @@ def messages_for_rating(rater_id: str, limit: int = 40) -> List[Dict[str, Any]]:
         ).mappings().all()
     return [dict(r) for r in rows]
 
-
 def save_rating(row: Dict[str, Any]) -> None:
     row = dict(row)
     row["created_at"] = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
     with engine.begin() as con:
         con.execute(insert(message_ratings).values(**row))
 
-
-# Additive pilot schema. Existing participant/trial tables are left intact.
 runtime_sessions = Table(
     "runtime_sessions", meta, Column("pid", String(64), primary_key=True),
     Column("payload", Text, nullable=False), Column("updated_at", DateTime),
@@ -192,10 +177,8 @@ study_counters = Table(
     Column("value", Integer, nullable=False),
 )
 
-
 @contextmanager
 def write_transaction():
-    """Serialize SQLite writers; use row locks for Postgres session updates."""
     with engine.connect() as con:
         if engine.dialect.name == "sqlite":
             con.exec_driver_sql("BEGIN IMMEDIATE")
@@ -207,7 +190,6 @@ def write_transaction():
         except BaseException:
             con.rollback()
             raise
-
 
 def create_session(pid, config, external_id=None):
     with write_transaction() as con:
@@ -232,7 +214,6 @@ def create_session(pid, config, external_id=None):
         con.execute(insert(runtime_sessions).values(pid=pid, payload=json.dumps(payload), updated_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)))
     return index
 
-
 @contextmanager
 def session_transaction(pid):
     with write_transaction() as con:
@@ -243,17 +224,14 @@ def session_transaction(pid):
         yield con, payload
         con.execute(update(runtime_sessions).where(runtime_sessions.c.pid == pid).values(payload=json.dumps(payload), updated_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)))
 
-
 def session_data(pid):
     with engine.connect() as con:
         row = con.execute(select(runtime_sessions.c.payload).where(runtime_sessions.c.pid == pid)).scalar_one_or_none()
     return json.loads(row) if row else None
 
-
 def save_diagnostics(con, pid, global_trial, payload):
     con.execute(insert(trial_diagnostics).values(pid=pid, global_trial=global_trial,
         payload=json.dumps(payload), created_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)))
-
 
 def diagnostic_rows(pid=None):
     with engine.connect() as con:
@@ -263,20 +241,14 @@ def diagnostic_rows(pid=None):
         rows = con.execute(query).mappings().all()
     return [dict(id=r["id"], pid=r["pid"], created_at=r["created_at"].isoformat(), **json.loads(r["payload"])) for r in rows]
 
-
 def participant_summary(pid: str) -> Optional[Dict[str, Any]]:
-    """End-of-study performance summary. Never used during the task itself."""
     with engine.begin() as con:
         rows = con.execute(
-            select(
-                trials.c.true_count,
-                trials.c.initial_estimate,
-                trials.c.final_estimate,
-            ).where(trials.c.pid == pid).order_by(trials.c.global_trial)
+            select(trials.c.true_count, trials.c.initial_estimate, trials.c.final_estimate)
+            .where(trials.c.pid == pid).order_by(trials.c.global_trial)
         ).mappings().all()
     if not rows:
         return None
-
     initial_ape = []
     final_ape = []
     final_abs = []
@@ -294,20 +266,12 @@ def participant_summary(pid: str) -> Optional[Dict[str, Any]]:
             improved_trials += 1
     if not final_ape:
         return None
-
     mean_initial = sum(initial_ape) / len(initial_ape)
     mean_final = sum(final_ape) / len(final_ape)
-    # A simple, transparent 0-100 index: 100 minus mean absolute percentage error.
-    # This is motivational end feedback, not an analysis variable.
     score = max(0, min(100, round(100.0 - mean_final)))
     initial_score = max(0, min(100, round(100.0 - mean_initial)))
     return {
-        "n_trials": len(final_ape),
-        "score": score,
-        "initial_score": initial_score,
-        "score_change": score - initial_score,
-        "improved_trials": improved_trials,
-        "mean_abs_pct_error": round(mean_final, 1),
-        "closest_dots": min(final_abs),
+        "n_trials": len(final_ape), "score": score, "initial_score": initial_score,
+        "score_change": score - initial_score, "improved_trials": improved_trials,
+        "mean_abs_pct_error": round(mean_final, 1), "closest_dots": min(final_abs),
     }
-
