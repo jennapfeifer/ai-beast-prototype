@@ -88,8 +88,9 @@ async function prepareBrowserVoice(advice){
 }
 async function prepareAgentVoice(advice){
   if(CFG.advice_modality!=='voice_text')return null;
-  const natural=await prepareNaturalVoice(advice);if(natural)return natural;
-  return prepareBrowserVoice(advice);
+  if(CFG.voice_backend==='browser')return prepareBrowserVoice(advice);
+  // For server voices, never fall back to a different browser speaker.
+  return prepareNaturalVoice(advice);
 }
 async function startPreparedVoice(prepared,advice){
   if(!prepared)return null;
