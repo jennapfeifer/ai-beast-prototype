@@ -212,28 +212,39 @@ function initialEstimator() {
   return BEASTEstimate.render({stage,max:CFG.max_estimate,clock,elapsed});
 }
 async function showAdvice(initial,advice) {
-  timing.advice_preview_ms=0;timing.advice_preview_wall_ms=0;
   let prepared=null;
   if(CFG.advice_modality==='voice_text'){
     prepared=voicePreparationPromise?await voicePreparationPromise:await prepareAgentVoice(advice);
     voicePreparationPromise=null;
   }
 
-  // Show the advice only once on the final-decision scale. The model includes the recommendation naturally within its sentence.
-  phase('YOUR FINAL DECISION');
-  const decision=BEASTEstimate.render({stage,initial:Number(initial.estimate),advice,max:CFG.max_estimate,clock,elapsed});
+  // Present the adviser message first, on its own, before the final number line.
+  phase('ADVICE');
+  stage.innerHTML=`<div class="advice-stage advice-preview-stage">
+    <div class="adviser-label"><span class="adviser-icon">⋮</span> ${esc(advice.adviser_name||state.adviser_name||'Adviser')} advises:</div>
+    <div class="advice-preview-quote">“${esc(advice.advice_text)}”</div>
+  </div>`;
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+
+  const previewStart=clock();
   const playback=CFG.advice_modality==='voice_text'?await startPreparedVoice(prepared,advice):null;
   if(playback?.voiceId)timing.voice_id=playback.voiceId;
   if(playback?.voiceProfile)timing.voice_profile=playback.voiceProfile;
   if(playback?.voiceBackend)timing.voice_backend_used=playback.voiceBackend;
   if(playback?.deliveryRate)timing.voice_delivery_rate=playback.deliveryRate;
   timing.voice_hold_ms=playback?.durationMs?Math.round(playback.durationMs):0;
-  try{
-    return await decision;
-  }finally{
-    stopCurrentVoice();
-  }
+
+  const minimumPreview=Math.max(0,Number(CFG.advice_preview_ms)||0);
+  const hold=visibleSleep(minimumPreview);
+  if(playback?.ended) await Promise.all([hold,playback.ended]);
+  else await hold;
+  timing.advice_preview_ms=minimumPreview;
+  timing.advice_preview_wall_ms=elapsed(previewStart).wall;
+  stopCurrentVoice();
+
+  // After advice presentation, show the final scale. The advice sentence is not repeated.
+  phase('YOUR FINAL DECISION');
+  return await BEASTEstimate.render({stage,initial:Number(initial.estimate),advice,max:CFG.max_estimate,clock,elapsed});
 }
 
 function scale(name,label,low,high){return `<fieldset class="scale"><legend>${esc(label)}</legend><div class="scale-options">${Array.from({length:7},(_,i)=>`<label><input type="radio" name="${name}" value="${i+1}" required><span>${i+1}</span></label>`).join('')}</div><div class="scale-anchors"><span>${low}</span><span>${high}</span></div></fieldset>`;}

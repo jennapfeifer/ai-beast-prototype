@@ -24,11 +24,7 @@ window.BEASTEstimate = (() => {
           <div class="estimate-rail" aria-hidden="true"></div>
           ${final?`<span class="previous-marker" style="left:${percent(first,max)}%" aria-hidden="true"></span>
           <span class="advice-marker" style="left:${percent(ai,max)}%" aria-hidden="true"></span>
-          <div class="advice-bubble ai-colour" id="advice-copy" style="left:${percent(ai,max)}%">
-            <div class="advice-bubble-head"><span>${escape(advice.adviser_name||'Adviser')} advises:</span></div>
-            <div class="advice-words">“${escape(advice.advice_text)}”</div>
-          </div>
-          <input class="estimate-range" id="est" type="range" min="1" max="${max}" step="1" value="${first}" aria-labelledby="estimate-title" aria-describedby="previous-copy advice-copy" aria-valuetext="${first} dots">`:''}
+          <input class="estimate-range" id="est" type="range" min="1" max="${max}" step="1" value="${first}" aria-labelledby="estimate-title" aria-describedby="previous-copy" aria-valuetext="${first} dots">`:''}
           <div class="value-marker ${final?'final-marker':'initial-marker'}" id="${final?'final-pin':'initial-pin'}" ${final?`style="left:${percent(first,max)}%"`:'hidden'} aria-hidden="true"><span class="value-stem"></span><span class="value-square" id="${final?'revised-value':'initial-pin-value'}">${final?first:''}</span></div>
           <span class="scale-end scale-start" aria-hidden="true">1</span><span class="scale-end scale-finish" aria-hidden="true">${max}</span>
         </div>
@@ -71,10 +67,6 @@ window.BEASTEstimate = (() => {
       const width = rail.getBoundingClientRect().width;
       const previous = stage.querySelector('#previous-copy');
       previous.style.left = `${labelLeft(Number(initial),width,previous.getBoundingClientRect().width,max)}px`;
-      const bubble = stage.querySelector('#advice-copy');
-      const bubbleWidth = Math.min(width, Math.max(1,bubble.getBoundingClientRect().width));
-      const desired = percent(Number(advice.advice_number),max)*width/100;
-      bubble.style.left = `${clamp(desired,bubbleWidth/2,Math.max(bubbleWidth/2,width-bubbleWidth/2))}px`;
     }
     function fromPointer(event) {
       const bounds = rail.getBoundingClientRect();
@@ -94,7 +86,6 @@ window.BEASTEstimate = (() => {
       if (typeof ResizeObserver !== 'undefined') {
         observer = new ResizeObserver(locateLabels);
         observer.observe(axis);
-        observer.observe(stage.querySelector('#advice-copy'));
         observer.observe(stage.querySelector('#previous-copy'));
       }
       update(selected);

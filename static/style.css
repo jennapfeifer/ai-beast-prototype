@@ -110,7 +110,7 @@ label>input:not([type=checkbox]):not([type=radio]),label>select{display:block;wi
 .previous-lane .reference-copy{font-size:18px}
 .advice-intro{white-space:nowrap}.advice-words{font-weight:450}
 .estimate-axis{position:relative;height:190px;user-select:none;touch-action:none;cursor:ew-resize;isolation:isolate;border-radius:6px}
-.decision-card .estimate-axis{height:305px}
+.decision-card .estimate-axis{height:190px}
 .estimate-axis:before{content:"";position:absolute;inset:0 -34px;z-index:0}
 .estimate-axis:focus-visible,.estimate-axis:has(.estimate-range:focus-visible){outline:2px solid #bac2cc;outline-offset:8px}
 .estimate-rail{position:absolute;left:0;right:0;top:52px;height:4px;border-radius:2px;background:var(--track);z-index:1;pointer-events:none}
@@ -229,3 +229,7 @@ html.task-root body.task-surface::-webkit-scrollbar:horizontal{
   height:0!important;display:none!important;
 }
 html.task-root body.task-surface{position:relative}
+
+.advice-preview-stage{display:flex;flex-direction:column;justify-content:center;min-height:330px;padding:24px 22px}
+.advice-preview-stage .adviser-label{justify-content:center;font-size:17px;margin-bottom:22px}
+.advice-preview-quote{max-width:720px;margin:0 auto;text-align:center;font-size:clamp(27px,4vw,38px);line-height:1.4;font-weight:560;color:var(--advice);letter-spacing:-.25px}
