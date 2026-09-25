@@ -36,7 +36,7 @@ def _model_profiles_with_midrange_options():
 
 adviser.model_profiles = _model_profiles_with_midrange_options
 
-APP_VERSION = 'fieldwork-2.41-render-fast-stable-voice'
+APP_VERSION = 'fieldwork-2.42-advice-first'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -55,7 +55,7 @@ COLLECT_RATINGS = os.getenv('COLLECT_RATINGS','1').lower() not in {'0','false'}
 RATING_EVERY = max(1,int(os.getenv('RATING_EVERY','2')))
 PREFILL_FINAL = True  # The v6 final slider starts at the participant's initial estimate.
 SHOW_END_SCORE = os.getenv('SHOW_END_SCORE','1').lower() not in {'0','false'}
-ADVICE_PREVIEW_MS = int(os.getenv('ADVICE_PREVIEW_MS','0'))
+ADVICE_PREVIEW_MS = int(os.getenv('ADVICE_PREVIEW_MS','4000'))
 ADVICE_MODALITY = os.getenv('ADVICE_MODALITY','text').strip().lower()
 TTS_PROVIDER = os.getenv('TTS_PROVIDER','gemini').strip().lower()
 GEMINI_TTS_MODEL = os.getenv('GEMINI_TTS_MODEL','gemini-3.8-flash-tts').strip()
@@ -275,7 +275,7 @@ def start():
         conditions=[x for x in request.form.getlist('conditions') if x in design.CONDITIONS]
         try: n=integer(request.form.get('trials','13'),1,13)
         except ValueError as e: return str(e),400
-    try:preview_ms=integer(request.form.get('advice_preview_ms',str(ADVICE_PREVIEW_MS)),0,5000) if researcher else 0
+    try:preview_ms=integer(request.form.get('advice_preview_ms',str(ADVICE_PREVIEW_MS)),0,5000) if researcher else ADVICE_PREVIEW_MS
     except ValueError:return 'Invalid advice display setting.',400
     if preview_ms not in {0,3000,4000,5000}:return 'Invalid advice display setting.',400
     advice_modality=(request.form.get('advice_modality',ADVICE_MODALITY) if researcher else 'voice_text').strip().lower()
