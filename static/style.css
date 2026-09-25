@@ -233,3 +233,31 @@ html.task-root body.task-surface{position:relative}
 .advice-preview-stage{display:flex;flex-direction:column;justify-content:center;min-height:330px;padding:24px 22px}
 .advice-preview-stage .adviser-label{justify-content:center;font-size:17px;margin-bottom:22px}
 .advice-preview-quote{max-width:720px;margin:0 auto;text-align:center;font-size:clamp(27px,4vw,38px);line-height:1.4;font-weight:560;color:var(--advice);letter-spacing:-.25px}
+
+
+/* v2.43 consortium demo — additive only; the full study interface is unchanged. */
+.consortium-demo-card{margin:24px 0;border:1px solid var(--line)}
+.demo-transition{max-width:760px;margin:auto;text-align:center}
+.demo-transition p{max-width:650px;margin:16px auto 28px;font-size:20px;line-height:1.55}
+.demo-summary-page{max-width:900px!important}
+.demo-hero{text-align:center;padding-bottom:8px}
+.demo-explainer{margin-bottom:18px}
+.demo-trial-list{display:grid;gap:16px}
+.demo-trial-card{border-left:5px solid #b8bec5}
+.demo-trial-card.is-adaptive{border-left-color:#616b76}
+.demo-trial-head{display:flex;justify-content:space-between;gap:16px;align-items:center;font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700}
+.demo-phase{color:var(--text)}
+.demo-number-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}
+.demo-number-row div{background:var(--soft);padding:13px 15px;border-radius:10px;text-align:center}
+.demo-number-row span{display:block;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.demo-number-row b{display:block;font-size:29px;margin-top:3px}
+.demo-trial-card blockquote{margin:16px 0 20px;padding:0;border:0;font-size:22px;line-height:1.45;font-weight:550}
+.demo-move-track{height:12px;border-radius:999px;background:#d5d9de;overflow:hidden}
+.demo-move-track i{display:block;height:100%;background:currentColor;border-radius:999px}
+.demo-move-caption{display:flex;justify-content:space-between;gap:18px;margin-top:8px;font-size:14px}
+.demo-move-caption span{color:var(--muted)}
+.demo-history{margin:14px 0 0}
+.demo-reveal,.demo-question{margin-top:22px}
+.demo-flow{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;background:var(--soft);border-radius:12px;padding:18px;margin-top:18px;font-weight:650}
+.demo-flow span{color:var(--muted)}
+@media(max-width:650px){.demo-number-row{grid-template-columns:1fr}.demo-move-caption{display:block}.demo-flow{display:block;text-align:center}.demo-flow span{display:block;margin:4px}}
