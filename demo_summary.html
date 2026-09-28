@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}BEAST · Consortium demo{% endblock %}
+{% block html_class %}task-root{% endblock %}
+{% block theme_colour %}#eef1f4{% endblock %}
+{% block body_class %}task-surface info-surface{% endblock %}
+{% block body %}
+<main class="page demo-summary-page demo-simple-summary">
+  <h1>Your results</h1>
+  <section class="demo-main-chart" aria-labelledby="demo-chart-title">
+    <h2 id="demo-chart-title">How much did you move toward the advice?</h2>
+    <div class="demo-simple-plot">
+      <div class="demo-simple-axis" aria-hidden="true"><span>0%</span><span>50%</span><span>100%</span></div>
+      {% for item in condition_summaries %}
+      <div class="demo-simple-bar-row{% if item.adaptive %} is-adaptive{% endif %}">
+        <div class="demo-simple-bar-label">{{item.label}}<small>{{item.n}} trial{% if item.n != 1 %}s{% endif %}</small></div>
+        <div class="demo-simple-bar-track" role="img" aria-label="{{item.label}}: {% if item.mean_pct is not none %}{{item.mean_pct}} percent{% else %}No valid estimate{% endif %}">
+          <div class="demo-simple-bar-fill" style="width:{{item.bar_pct}}%"></div>
+          <strong class="demo-simple-bar-value{% if item.adaptive and item.bar_pct >= 90 %} is-on-dark{% endif %}">{% if item.mean_pct is not none %}{{item.mean_pct}}%{% else %}—{% endif %}</strong>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="demo-simple-caption">0% = kept your first estimate · 100% = matched the advice</p>
+    {% if condition_summaries | selectattr('mean_pct', 'ne', none) | selectattr('mean_pct', 'lt', 0) | list
+       or condition_summaries | selectattr('mean_pct', 'ne', none) | selectattr('mean_pct', 'gt', 100) | list %}
+      <p class="demo-simple-caption">Values outside 0–100% appear at the edge of the chart.</p>
+    {% endif %}
+  </section>
+
+  {% set adaptive_rows = rows | selectattr('adaptive') | list %}
+  {% if adaptive_rows %}
+  <section class="demo-simple-words" aria-label="How Jamie's wording changed">
+    <h2>How Jamie's advice changed</h2>
+    <div class="demo-simple-message-pair">
+      <div><span>First</span><q>{{adaptive_rows[0].message}}</q></div>
+      <div><span>Last</span><q>{{adaptive_rows[-1].message}}</q></div>
+    </div>
+  </section>
+  {% endif %}
+
+  <p class="demo-simple-disclaimer">Six demo trials, not a scientific comparison.</p>
+  <div class="button-row demo-simple-actions">
+    <form method="post" action="/researcher/demo/start"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><button class="button primary">Run again →</button></form>
+    {% if is_researcher %}<a class="button" href="/researcher">Researcher workspace</a>{% endif %}
+  </div>
+</main>
+{% endblock %}
