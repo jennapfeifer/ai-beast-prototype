@@ -309,3 +309,15 @@ html.task-root body.task-surface{position:relative}
   .demo-simple-message-pair{grid-template-columns:1fr}
   .demo-simple-message-pair q{font-size:19px}
 }
+
+/* v2.46: label the red arrow at its exact location on the final number line.
+   Only the short source label appears here; the advice sentence stays on its own earlier screen. */
+.task-surface .advice-marker-label{
+  position:absolute;top:92px;z-index:7;display:inline-flex;align-items:center;gap:6px;
+  width:max-content;max-width:100%;padding:5px 9px;border-radius:5px;
+  background:var(--paper);border:1px solid var(--advice);
+  color:var(--advice);font-size:16px;line-height:1.2;font-weight:700;white-space:nowrap;
+  pointer-events:none;box-shadow:0 0 0 2px var(--paper);
+}
+.task-surface .advice-label-glyph{font-size:13px;line-height:1;flex-shrink:0}
+@media(max-width:600px){.task-surface .advice-marker-label{font-size:14px;padding:4px 6px}}

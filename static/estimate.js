@@ -14,6 +14,8 @@ window.BEASTEstimate = (() => {
     const final = advice !== null;
     const first = Number(initial);
     const ai = Number(advice?.advice_number);
+    const agentName = final ? String(advice?.adviser_name || 'AI adviser') : '';
+    const agentLabel = agentName === 'AI adviser' ? 'AI advice' : `${agentName}’s advice`;
     return `<div class="estimate-card ${final?'decision-card':'initial-card'}">
       <h1 class="estimate-question ${final?'final-colour':'previous-colour'}" id="estimate-title">Enter your ${final?'final ':'first '}estimate</h1>
       
@@ -24,7 +26,8 @@ window.BEASTEstimate = (() => {
           <div class="estimate-rail" aria-hidden="true"></div>
           ${final?`<span class="previous-marker" style="left:${percent(first,max)}%" aria-hidden="true"></span>
           <span class="advice-marker" style="left:${percent(ai,max)}%" aria-hidden="true"></span>
-          <input class="estimate-range" id="est" type="range" min="1" max="${max}" step="1" value="${first}" aria-labelledby="estimate-title" aria-describedby="previous-copy" aria-valuetext="${first} dots">`:''}
+          <span class="advice-marker-label" id="advice-marker-label" style="left:${percent(ai,max)}%"><span class="advice-label-glyph" aria-hidden="true">▲</span>${escape(agentLabel)}</span>
+          <input class="estimate-range" id="est" type="range" min="1" max="${max}" step="1" value="${first}" aria-labelledby="estimate-title" aria-describedby="previous-copy advice-marker-label" aria-valuetext="${first} dots">`:''}
           <div class="value-marker ${final?'final-marker':'initial-marker'}" id="${final?'final-pin':'initial-pin'}" ${final?`style="left:${percent(first,max)}%"`:'hidden'} aria-hidden="true"><span class="value-stem"></span><span class="value-square" id="${final?'revised-value':'initial-pin-value'}">${final?first:''}</span></div>
           <span class="scale-end scale-start" aria-hidden="true">1</span><span class="scale-end scale-finish" aria-hidden="true">${max}</span>
         </div>
@@ -67,6 +70,8 @@ window.BEASTEstimate = (() => {
       const width = rail.getBoundingClientRect().width;
       const previous = stage.querySelector('#previous-copy');
       previous.style.left = `${labelLeft(Number(initial),width,previous.getBoundingClientRect().width,max)}px`;
+      const agentLabel = stage.querySelector('#advice-marker-label');
+      agentLabel.style.left = `${labelLeft(Number(advice.advice_number),width,agentLabel.getBoundingClientRect().width,max)}px`;
     }
     function fromPointer(event) {
       const bounds = rail.getBoundingClientRect();
@@ -87,6 +92,7 @@ window.BEASTEstimate = (() => {
         observer = new ResizeObserver(locateLabels);
         observer.observe(axis);
         observer.observe(stage.querySelector('#previous-copy'));
+        observer.observe(stage.querySelector('#advice-marker-label'));
       }
       update(selected);
     }
