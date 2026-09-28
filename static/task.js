@@ -176,12 +176,11 @@ function renderProgress(){
   const percent=100*state.completed/Math.max(1,state.overall_total);document.getElementById('bar').style.width=percent+'%';document.querySelector('[role=progressbar]').setAttribute('aria-valuenow',String(Math.round(percent)));
 }
 async function checkpoint(warmup=false){
+  // In the consortium demo, continue straight into the adaptive trials.
+  // Keep the usual break/checkpoint screens in every other experiment mode.
+  if(CFG.demo_mode && state.block===2 && !warmup){timing.break_ms=0;return;}
   phase('BREAK');
-  if(CFG.demo_mode&&state.block===2&&!warmup){
-    stage.innerHTML=`<div class="checkpoint-card demo-transition"><span class="eyebrow">NOW THE ADVISER CHANGES</span><h1>Jamie can adapt to you.</h1><p>Jamie's first message starts without history. After that, Jamie can use how you responded on earlier adaptive trials.</p><button class="button primary" id="continue-round">Start adaptive rounds →</button></div>`;
-  }else{
-    stage.innerHTML=`<div class="checkpoint-card"><h1>${warmup?'Practice complete':`Round ${state.block-1} complete`}</h1><p>Next: ${esc(state.adviser_name||'Adviser')}</p><p>Take a break if you like.</p><button class="button primary" id="continue-round">Start round ${state.block}</button></div>`;
-  }
+  stage.innerHTML=`<div class="checkpoint-card"><h1>${warmup?'Practice complete':`Round ${state.block-1} complete`}</h1><p>Next: ${esc(state.adviser_name||'Adviser')}</p><p>Take a break if you like.</p><button class="button primary" id="continue-round">Start round ${state.block}</button></div>`;
   const t=clock();await new Promise(r=>document.getElementById('continue-round').onclick=r);timing.break_ms=elapsed(t).wall;
 }
 function inputMarkup(prompt,button='Record estimate',prefill=''){return `<div class="answer-stage"><span class="eyebrow">YOUR ESTIMATE</span><h2>${prompt}</h2><p class="helper">Enter a whole number from 1 to ${CFG.max_estimate}.</p><form id="estimate-form"><div class="estimate-row"><label class="sr-only" for="estimate">Your estimate</label><input id="estimate" type="number" min="1" max="${CFG.max_estimate}" step="1" inputmode="numeric" autocomplete="off" required value="${prefill}"><button class="button primary" type="submit">${button} →</button></div><p class="error" id="estimate-error" role="alert"></p></form></div>`;}

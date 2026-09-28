@@ -273,3 +273,39 @@ html.task-root body.task-surface{position:relative}
 .demo-chart-key{margin:12px 0 0 170px;color:var(--muted);font-size:12px}.demo-trials-compact{padding:22px 26px}.demo-trial-strip{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:14px}.demo-trial-mini{min-width:0;border:1px solid var(--line);border-radius:12px;padding:13px 8px;text-align:center;background:var(--soft)}.demo-trial-mini.is-adaptive{border-color:#89919a;background:#f4f5f6}.demo-mini-number{display:block;font-size:11px;color:var(--muted);margin-bottom:5px}.demo-trial-mini b{display:block;font-size:25px}.demo-trial-mini small{display:block;color:var(--muted);font-size:11px;margin-top:4px}
 .demo-message-change{margin-top:16px;padding:24px 26px}.demo-message-pair{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:14px}.demo-message-pair>div{background:var(--soft);border-radius:12px;padding:16px}.demo-message-pair span{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:8px}.demo-message-pair q{display:block;font-size:18px;line-height:1.45;font-weight:600}.demo-details{margin-top:14px}.demo-details summary{cursor:pointer;color:var(--muted);font-size:14px}.demo-details li{margin:8px 0;line-height:1.4}
 @media(max-width:700px){.demo-comparison-head{display:block}.demo-tiny-note{display:block;margin-top:8px}.demo-axis-labels{margin-left:0}.demo-chart-row{grid-template-columns:1fr;gap:7px}.demo-chart-key{margin-left:0}.demo-trial-strip{grid-template-columns:repeat(3,1fr)}.demo-message-pair{grid-template-columns:1fr}}
+
+
+/* v2.45 — intentionally minimal consortium result screen. */
+.demo-simple-summary{width:min(900px,92%)!important;margin:32px auto 48px}
+.demo-simple-summary>h1{text-align:center;margin:12px 0 30px}
+.demo-main-chart{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:28px 32px 22px}
+.demo-main-chart h2{font-size:clamp(21px,3vw,27px);margin:0 0 30px;text-align:center;line-height:1.25}
+.demo-simple-plot{display:grid;gap:20px}
+.demo-simple-axis{margin-left:180px;display:flex;justify-content:space-between;color:var(--muted);font-size:13px;font-weight:600}
+.demo-simple-bar-row{display:grid;grid-template-columns:160px minmax(0,1fr);gap:20px;align-items:center}
+.demo-simple-bar-label{font-size:19px;font-weight:720;line-height:1.3;min-width:0}
+.demo-simple-bar-label small{display:block;font-size:13px;color:var(--muted);font-weight:450;margin-top:3px}
+.demo-simple-bar-track{height:56px;position:relative;border-radius:9px;background:linear-gradient(to right,transparent 49.8%,var(--line) 49.8%,var(--line) 50.2%,transparent 50.2%),var(--soft);overflow:hidden}
+.demo-simple-bar-fill{height:100%;background:#abb1b9;border-radius:9px;min-width:0}
+.demo-simple-bar-row.is-adaptive .demo-simple-bar-fill{background:#485765}
+.demo-simple-bar-value{position:absolute;right:14px;top:50%;transform:translateY(-50%);font-size:23px;line-height:1;font-weight:800;font-variant-numeric:tabular-nums;color:var(--ink);text-shadow:0 0 4px var(--paper)}
+.demo-simple-bar-value.is-on-dark{color:white;text-shadow:0 1px 2px #25313e}
+.demo-simple-caption{text-align:center;font-size:13px;color:var(--muted);margin:20px 0 0;line-height:1.4}
+.demo-simple-words{margin-top:34px}
+.demo-simple-words h2{font-size:23px;text-align:center;margin:0 0 18px}
+.demo-simple-message-pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.demo-simple-message-pair>div{padding:20px 24px;border:1px solid var(--line);border-radius:12px;background:var(--paper);min-width:0}
+.demo-simple-message-pair span{display:block;font-size:13px;font-weight:700;color:var(--muted);margin-bottom:12px}
+.demo-simple-message-pair q{display:block;font-size:21px;line-height:1.48;font-weight:580;overflow-wrap:anywhere}
+.demo-simple-disclaimer{text-align:center;font-size:12px;color:var(--muted);margin:25px 0 17px}
+.demo-simple-actions{margin-bottom:22px}
+@media(max-width:620px){
+  .demo-main-chart{padding:22px 17px}
+  .demo-simple-axis{margin-left:0}
+  .demo-simple-bar-row{grid-template-columns:1fr;gap:8px}
+  .demo-simple-bar-label{font-size:17px}
+  .demo-simple-bar-label small{display:inline;font-size:12px;margin-left:6px}
+  .demo-simple-bar-track{height:50px}
+  .demo-simple-message-pair{grid-template-columns:1fr}
+  .demo-simple-message-pair q{font-size:19px}
+}
