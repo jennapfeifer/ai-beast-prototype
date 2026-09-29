@@ -36,7 +36,7 @@ def _model_profiles_with_midrange_options():
 
 adviser.model_profiles = _model_profiles_with_midrange_options
 
-APP_VERSION = 'fieldwork-2.46-advice-arrow-label'
+APP_VERSION = 'fieldwork-2.47-demo-adviser-introduction'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
