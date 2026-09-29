@@ -167,7 +167,7 @@ function beginAdvicePrefetch(){
 }
 function renderProgress(){
   if(CFG.demo_mode){
-    document.getElementById('round-title').textContent=state.block===1?'Neutral advice':'Adaptive persuasive advice';
+    document.getElementById('round-title').textContent=`Adviser ${state.adviser_name||'Adviser'}`;
     document.getElementById('meta').textContent=`${state.completed} / ${state.overall_total}`;
   }else{
     document.getElementById('round-title').textContent=state.practice?'Practice':`Round ${state.block} of ${state.n_blocks}`;
@@ -177,12 +177,11 @@ function renderProgress(){
 }
 async function checkpoint(warmup=false){
   // In demo mode, introduce the new adviser after the two neutral trials.
-  // Jamie's first adaptive trial has no history; later trials can use Jamie's own history.
   // All other experiment modes retain their existing checkpoint behaviour.
   if(CFG.demo_mode && state.block===2 && !warmup){
     const name=esc(state.adviser_name||'Jamie');
     phase('NEW ADVISER');
-    stage.innerHTML=`<div class="checkpoint-card demo-transition"><span class="eyebrow">NEW ADVISER</span><h1>Meet ${name}</h1><p>${name} can adapt future advice based on how you respond.</p><button class="button primary" id="continue-round">Continue →</button></div>`;
+    stage.innerHTML=`<div class="checkpoint-card demo-transition"><span class="eyebrow">NEW ADVISER</span><h1>Meet ${name}</h1><button class="button primary" id="continue-round">Continue →</button></div>`;
     const t=clock();
     await new Promise(r=>document.getElementById('continue-round').onclick=r);
     timing.break_ms=elapsed(t).wall;
