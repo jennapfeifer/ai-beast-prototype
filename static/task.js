@@ -176,9 +176,18 @@ function renderProgress(){
   const percent=100*state.completed/Math.max(1,state.overall_total);document.getElementById('bar').style.width=percent+'%';document.querySelector('[role=progressbar]').setAttribute('aria-valuenow',String(Math.round(percent)));
 }
 async function checkpoint(warmup=false){
-  // In the consortium demo, continue straight into the adaptive trials.
-  // Keep the usual break/checkpoint screens in every other experiment mode.
-  if(CFG.demo_mode && state.block===2 && !warmup){timing.break_ms=0;return;}
+  // In demo mode, introduce the new adviser after the two neutral trials.
+  // Jamie's first adaptive trial has no history; later trials can use Jamie's own history.
+  // All other experiment modes retain their existing checkpoint behaviour.
+  if(CFG.demo_mode && state.block===2 && !warmup){
+    const name=esc(state.adviser_name||'Jamie');
+    phase('NEW ADVISER');
+    stage.innerHTML=`<div class="checkpoint-card demo-transition"><span class="eyebrow">NEW ADVISER</span><h1>Meet ${name}</h1><p>${name} can adapt future advice based on how you respond.</p><button class="button primary" id="continue-round">Continue →</button></div>`;
+    const t=clock();
+    await new Promise(r=>document.getElementById('continue-round').onclick=r);
+    timing.break_ms=elapsed(t).wall;
+    return;
+  }
   phase('BREAK');
   stage.innerHTML=`<div class="checkpoint-card"><h1>${warmup?'Practice complete':`Round ${state.block-1} complete`}</h1><p>Next: ${esc(state.adviser_name||'Adviser')}</p><p>Take a break if you like.</p><button class="button primary" id="continue-round">Start round ${state.block}</button></div>`;
   const t=clock();await new Promise(r=>document.getElementById('continue-round').onclick=r);timing.break_ms=elapsed(t).wall;
