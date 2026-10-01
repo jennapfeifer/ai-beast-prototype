@@ -167,13 +167,8 @@ function beginAdvicePrefetch(){
 }
 function taskLabel(task){return task==='social'?'Social judgments':'Dot estimates';}
 function renderProgress(){
-  if(CFG.demo_mode){
-    document.getElementById('round-title').textContent=`Adviser ${state.adviser_name||'Adviser'}`;
-    document.getElementById('meta').textContent=`${state.completed} / ${state.overall_total}`;
-  }else{
-    document.getElementById('round-title').textContent=state.practice?'Practice':`${taskLabel(state.task_type)} · Round ${state.block} of ${state.n_blocks}`;
-    document.getElementById('meta').textContent=state.practice?'Practice':`${state.completed} / ${state.overall_total}`;
-  }
+  document.getElementById('round-title').textContent=state.practice?'Practice':`${taskLabel(state.task_type)} · Round ${state.block} of ${state.n_blocks}`;
+  document.getElementById('meta').textContent=state.practice?'Practice':`${state.completed} / ${state.overall_total}`;
   const percent=100*state.completed/Math.max(1,state.overall_total);document.getElementById('bar').style.width=percent+'%';document.querySelector('[role=progressbar]').setAttribute('aria-valuenow',String(Math.round(percent)));
 }
 async function checkpoint(warmup=false){
