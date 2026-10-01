@@ -36,7 +36,7 @@ def _model_profiles_with_midrange_options():
 
 adviser.model_profiles = _model_profiles_with_midrange_options
 
-APP_VERSION = 'fieldwork-2.60-rationale-social-beast'
+APP_VERSION = 'fieldwork-2.61-live-review-comparison'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -174,38 +174,6 @@ def require_admin():
     if not is_admin(): abort(403)
 
 
-def consortium_demo_schedule(participant_index):
-    """Six-trial demonstration: two neutral, then four adaptive persuasive trials.
-
-    This remains separate from the full three-condition experiment. The adviser is
-    same displayed adviser throughout; the adaptive block can use earlier completed
-    adaptive responses after its first trial.
-    """
-    demo_spec=[
-        ('N',64,'UP'), ('N',160,'DOWN'),
-        ('A',80,'UP'), ('A',192,'DOWN'), ('A',48,'UP'), ('A',128,'DOWN'),
-    ]
-    rows=[]
-    per_condition={'N':0,'A':0}
-    for global_trial,(cid,truth,direction) in enumerate(demo_spec,start=1):
-        per_condition[cid]+=1
-        variant=design.image_variant_for(participant_index,cid)
-        rows.append({
-            'global_trial':global_trial,
-            'condition_id':cid,
-            'condition_label':design.CONDITIONS[cid]['label'],
-            'adviser_style':design.CONDITIONS[cid]['style'],
-            'direction':direction,
-            'condition_order_position':1 if cid=='N' else 2,
-            'trial_position':per_condition[cid],
-            'true_count':truth,
-            'variant':variant,
-            'stimulus_id':f'N{truth}_V{variant}',
-            'suppress_ratings':True,
-            'demo_trial':True,
-        })
-    return rows
-
 
 def _task_order(participant_index, task_mode):
     if task_mode == 'both':
@@ -238,8 +206,6 @@ def _limited_social_rows(task_rows, n):
 
 def schedule(data):
     conf=data['config']
-    if conf.get('demo_mode'):
-        return consortium_demo_schedule(data['participant_index'])
     task_mode=conf.get('task_mode','numerosity')
     selected=set(conf.get('conditions') or design.CONDITIONS)
     n=conf.get('trials_per_block')
@@ -405,8 +371,7 @@ def task():
         researcher_mode=bool(session.get('researcher') and data['config'].get('researcher')),max_estimate=design.MAX_ESTIMATE,
         pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline',request_timeout_ms=90000,
         advice_preview_ms=data['config'].get('advice_preview_ms',0),advice_modality=data['config'].get('advice_modality','text'),
-        voice_backend=natural_voice_backend(),prefetch_enabled=True,rating_items=data['config'].get('rating_items','trust_and_feeling'),
-        demo_mode=bool(data['config'].get('demo_mode'))))
+        voice_backend=natural_voice_backend(),prefetch_enabled=True,rating_items=data['config'].get('rating_items','trust_and_feeling')))
 
 
 @app.get('/api/state')
@@ -807,86 +772,10 @@ def api_final():
 def debrief():
     pid=require_session();data=store.session_data(pid)
     if not data['complete']:return redirect(url_for('task'))
-    if data['config'].get('demo_mode'):
-        return redirect(url_for('consortium_demo_summary'))
     store.update_participant(pid,debriefed=True)
     return render_template('debrief.html',pid=pid,pilot=data['config']['is_test'],offline=data['config']['adviser_mode']=='offline',
         adviser_protocol=data['config'].get('adviser_protocol','legacy_v7'),rating_items=data['config'].get('rating_items','trust_and_feeling'),completed=sum(not r['practice'] for r in store.diagnostic_rows(pid)),summary=store.participant_summary(pid) if SHOW_END_SCORE else None)
 
-
-@app.post('/researcher/demo/start')
-def start_consortium_demo():
-    require_admin()
-    profiles=adviser.model_profiles()
-    profile=profiles.get('gpt_6_sol')
-    if not profile or not adviser.has_api_key(profile['provider']):
-        return 'GPT-6 Sol is not available. Configure OPENAI_API_KEY before starting the live consortium demo.',503
-    conf=dict(
-        conditions=['N','A'],trials_per_block=None,skip_practice=True,
-        adviser_protocol='raw_agent_v19',advice_preview_ms=4000,advice_modality='voice_text',
-        rating_items='trust_only',
-        adviser_names={'N':'Jamie','A':'Jamie'},
-        adviser_voices=assign_adviser_voices(),
-        test_index=0,adviser_mode='live',is_test=True,researcher=False,
-        model_profile_id='gpt_6_sol',model_profile=profile,
-        demo_mode=True,demo_label='consortium_2neutral_4adaptive',
-        ui_version=APP_VERSION,stimulus_render_version=STIMULUS_RENDER_VERSION,
-        started_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat(),
-    )
-    pid=uuid.uuid4().hex[:12]
-    store.create_session(pid,conf,None)
-    session['pid']=pid
-    return redirect(url_for('task'))
-
-
-@app.get('/demo/summary')
-def consortium_demo_summary():
-    pid=require_session();data=store.session_data(pid)
-    if not data['config'].get('demo_mode'):
-        return redirect(url_for('debrief'))
-    if not data['complete']:
-        return redirect(url_for('task'))
-    store.update_participant(pid,debriefed=True)
-    rows=store.participant_trials(pid)
-    demo_rows=[]
-    adaptive_seen=0
-    for i,row in enumerate(rows,start=1):
-        woa=row.get('woa')
-        if woa is None:
-            move_label='Advice matched the first estimate'
-            move_pct=None
-            bar_pct=0
-        else:
-            move_pct=round(100*float(woa))
-            bar_pct=max(0,min(100,move_pct))
-            if woa < -0.10:
-                move_label='Moved away from the advice'
-            elif woa < 0.25:
-                move_label='Stayed close to the first estimate'
-            elif woa < 0.75:
-                move_label='Moved partway toward the advice'
-            else:
-                move_label='Moved strongly toward the advice'
-        adaptive=row.get('condition_id')=='A'
-        history_available=adaptive_seen if adaptive else 0
-        if adaptive: adaptive_seen+=1
-        demo_rows.append(dict(
-            number=i,phase='Adaptive persuasive' if adaptive else 'Neutral',adaptive=adaptive,
-            history_available=history_available,initial=row.get('initial_estimate'),
-            advice=row.get('advice_number'),final=row.get('final_estimate'),
-            message=row.get('advice_text'),move_pct=move_pct,bar_pct=bar_pct,move_label=move_label,
-        ))
-
-    condition_summaries=[]
-    for adaptive,label in ((False,'Neutral'),(True,'Adaptive persuasive')):
-        group=[r for r in demo_rows if r['adaptive']==adaptive and r['move_pct'] is not None]
-        raw_mean=(sum(r['move_pct'] for r in group)/len(group)) if group else None
-        mean_pct=round(raw_mean) if raw_mean is not None else None
-        condition_summaries.append(dict(
-            label=label,adaptive=adaptive,n=len(group),mean_pct=mean_pct,
-            bar_pct=0 if mean_pct is None else max(0,min(100,mean_pct)),
-        ))
-    return render_template('demo_summary.html',pid=pid,rows=demo_rows,condition_summaries=condition_summaries)
 
 
 @app.get('/researcher/live-review')
@@ -911,7 +800,7 @@ def researcher():
         model_profiles=profiles,default_profile=default_profile,has_any_key=any(v['available'] for v in profiles.values()),
         has_key=adviser.has_api_key(),model=adviser.ADVISER_MODEL,stimulus_ms=STIMULUS_MS,
         delay_ms=ADVISER_MIN_DELAY_MS,rating_every=RATING_EVERY,advice_preview_ms=ADVICE_PREVIEW_MS,advice_modality=ADVICE_MODALITY,natural_voice_available=natural_voice_backend()!='browser',tts_voice=shared_voice_identity(),
-        demo_model_available=bool(profiles.get('gpt_6_sol',{}).get('available')),demo_voice_available=natural_voice_backend()=='gemini',projection=timing_projection(
+        projection=timing_projection(
             wait_s=ADVISER_MIN_DELAY_MS/1000,stimulus_s=STIMULUS_MS/1000,fixation_s=FIXATION_MS/1000,
             rating_every=RATING_EVERY,collect_ratings=COLLECT_RATINGS,advice_preview_s=ADVICE_PREVIEW_MS/1000))
 

@@ -60,6 +60,12 @@ The researcher launcher now offers:
 
 Task order is counterbalanced in the comparison pilot. Each experimental block uses a different ambiguous adviser name.
 
+## Live review
+
+The researcher **Generate live review** tool runs the current 6/condition Dots + Social comparison with three condition-blind synthetic participants (108 trials total). It now submits a short rationale on every trial, allowing the Adaptive prompt to be audited against participant reasoning. Synthetic final responses never depend on adviser wording, so the tool is for generation/routing checks only, not persuasion-effect estimation.
+
+The old standalone consortium demo has been removed.
+
 ## Exports
 
 `all.zip` now includes:
@@ -85,7 +91,8 @@ For live model calls configure the relevant API key. Production remains conserva
 
 ```bash
 python smoke_test.py
-python design.py
+python validate_rationale_social.py
+node --test tests/live_review.test.cjs
 ```
 
 The build also includes `social_design.py`, which defines the social scenarios and their counterbalancing.
