@@ -77,6 +77,21 @@ trials = Table(
     Column("created_at", DateTime),
 )
 
+trial_contexts = Table(
+    "trial_contexts", meta,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("pid", String(64), index=True),
+    Column("global_trial", Integer, index=True),
+    Column("task_type", String(24), index=True),
+    Column("block_id", String(48), index=True),
+    Column("scenario_id", String(32)),
+    Column("scenario_text", Text),
+    Column("question_text", Text),
+    Column("participant_rationale", Text),
+    Column("rationale_rt_ms", Integer),
+    Column("created_at", DateTime),
+)
+
 message_ratings = Table(
     "message_ratings", meta,
     Column("id", Integer, primary_key=True, autoincrement=True),
@@ -125,26 +140,65 @@ def save_trial(row: Dict[str, Any], connection=None) -> int:
             res = con.execute(insert(trials).values(**row))
     return int(res.inserted_primary_key[0])
 
-def block_history(pid: str, condition_id: str, connection=None) -> List[Dict[str, Any]]:
+def save_trial_context(row: Dict[str, Any], connection=None) -> int:
+    row = dict(row)
+    row["created_at"] = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    allowed = {c.name for c in trial_contexts.columns}
+    row = {k: v for k, v in row.items() if k in allowed}
+    if connection is not None:
+        res = connection.execute(insert(trial_contexts).values(**row))
+    else:
+        with engine.begin() as con:
+            res = con.execute(insert(trial_contexts).values(**row))
+    return int(res.inserted_primary_key[0])
+
+
+def block_history(pid: str, condition_id: str, connection=None, task_type: Optional[str] = None) -> List[Dict[str, Any]]:
     def read(con):
-        return con.execute(
-            select(trials.c.trial_position, trials.c.initial_estimate, trials.c.advice_number,
+        trial_rows = con.execute(
+            select(trials.c.global_trial, trials.c.trial_position, trials.c.initial_estimate, trials.c.advice_number,
                    trials.c.advice_text, trials.c.final_estimate,
                    trials.c.trust_rating, trials.c.feeling_rating)
             .where(trials.c.pid == pid, trials.c.condition_id == condition_id)
-            .order_by(trials.c.trial_position)
+            .order_by(trials.c.id)
         ).mappings().all()
+        context_rows = con.execute(
+            select(trial_contexts).where(trial_contexts.c.pid == pid)
+        ).mappings().all()
+        contexts = {int(r['global_trial']): dict(r) for r in context_rows}
+        merged=[]
+        for raw in trial_rows:
+            row=dict(raw); ctx=contexts.get(int(row['global_trial']), {})
+            if task_type and ctx.get('task_type') != task_type:
+                continue
+            row.update({k:ctx.get(k) for k in ('task_type','block_id','scenario_id','scenario_text','question_text','participant_rationale')})
+            merged.append(row)
+        return merged
     if connection is not None:
-        rows = read(connection)
-    else:
-        with engine.begin() as con:
-            rows = read(con)
-    return [dict(r) for r in rows]
+        return read(connection)
+    with engine.begin() as con:
+        return read(con)
 
 def export_rows(table) -> List[Dict[str, Any]]:
     with engine.begin() as con:
         rows = con.execute(select(table)).mappings().all()
     return [dict(r) for r in rows]
+
+def analysis_trial_rows() -> List[Dict[str, Any]]:
+    """Trials merged with task/scenario/rationale context for analysis exports."""
+    with engine.begin() as con:
+        trial_rows=[dict(r) for r in con.execute(select(trials).order_by(trials.c.id)).mappings().all()]
+        contexts=[dict(r) for r in con.execute(select(trial_contexts)).mappings().all()]
+    cmap={(r['pid'],r['global_trial']):r for r in contexts}
+    out=[]
+    for row in trial_rows:
+        ctx=cmap.get((row.get('pid'),row.get('global_trial')),{})
+        merged=dict(row)
+        for key in ('task_type','block_id','scenario_id','scenario_text','question_text','participant_rationale','rationale_rt_ms'):
+            merged[key]=ctx.get(key)
+        out.append(merged)
+    return out
+
 
 def participant_trials(pid: str) -> List[Dict[str, Any]]:
     with engine.begin() as con:
@@ -212,8 +266,23 @@ def create_session(pid, config, external_id=None):
             index = con.execute(select(study_counters.c.value).where(study_counters.c.name == "production").with_for_update()).scalar_one()
             con.execute(update(study_counters).where(study_counters.c.name == "production").values(value=index + 1))
         import design
+        config = dict(config)
+        block_ids = list(config.get("name_block_ids") or [])
+        if not block_ids and config.get("task_mode"):
+            import social_design
+            task_mode=config.get("task_mode","numerosity")
+            tasks=(['numerosity','social'] if index % 2 == 0 else ['social','numerosity']) if task_mode=='both' else [task_mode]
+            wanted=set(config.get("conditions") or design.CONDITIONS)
+            for task_type in tasks:
+                order=design.balanced_condition_order(index) if task_type=='numerosity' else social_design.condition_order(index)
+                block_ids.extend(f"{task_type}:{cid}" for cid in order if cid in wanted)
+            config["name_block_ids"]=block_ids
+        if block_ids:
+            config["adviser_names"] = design.adviser_name_mapping_for_blocks(index, block_ids)
+        elif not config.get("adviser_names"):
+            config["adviser_names"] = design.adviser_name_mapping(index)
         con.execute(insert(participants).values(pid=pid, participant_index=index, external_id=external_id,
-            modality="text", condition_order=json.dumps(design.balanced_condition_order(index)), consented=True,
+            modality="text", condition_order=json.dumps(block_ids or design.balanced_condition_order(index)), consented=True,
             started_at=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None), notes="TEST" if config["is_test"] else None))
         payload = {"participant_index": index, "cursor": 0, "config": config, "pending": None,
                    "token": None, "last_token": None, "last_payload": None, "complete": False}
@@ -260,6 +329,8 @@ def participant_summary(pid: str) -> Optional[Dict[str, Any]]:
     final_abs = []
     improved_trials = 0
     for r in rows:
+        if r["true_count"] is None:
+            continue
         truth = float(r["true_count"])
         if truth <= 0:
             continue

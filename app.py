@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, session, url_for, send_file
 from sqlalchemy import update
-import adviser, design, store
+import adviser, design, social_design, store
 from pilot import build_report, timing_projection
 
 # v2.36.3 researcher-only model-comparison presets. These extend the existing
@@ -36,7 +36,7 @@ def _model_profiles_with_midrange_options():
 
 adviser.model_profiles = _model_profiles_with_midrange_options
 
-APP_VERSION = 'fieldwork-2.48-three-condition-jamie'
+APP_VERSION = 'fieldwork-2.60-rationale-social-beast'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -177,7 +177,7 @@ def require_admin():
 def consortium_demo_schedule(participant_index):
     """Six-trial demonstration: two neutral, then four adaptive persuasive trials.
 
-    This remains separate from the full three-condition experiment. Jamie is the
+    This remains separate from the full three-condition experiment. The adviser is
     same displayed adviser throughout; the adaptive block can use earlier completed
     adaptive responses after its first trial.
     """
@@ -207,15 +207,63 @@ def consortium_demo_schedule(participant_index):
     return rows
 
 
+def _task_order(participant_index, task_mode):
+    if task_mode == 'both':
+        return ['numerosity','social'] if participant_index % 2 == 0 else ['social','numerosity']
+    return [task_mode]
+
+
+def _block_ids_for_config(participant_index, task_mode, conditions=None):
+    wanted=set(conditions or design.CONDITIONS)
+    blocks=[]
+    for task_type in _task_order(participant_index, task_mode):
+        order = design.balanced_condition_order(participant_index) if task_type=='numerosity' else social_design.condition_order(participant_index)
+        blocks.extend(f'{task_type}:{cid}' for cid in order if cid in wanted)
+    return blocks
+
+
+def _limited_social_rows(task_rows, n):
+    if not n or n>=6:return task_rows
+    result=[]
+    for block_id in dict.fromkeys(r['block_id'] for r in task_rows):
+        block=[r for r in task_rows if r['block_id']==block_id]
+        up_need=n//2+(1 if n%2 else 0);down_need=n-up_need;chosen=[]
+        for r in block:
+            if r['direction']=='UP' and up_need>0:chosen.append(r);up_need-=1
+            elif r['direction']=='DOWN' and down_need>0:chosen.append(r);down_need-=1
+        for i,r in enumerate(chosen,start=1):r['trial_position']=i
+        result.extend(chosen)
+    return result
+
+
 def schedule(data):
     conf=data['config']
     if conf.get('demo_mode'):
         return consortium_demo_schedule(data['participant_index'])
-    rows=design.build_schedule(data['participant_index'])
-    if conf.get('conditions'): rows=[r for r in rows if r['condition_id'] in conf['conditions']]
-    if conf.get('trials_per_block'): rows=[r for r in rows if r['trial_position']<=conf['trials_per_block']]
-    return ([] if conf.get('skip_practice') else design.practice_schedule())+rows
-
+    task_mode=conf.get('task_mode','numerosity')
+    selected=set(conf.get('conditions') or design.CONDITIONS)
+    n=conf.get('trials_per_block')
+    rows=[]
+    tasks=_task_order(data['participant_index'],task_mode)
+    for task_type in tasks:
+        if task_type=='numerosity':
+            task_rows=design.build_schedule(data['participant_index'])
+            if n and n<12:
+                subset=set(design.balanced_trial_subset(data['participant_index'],n))
+                task_rows=[r for r in task_rows if r['true_count'] in subset]
+                for block_id in dict.fromkeys(r['block_id'] for r in task_rows):
+                    for i,r in enumerate([x for x in task_rows if x['block_id']==block_id],start=1):r['trial_position']=i
+        else:
+            task_rows=social_design.build_schedule(data['participant_index'])
+            task_rows=_limited_social_rows(task_rows,min(int(n or 6),6))
+        task_rows=[r for r in task_rows if r['condition_id'] in selected]
+        rows.extend(task_rows)
+    for i,r in enumerate(rows,start=1):r['global_trial']=i
+    if conf.get('skip_practice'):
+        return rows
+    first_task=tasks[0]
+    practice=design.practice_schedule() if first_task=='numerosity' else social_design.practice_schedule()
+    return practice+rows
 
 def ratings_due(trial):
     return (COLLECT_RATINGS and not trial.get('suppress_ratings',False)
@@ -227,17 +275,22 @@ def current(data):
     return (sched[data['cursor']] if data['cursor']<len(sched) else None),sched
 
 
-ADVISER_NAME = 'Jamie'
+def assign_adviser_names(participant_index=0, block_ids=None):
+    return design.adviser_name_mapping_for_blocks(participant_index, block_ids or [f'numerosity:{c}' for c in design.CONDITIONS])
 
 
-def assign_adviser_names():
-    # Hold the displayed identity constant across all experimental conditions.
-    return {condition:ADVISER_NAME for condition in design.CONDITIONS}
-
-
-def adviser_name(data,condition):
-    return ADVISER_NAME
-
+def adviser_name(data, trial_or_condition):
+    if isinstance(trial_or_condition, dict):
+        trial=trial_or_condition
+        condition=trial.get('condition_id')
+        block_id=trial.get('block_id') or f"{trial.get('task_type','numerosity')}:{condition}"
+    else:
+        condition=trial_or_condition
+        block_id=f"numerosity:{condition}"
+    if condition == 'PRACTICE':
+        return 'Practice adviser'
+    names = data.get('config', {}).get('adviser_names') or {}
+    return names.get(block_id) or names.get(condition) or 'Adviser'
 
 def assign_adviser_voices():
     # Every named agent uses the same speaker identity.
@@ -306,8 +359,11 @@ def start():
         return 'Production is not configured: live adviser, approved study information and contact details are required.',503
     conditions=[]
     n=12
+    task_mode='numerosity'
     if researcher:
         conditions=[x for x in request.form.getlist('conditions') if x in design.CONDITIONS]
+        task_mode=(request.form.get('task_mode','numerosity') or 'numerosity').strip().lower()
+        if task_mode not in {'numerosity','social','both'}: return 'Invalid task mode.',400
         try: n=integer(request.form.get('trials','12'),1,12)
         except ValueError as e: return str(e),400
     try:preview_ms=integer(request.form.get('advice_preview_ms',str(ADVICE_PREVIEW_MS)),0,5000) if researcher else ADVICE_PREVIEW_MS
@@ -315,8 +371,8 @@ def start():
     if preview_ms not in {0,3000,4000,5000}:return 'Invalid advice display setting.',400
     advice_modality=(request.form.get('advice_modality',ADVICE_MODALITY) if researcher else 'voice_text').strip().lower()
     if advice_modality not in {'text','voice_text'}:return 'Invalid advice modality.',400
-    conf=dict(conditions=conditions,trials_per_block=n,skip_practice=researcher and request.form.get('skip_practice')=='1',
-              adviser_protocol='raw_agent_v19',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),adviser_voices=assign_adviser_voices(),
+    conf=dict(conditions=conditions,trials_per_block=n,task_mode=task_mode,skip_practice=researcher and request.form.get('skip_practice')=='1',
+              adviser_protocol='rationale_social_v1',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names={},adviser_voices=assign_adviser_voices(),
               test_index=integer(request.form.get('test_index','0'),0,5) if researcher else 0,
               adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
               model_profile_id=profile_id,model_profile=profile,
@@ -331,8 +387,12 @@ def start():
 @app.route('/instructions')
 def instructions():
     pid=require_session();data=store.session_data(pid);sched=schedule(data)
-    return render_template('instructions.html',n_trials=sum(r['condition_id']!='PRACTICE' for r in sched),
-      n_blocks=len({r['condition_id'] for r in sched if r['condition_id']!='PRACTICE'}),practice=not data['config']['skip_practice'],
+    experimental=[r for r in sched if r['condition_id']!='PRACTICE']
+    return render_template('instructions.html',n_trials=len(experimental),
+      n_blocks=len(dict.fromkeys(r.get('block_id',r['condition_id']) for r in experimental)),practice=not data['config']['skip_practice'],
+      task_mode=data['config'].get('task_mode','numerosity'),
+      numerosity_trials=sum(r.get('task_type','numerosity')=='numerosity' for r in experimental),
+      social_trials=sum(r.get('task_type')=='social' for r in experimental),
       stimulus_seconds=STIMULUS_MS/1000,ratings=COLLECT_RATINGS,rating_every=RATING_EVERY,pilot=data['config']['is_test'],
       advice_preview_ms=data['config'].get('advice_preview_ms',0),advice_modality=data['config'].get('advice_modality','text'),rating_items=data['config'].get('rating_items','trust_and_feeling'))
 
@@ -357,31 +417,39 @@ def api_state():
         if trial is None: return jsonify(done=True)
         token=ensure_token(data)
         practice=trial['condition_id']=='PRACTICE'
-        conditions=list(dict.fromkeys(r['condition_id'] for r in sched if r['condition_id']!='PRACTICE'))
         experimental=[r for r in sched if r['condition_id']!='PRACTICE']
+        block_ids=list(dict.fromkeys(r.get('block_id',r['condition_id']) for r in experimental))
         completed=sum(r['condition_id']!='PRACTICE' for r in sched[:data['cursor']])
-        block=0 if practice else conditions.index(trial['condition_id'])+1
-        out=dict(done=False,trial_token=token,practice=practice,block=block,n_blocks=len(conditions),
-                 adviser_name=adviser_name(data,trial['condition_id']),trial_in_block=trial['trial_position'],n_in_block=sum(r['condition_id']==trial['condition_id'] for r in sched),
+        block_id=trial.get('block_id',trial['condition_id'])
+        block=0 if practice else block_ids.index(block_id)+1
+        task_type=trial.get('task_type','numerosity')
+        out=dict(done=False,trial_token=token,practice=practice,block=block,n_blocks=len(block_ids),block_id=block_id,
+                 task_type=task_type,adviser_style=condition_agent_style(trial['condition_id'],trial.get('adviser_style')),
+                 adviser_name=adviser_name(data,trial),trial_in_block=trial['trial_position'],n_in_block=sum(r.get('block_id',r['condition_id'])==block_id for r in sched),
                  overall=completed+1,completed=completed,overall_total=len(experimental),
-                 image=url_for('stimulus',token=token),break_due=not practice and trial['trial_position']==1 and block>1,
+                 image=(url_for('stimulus',token=token) if task_type=='numerosity' else None),
+                 scenario_text=trial.get('scenario_text'),question_text=trial.get('question_text'),
+                 rationale_prompt=trial.get('rationale_prompt') or ('What mainly led you to that estimate?' if task_type=='numerosity' else 'What mainly led you to that judgment?'),
+                 scale_min=trial.get('scale_min',1),scale_max=trial.get('scale_max',design.MAX_ESTIMATE),
+                 break_due=not practice and trial['trial_position']==1 and block>1,
                  voice_tone='persuasive' if trial['condition_id'] in {'P','A'} else 'neutral',
                  voice_slot=adviser_voice_slot(data,trial['condition_id']),
                  ratings_due=ratings_due(trial),rating_window=RATING_EVERY,pending=None,researcher=None)
         if data['pending']:
-            out['pending']={k:data['pending'][k] for k in ['initial','text','rt_initial','latency_ms','advice']}
+            out['pending']={k:data['pending'].get(k) for k in ['initial','rationale','rationale_rt_ms','text','rt_initial','latency_ms','advice']}
         if session.get('researcher') and data['config'].get('researcher'):
-            out['researcher']=dict(condition=trial['condition_id'],style=condition_agent_style(trial['condition_id'],trial.get('adviser_style')),direction=trial['direction'],
-                true_count=trial['true_count'],pid=pid,participant_index=data['participant_index'],mode=data['config']['adviser_mode'],
+            out['researcher']=dict(condition=trial['condition_id'],block_id=block_id,task_type=task_type,
+                scenario_id=trial.get('scenario_id'),style=condition_agent_style(trial['condition_id'],trial.get('adviser_style')),direction=trial['direction'],
+                true_count=trial.get('true_count'),pid=pid,participant_index=data['participant_index'],mode=data['config']['adviser_mode'],
                 agent_voice=adviser_voice(data,trial['condition_id']),voice_tone=out['voice_tone'],voice_profile=_voice_profile(trial['condition_id']),
-                condition_order=conditions,**(data['pending'].get('diagnostic',{}) if data['pending'] else {}))
+                block_order=block_ids,**(data['pending'].get('diagnostic',{}) if data['pending'] else {}))
         return jsonify(out)
 
 
 @app.get('/stimulus/<token>')
 def stimulus(token):
     pid=require_session();data=store.session_data(pid);trial,_=current(data)
-    if not trial or data.get('pending') or not data.get('token') or not hmac.compare_digest(token,data['token']):abort(404)
+    if not trial or trial.get('task_type','numerosity')!='numerosity' or data.get('pending') or not data.get('token') or not hmac.compare_digest(token,data['token']):abort(404)
     # Generate only this deterministic image if the background cache has not reached it yet.
     path=ensure_stimulus(trial['stimulus_id'],trial['true_count'],trial['variant'])
     return send_file(path,mimetype='image/webp',max_age=0,download_name='dot-field.webp')
@@ -389,7 +457,7 @@ def stimulus(token):
 
 def advice_payload(pending,data):
     trial,_=current(data)
-    result=dict(adviser_name=adviser_name(data,trial['condition_id']),advice_text=pending['text'],advice_number=pending['advice'],latency_ms=pending['latency_ms'],
+    result=dict(adviser_name=adviser_name(data,trial),advice_text=pending['text'],advice_number=pending['advice'],latency_ms=pending['latency_ms'],
                 voice_tone='persuasive' if trial['condition_id'] in {'P','A'} else 'neutral',
                 voice_slot=adviser_voice_slot(data,trial['condition_id']))
     if session.get('researcher') and data['config'].get('researcher'):
@@ -397,46 +465,55 @@ def advice_payload(pending,data):
     return result
 
 
-def prepared_advice(con,data,trial,initial):
-    """Resolve one trial's advice.
-
-    The current first estimate is withheld from generated Jamie messages so N/P/A
-    can be prefetched while the participant is still viewing/estimating. The
-    numerical recommendation is already fixed by the trial's UP/DOWN schedule.
-    """
+def prepared_advice(con,data,trial,initial,rationale=None):
+    """Resolve one trial's recommendation and participant-facing adviser note."""
     practice=trial['condition_id']=='PRACTICE'
     style=condition_agent_style(trial['condition_id'], trial.get('adviser_style'))
-    advice=design.clamp_int(initial*1.05) if practice else design.advice_number(trial['condition_id'],trial['true_count'],initial,trial['direction'])
+    task_type=trial.get('task_type','numerosity')
+    if practice:
+        advice=int(trial.get('advice_number') or (design.clamp_int((initial or 50)*1.05) if task_type=='numerosity' else 40))
+    elif task_type=='social':
+        advice=int(trial['advice_number'])
+    else:
+        advice=design.advice_number(trial['condition_id'],trial['true_count'],initial,trial['direction'])
     protocol=data['config'].get('adviser_protocol')
-    no_current_estimate=protocol in {'raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14','raw_agent_v15','raw_agent_v16','raw_agent_v17','raw_agent_v18','raw_agent_v19'}
     cached=data.get('prefetched')
-    if cached and cached.get('token')==data.get('token'):
-        # Main-study recommendation numbers are fixed by the scheduled UP/DOWN direction,
-        # so prefetched responses can be reused after the first estimate is submitted.
-        if style=='fixed' or cached.get('advice')==advice:
-            return advice,cached['message'],dict(cached['diagnostic'],prefetched=True,advice=advice,initial_context_available=False)
-    rows=[] if practice else store.block_history(data['_pid'],trial['condition_id'],con)
+    # Adaptive messages are never reused from prefetch because current rationale is part of the manipulation.
+    if style!='adaptive' and cached and cached.get('token')==data.get('token') and cached.get('advice')==advice:
+        return advice,cached['message'],dict(cached['diagnostic'],prefetched=True,advice=advice,initial_context_available=False,
+                                             rationale_context_available=False)
+    rows=[] if practice else store.block_history(data['_pid'],trial['condition_id'],con,task_type=task_type)
     history=rows if style=='adaptive' else []
-    generator=adviser.generate_offline_message if data['config']['adviser_mode']=='offline' else adviser.generate_message
-    if protocol in {'flexible_v8','raw_agent_v9','raw_agent_v10','raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14','raw_agent_v15','raw_agent_v16','raw_agent_v17','raw_agent_v18','raw_agent_v19'} and data['config']['adviser_mode']=='live':
-        generator=adviser_flexible.generate_message
-    # Generated main-study conditions do not receive the current first estimate.
-    # Practice remains scripted and uses the submitted estimate only for its number.
-    model_initial=None if (no_current_estimate and style!='fixed') else initial
-    t=time.perf_counter()
     profile=data['config'].get('model_profile') or adviser.model_profiles()['server']
-    with adviser.use_model_profile(profile):
-        msg=generator(style=style,initial=model_initial,advice=advice,history=history,
-            previous_messages=[r['advice_text'] for r in rows if r.get('advice_text')],
-            key=f"{data['participant_index']}|{trial['condition_id']}|{trial['trial_position']}")
+    key=f"{data['participant_index']}|{trial['condition_id']}|{trial['trial_position']}"
+    t=time.perf_counter()
+    if practice:
+        msg=adviser.control_message(advice,key)
+        msg.update(live_model=False,history_route='practice',prompt_version='practice-control')
+    elif data['config']['adviser_mode']=='offline':
+        # Offline is a mechanical rehearsal. It deliberately does not pretend to validate LLM responsiveness.
+        if style=='neutral': text=f'My estimate for this round is {advice}, simply offered as another judgment to consider.'
+        elif style=='static': text=f'Please give {advice} serious weight when choosing your final judgment for this round.'
+        elif rationale:
+            text=f'You based your judgment on that reason; please give {advice} more weight before deciding.'
+        else: text=f'Please give {advice} more weight when choosing your final judgment for this round.'
+        msg=dict(text=text,source='offline_demo:'+style,attempts=0,word_count=adviser.words(text),validation='offline_rehearsal',
+                 history_route='offline',live_model=False,prompt_version='offline-rationale-social-v1',attempt_log=[])
+    else:
+        scenario={'text':trial.get('scenario_text'),'question':trial.get('question_text')} if task_type=='social' else None
+        with adviser.use_model_profile(profile):
+            msg=adviser_flexible.generate_message(style=style,initial=None,advice=advice,history=history,
+                previous_messages=[r['advice_text'] for r in rows if r.get('advice_text')],key=key,
+                task_type=task_type,current_rationale=(rationale if style=='adaptive' else None),scenario=scenario)
     diagnostic=dict(history_rows=len(history),expected_history_rows=trial['trial_position']-1 if style=='adaptive' else 0,
         history_positions=[r['trial_position'] for r in history],displayed_message=msg['text'],source=msg['source'],attempts=msg['attempts'],
         validation=msg['validation'],word_count=msg['word_count'],live_model=msg.get('live_model',False),
         history_route=msg.get('history_route'),generation_ms=round((time.perf_counter()-t)*1000),
-        history_check=msg.get('history_check'),prompt_version=msg.get('prompt_version'),
-        prompt_sha256=msg.get('prompt_sha256'),
-        attempt_log=msg.get('attempt_log',[]),fallback=msg['source'].startswith('fallback:'),
-        adviser_protocol=protocol or 'legacy_v7',initial_context_available=(model_initial is not None),prefetched=False,provider=profile['provider'],
+        history_check=msg.get('history_check'),prompt_version=msg.get('prompt_version'),prompt_sha256=msg.get('prompt_sha256'),
+        attempt_log=msg.get('attempt_log',[]),fallback=msg['source'].startswith('fallback:'),adviser_protocol=protocol or 'legacy_v7',
+        initial_context_available=False,rationale_context_available=bool(style=='adaptive' and rationale),
+        task_type=task_type,block_id=trial.get('block_id'),scenario_id=trial.get('scenario_id'),
+        participant_rationale=(rationale if style=='adaptive' else None),prefetched=False,provider=profile['provider'],
         model=profile['model'],reasoning=profile['reasoning'],request_timeout_s=profile['timeout'],advice=advice)
     diagnostic.update(model_response_received=msg.get('model_response_received',False),
         trust_context_in_prompt=msg.get('trust_context_in_prompt',False),
@@ -446,10 +523,9 @@ def prepared_advice(con,data,trial,initial):
                   'feeling_latest_rating','feeling_latest_trial','feeling_previous_rating','feeling_change','feeling_age_trials',
                   'adaptive_focus','adaptive_strategy','adaptation_check','feeling_check','repetition_check','repetition_similarity',
                   'review_required','review_reasons','rating_strategies','grounding_record_check','model_basis',
-                  'generation_status','rating_influence_status','persuasion_check',
-                  'max_attempts','total_budget_s','retry_policy_version','retry_count',
-                  'recovered_after_retry','stop_reason','budget_overrun',
-                  'target_word_range','word_tolerance','word_count_check','direction_check','adaptive_summary','adaptive_summary_in_prompt',
+                  'generation_status','rating_influence_status','persuasion_check','max_attempts','total_budget_s',
+                  'retry_policy_version','retry_count','recovered_after_retry','stop_reason','budget_overrun','target_word_range',
+                  'word_tolerance','word_count_check','direction_check','adaptive_summary','adaptive_summary_in_prompt',
                   'first_draft','displayed_draft','length_retry_used','length_retry_success'):
         diagnostic[field]=msg.get(field)
     return advice,msg,diagnostic
@@ -588,23 +664,19 @@ def api_voice():
 
 @app.post('/api/prefetch')
 def api_prefetch():
-    """Prepare agent text before the participant submits the first estimate.
-
-    For v2.21, generated N/P/A conditions do not receive the current estimate, so
-    text generation can overlap the 5-second stimulus and the participant's
-    response time. All three main conditions have fixed numerical recommendations for each scheduled direction.
-    """
+    """Prefetch N/P messages. Adaptive waits for the participant's current rationale."""
     pid=require_session();body=request.get_json(silent=True) or {}
     with store.session_transaction(pid) as (con,data):
         trial,_=current(data)
         if trial is None or not data.get('token') or body.get('trial_token')!=data.get('token'):
             return jsonify(error='This trial is no longer current.'),409
-        if data.get('pending') or trial['condition_id']=='PRACTICE':
+        style=condition_agent_style(trial['condition_id'],trial.get('adviser_style'))
+        if data.get('pending') or trial['condition_id']=='PRACTICE' or style=='adaptive':
             return jsonify(ok=True,prefetched=False)
         existing=data.get('prefetched')
         if existing and existing.get('token')==data.get('token'):
             msg=existing['message']; diagnostic=existing['diagnostic']
-            result=dict(adviser_name=adviser_name(data,trial['condition_id']),advice_text=msg['text'],
+            result=dict(adviser_name=adviser_name(data,trial),advice_text=msg['text'],
                         advice_number=existing.get('advice'),latency_ms=diagnostic.get('generation_ms',0),
                         voice_tone='persuasive' if trial['condition_id'] in {'P','A'} else 'neutral',
                         voice_slot=adviser_voice_slot(data,trial['condition_id']))
@@ -612,11 +684,10 @@ def api_prefetch():
                 result['researcher']={**diagnostic,'agent_voice':adviser_voice(data,trial['condition_id']),'voice_tone':result['voice_tone'],'voice_profile':_voice_profile(trial['condition_id'])}
             return jsonify(ok=True,prefetched=True,advice=result)
         data['_pid']=pid
-        # initial=None is intentional: generated N/P/A messages do not receive the current first estimate.
-        advice,msg,diagnostic=prepared_advice(con,data,trial,None)
+        advice,msg,diagnostic=prepared_advice(con,data,trial,None,None)
         data['prefetched']=dict(token=data['token'],advice=advice,message=msg,diagnostic=diagnostic)
-        result=dict(adviser_name=adviser_name(data,trial['condition_id']),advice_text=msg['text'],
-                    advice_number=advice,latency_ms=diagnostic.get('generation_ms',0),
+        result=dict(adviser_name=adviser_name(data,trial),advice_text=msg['text'],advice_number=advice,
+                    latency_ms=diagnostic.get('generation_ms',0),
                     voice_tone='persuasive' if trial['condition_id'] in {'P','A'} else 'neutral',
                     voice_slot=adviser_voice_slot(data,trial['condition_id']))
         if session.get('researcher') and data['config'].get('researcher'):
@@ -627,18 +698,28 @@ def api_prefetch():
 @app.post('/api/initial')
 def api_initial():
     pid=require_session();body=request.get_json(silent=True) or {}
-    try:initial=integer(body.get('estimate'));rt=milliseconds(body.get('rt_ms'))
-    except ValueError as e:return jsonify(error=str(e)),400
     with store.session_transaction(pid) as (con,data):
         trial,_=current(data)
-        if trial is None or body.get('trial_token')!=data.get('token'):return jsonify(error='This trial is no longer current. Reload to resume.'),409
+        if trial is None or body.get('trial_token')!=data.get('token'):
+            return jsonify(error='This trial is no longer current. Reload to resume.'),409
+        try:
+            initial=integer(body.get('estimate'),int(trial.get('scale_min',1)),int(trial.get('scale_max',design.MAX_ESTIMATE)))
+            rt=milliseconds(body.get('rt_ms'))
+            rationale_rt=milliseconds(body.get('rationale_rt_ms'))
+        except ValueError as e:return jsonify(error=str(e)),400
+        rationale=str(body.get('rationale') or '').strip()
+        if not rationale:
+            return jsonify(error='Please give a short reason for your first judgment.'),400
+        if len(rationale)>240:
+            return jsonify(error='Please keep your reason to 240 characters or fewer.'),400
         if data['pending']:
-            if data['pending']['initial']!=initial:return jsonify(error='An initial answer is already recorded for this trial.'),409
+            if data['pending']['initial']!=initial or data['pending'].get('rationale')!=rationale:
+                return jsonify(error='An initial answer is already recorded for this trial.'),409
             return jsonify(advice_payload(data['pending'],data))
         data['_pid']=pid
-        advice,msg,diagnostic=prepared_advice(con,data,trial,initial)
+        advice,msg,diagnostic=prepared_advice(con,data,trial,initial,rationale)
         elapsed=diagnostic['generation_ms']
-        pending=dict(initial=initial,advice=advice,text=msg['text'],source=msg['source'],attempts=msg['attempts'],
+        pending=dict(initial=initial,rationale=rationale,rationale_rt_ms=rationale_rt,advice=advice,text=msg['text'],source=msg['source'],attempts=msg['attempts'],
             word_count=msg['word_count'],rt_initial=rt,latency_ms=elapsed,diagnostic=diagnostic,
             initial_telemetry=body.get('telemetry') if isinstance(body.get('telemetry'),dict) else {})
         data['pending']=pending
@@ -649,7 +730,7 @@ TIMING_FIELDS=['fixation_ms','stimulus_load_ms','stimulus_visible_ms','initial_a
     'advice_wait_ms','final_active_ms','final_wall_ms','rating_ms','break_ms','total_wall_ms','total_active_ms',
     'hidden_ms','visibility_interruptions','resumed','viewport_width','viewport_height','device_pixel_ratio',
     'stimulus_render_width','stimulus_render_height','prefetch_request_ms','prefetch_remaining_ms',
-    'stimulus_fetch_ms','advice_preview_ms','advice_preview_wall_ms']
+    'stimulus_fetch_ms','rationale_ms','advice_preview_ms','advice_preview_wall_ms']
 
 
 def clean_timing(body):
@@ -669,38 +750,51 @@ def clean_timing(body):
 @app.post('/api/final')
 def api_final():
     pid=require_session();body=request.get_json(silent=True) or {}
-    try:
-        final=integer(body.get('estimate'));rt=milliseconds(body.get('rt_ms'));timing=clean_timing(body.get('telemetry'))
-    except ValueError as e:return jsonify(error=str(e)),400
     token=body.get('trial_token')
     with store.session_transaction(pid) as (con,data):
-        signature={k:body.get(k) for k in ['estimate','trust','feeling']}
-        if token and token==data.get('last_token'):
-            if signature!=data.get('last_payload'):return jsonify(error='This trial was already saved with different responses.'),409
-            return jsonify(ok=True,already_saved=True)
         trial,sched=current(data);pending=data.get('pending')
-        if trial is None or not pending or token!=data.get('token'):return jsonify(error='No matching trial in progress. Reload to resume.'),409
+        if trial is None or not pending or token!=data.get('token'):
+            if token and token==data.get('last_token'):
+                signature={k:body.get(k) for k in ['estimate','trust','feeling']}
+                if signature!=data.get('last_payload'):return jsonify(error='This trial was already saved with different responses.'),409
+                return jsonify(ok=True,already_saved=True)
+            return jsonify(error='No matching trial in progress. Reload to resume.'),409
         try:
+            final=integer(body.get('estimate'),int(trial.get('scale_min',1)),int(trial.get('scale_max',design.MAX_ESTIMATE)))
+            rt=milliseconds(body.get('rt_ms'));timing=clean_timing(body.get('telemetry'))
             trust=integer(body.get('trust'),1,7) if ratings_due(trial) else None
             feeling=integer(body.get('feeling'),1,7) if ratings_due(trial) and data['config'].get('rating_items','trust_and_feeling')=='trust_and_feeling' else None
-        except ValueError:return jsonify(error='Please select a rating from 1 to 7 for each question.'),400
+        except ValueError as e:return jsonify(error=str(e)),400
+        signature={k:body.get(k) for k in ['estimate','trust','feeling']}
         timing={**clean_timing(pending.get('initial_telemetry')),**timing}
-        initial,advice=pending['initial'],pending['advice'];truth=trial['true_count'];practice=trial['condition_id']=='PRACTICE'
+        initial,advice=pending['initial'],pending['advice'];truth=trial.get('true_count');practice=trial['condition_id']=='PRACTICE'
+        task_type=trial.get('task_type','numerosity')
         if not practice:
+            if truth is not None:
+                initial_error=design.signed_pct(initial,truth); final_error=design.signed_pct(final,truth); advice_error=design.signed_pct(advice,truth)
+            else:
+                initial_error=final_error=advice_error=None
             row=dict(trial,pid=pid,participant_index=data['participant_index'],initial_estimate=initial,advice_number=advice,
                 advice_text=pending['text'],advice_source=pending['source'],advice_attempts=pending['attempts'],
                 advice_word_count=pending['word_count'],final_estimate=final,trust_rating=trust,feeling_rating=feeling,
-                initial_error_pct=design.signed_pct(initial,truth),final_error_pct=design.signed_pct(final,truth),
-                advice_error_pct=design.signed_pct(advice,truth),woa=design.woa(initial,final,advice),
+                initial_error_pct=initial_error,final_error_pct=final_error,advice_error_pct=advice_error,woa=design.woa(initial,final,advice),
                 rt_initial_ms=pending['rt_initial'],rt_final_ms=rt,advice_latency_ms=pending['latency_ms'],
                 audio_played=bool(body.get('audio_played',False)),modality=data['config'].get('advice_modality','text'))
             store.save_trial(row,con)
+            store.save_trial_context(dict(pid=pid,global_trial=trial['global_trial'],task_type=task_type,
+                block_id=trial.get('block_id'),scenario_id=trial.get('scenario_id'),scenario_text=trial.get('scenario_text'),
+                question_text=trial.get('question_text'),participant_rationale=pending.get('rationale'),
+                rationale_rt_ms=pending.get('rationale_rt_ms')),con)
         diagnostic=dict(pending['diagnostic'],**timing,ui_version=APP_VERSION,stimulus_render_version=STIMULUS_RENDER_VERSION,
-            adviser_name=adviser_name(data,trial['condition_id']),stimulus_format='webp_lossless',advice_preview_target_ms=data['config'].get('advice_preview_ms',0),advice_modality=data['config'].get('advice_modality','text'),audio_played=bool(body.get('audio_played',False)),rating_items=data['config'].get('rating_items','trust_and_feeling'),
-            condition_id=trial['condition_id'],trial_position=trial['trial_position'],
-            global_trial=trial['global_trial'],practice=practice,is_test=data['config']['is_test'],
-            adviser_mode=data['config']['adviser_mode'],target_stimulus_ms=STIMULUS_MS,target_wait_ms=ADVISER_MIN_DELAY_MS,
-            ratings_due=ratings_due(trial),timing_complete=all(k in timing for k in ['total_wall_ms','advice_wait_ms','stimulus_visible_ms','rating_ms']))
+            adviser_name=adviser_name(data,trial),stimulus_format='webp_lossless' if task_type=='numerosity' else 'text_scenario',
+            advice_preview_target_ms=data['config'].get('advice_preview_ms',0),advice_modality=data['config'].get('advice_modality','text'),
+            audio_played=bool(body.get('audio_played',False)),rating_items=data['config'].get('rating_items','trust_and_feeling'),
+            condition_id=trial['condition_id'],block_id=trial.get('block_id'),task_type=task_type,scenario_id=trial.get('scenario_id'),
+            trial_position=trial['trial_position'],global_trial=trial['global_trial'],practice=practice,is_test=data['config']['is_test'],
+            rationale_collected=bool(pending.get('rationale')),rationale_length=len(pending.get('rationale') or ''),
+            adviser_mode=data['config']['adviser_mode'],target_stimulus_ms=STIMULUS_MS if task_type=='numerosity' else 0,
+            target_wait_ms=ADVISER_MIN_DELAY_MS,ratings_due=ratings_due(trial),
+            timing_complete=all(k in timing for k in ['total_wall_ms','advice_wait_ms','rating_ms']))
         store.save_diagnostics(con,pid,trial['global_trial'],diagnostic)
         data['cursor']+=1;data['pending']=None;data['prefetched']=None;data['last_token']=token;data['last_payload']=signature;data['token']=None
         if data['cursor']>=len(sched):
@@ -861,7 +955,7 @@ def csv_text(rows):
 
 def export_tables():
     diagnostics=store.diagnostic_rows();people=store.export_rows(store.participants)
-    return dict(trials=store.export_rows(store.trials),participants=people,ratings=store.export_rows(store.message_ratings),
+    return dict(analysis_trials=store.analysis_trial_rows(),trials=store.export_rows(store.trials),trial_contexts=store.export_rows(store.trial_contexts),participants=people,ratings=store.export_rows(store.message_ratings),
                 diagnostics=diagnostics,timing_summary=build_report(diagnostics,people)['conditions'],
                 model_comparison=build_report(diagnostics,people)['model_conditions'])
 
@@ -887,7 +981,7 @@ def export_all_zip():
             rating_every=RATING_EVERY,prefill_final=PREFILL_FINAL,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
             retry_policy_version=adviser.RETRY_POLICY_VERSION,model_profiles=adviser.model_profiles(),
             word_tolerance=adviser.ADVISER_WORD_TOLERANCE,
-            conditions=design.CONDITIONS,limits=['Offline rehearsals do not validate live model behaviour.',
+            conditions=design.CONDITIONS,social_scenarios=len(social_design.SCENARIOS),rationale_max_chars=240,limits=['Offline rehearsals do not validate live model behaviour.',
             'Timing is browser instrumentation, not an eye-tracker trigger.',
             'Mechanical validity does not certify persuasive content or historical claims.']),indent=2))
     memory.seek(0)

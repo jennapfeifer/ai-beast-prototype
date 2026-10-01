@@ -1,36 +1,76 @@
-# AI-BEAST prototype — current three-condition build
+# AI-BEAST prototype — rationale + social-comparison pilot
 
-This is the current participant experiment build. The main study uses one displayed adviser identity, **Jamie**, across three within-participant conditions.
+This build keeps the three-condition advice experiment and adds two exploratory ways to make adviser responsiveness more meaningful.
 
-## Experimental design
+## Adviser conditions
 
-The main experiment contains **36 experimental trials + 1 practice trial**:
+Every task uses the same within-participant conditions:
 
-- **N — Neutral:** 12 trials, 6 UP + 6 DOWN
-- **P — Persuasive:** 12 trials, 6 UP + 6 DOWN
-- **A — Adaptive persuasive:** 12 trials, 6 UP + 6 DOWN
+- **N — Neutral:** presents the numerical recommendation without trying to influence the participant.
+- **P — Persuasive:** directly tries to move the participant toward the recommendation, but receives no participant-specific rationale or response history.
+- **A — Adaptive persuasive:** has the same persuasive objective and receives the participant's current short rationale plus completed responses/trust ratings from that adviser block.
 
-The old near-veridical and near-participant control conditions are not part of new sessions.
+Participants are **not told that the advisers are AI during the task**. Each block gets a different source-ambiguous name. In the six-block comparison pilot the pool is **Jamie, Alex, Sam, Taylor, Morgan, Casey**; names are rotated across block positions. The debrief discloses that the adviser identities were AI-generated.
 
-The 144-dot stimulus is excluded from the main study because its former UP and DOWN advice were both 144, so it did not provide a directional manipulation. The remaining 12 numerosities use the existing advice schedules. Across those 12 values, mean signed advice error is approximately **+27.1% for UP** and **−27.1% for DOWN**.
+## Task 1 — Numerosity BEAST
 
-For each participant, the numerosity-to-direction assignment is generated once and reused across N/P/A. Therefore, if a given numerosity is UP in Neutral, it is also UP in Persuasive and Adaptive Persuasive, with the same numerical recommendation. Trial order and image variant can differ between conditions.
+The full numerosity study remains 3 × 12 = **36 experimental trials** (6 UP + 6 DOWN in each condition), with the same recommendation matched across N/P/A for a given numerosity.
 
-The six possible N/P/A block orders are counterbalanced across participants.
+Each trial is now:
 
-## Jamie / AI disclosure
+1. view dots;
+2. first estimate;
+3. answer **“What mainly led you to that estimate?”** in one short sentence;
+4. receive adviser recommendation/message;
+5. final estimate;
+6. periodic trust rating.
 
-Participant-facing screens use **Jamie** only. They do not introduce Jamie as an “agent” or rotate different adviser names across conditions. The debrief discloses that Jamie was an AI-generated adviser identity.
+All three conditions collect the rationale. **Only A receives it.** N and P can still prefetch while the participant is estimating. A waits for the rationale before generating.
 
-The production participant path continues to use the configured **GPT-6 Sol, no-reasoning** profile behind Jamie. Neutral and persuasive voice delivery still use one shared speaker identity; P and A receive persuasive prosody while N receives neutral prosody.
+When a shortened researcher pilot is run (for example 6 trials per condition), the selected numerosities are shared across N/P/A and balanced by UP/DOWN direction, preserving matched numerical advice.
 
-## Message conditions
+## Task 2 — Social BEAST
 
-- **Neutral (N):** Jamie presents the supplied recommendation neutrally and does not try to persuade.
-- **Persuasive (P):** Jamie tries to persuade the participant to give the recommendation more weight, without participant response history.
-- **Adaptive persuasive (A):** Jamie has the same persuasive objective but may use earlier completed responses and trust ratings from the adaptive block to shape later messages.
+The parallel social task contains **18 ambiguous third-person social scenarios**. Each asks for a 0–100 likelihood judgment about deliberate rejection/exclusion. There is intentionally **no objective ground truth**.
 
-The model does not receive the participant's current first estimate before generating the message. This preserves advice prefetching and keeps current-estimate access matched across the three conditions.
+Each trial is:
+
+1. read the social situation;
+2. initial 0–100 judgment;
+3. answer **“What mainly led you to that judgment?”**;
+4. receive adviser recommendation/message;
+5. final 0–100 judgment;
+6. periodic trust rating.
+
+The same advice-taking metric applies:
+
+`WOA = (final - initial) / (advice - initial)`
+
+Scenario content is not permanently tied to condition. The 18 scenarios are split into three balanced six-item sets and rotated across N/P/A between participants. Each six-item set contains three lower (30) and three higher (70) adviser judgments.
+
+In P and A, the model receives the social scenario so it can give a grounded argument. Only A additionally receives the participant's rationale and block history. The prompt explicitly treats scenarios as ambiguous and prohibits stating hidden social intentions as fact.
+
+## Researcher pilot modes
+
+The researcher launcher now offers:
+
+- **Comparison pilot — dots + social** (default): with 6 trials/condition this is 18 dot + 18 social trials.
+- **Dots only**.
+- **Social only**.
+
+Task order is counterbalanced in the comparison pilot. Each experimental block uses a different ambiguous adviser name.
+
+## Exports
+
+`all.zip` now includes:
+
+- `analysis_trials.csv` — recommended analysis file; trial outcomes merged with task/scenario/rationale context.
+- `trials.csv` — legacy outcome table.
+- `trial_contexts.csv` — task type, scenario text/question, participant rationale and rationale RT.
+- `diagnostics.csv` — generation/timing/manipulation diagnostics.
+- the existing participant/rating/report exports.
+
+Social trials have blank accuracy-error fields by design. End-of-task accuracy summaries, when enabled, use numerosity trials only.
 
 ## Run locally
 
@@ -39,10 +79,13 @@ pip install -r requirements.txt
 python app.py
 ```
 
-For a researcher pilot, configure `ADMIN_TOKEN` and use the researcher workspace. For live model calls, configure the relevant API key. Production deployment also requires the study contact/ethics settings already documented in `DEPLOY_RENDER.md`.
+For live model calls configure the relevant API key. Production remains conservative by default: unless explicitly changed, the non-researcher path starts in numerosity mode.
 
 ## Validation
 
-`design.py` contains deterministic checks for the 36-trial schedule, 6-UP/6-DOWN balance, and cross-condition direction matching. A dedicated regression test is in `tests/test_three_condition_design.py`.
+```bash
+python smoke_test.py
+python design.py
+```
 
-Historical update notes in this repository describe older C1–C8 builds and should not be treated as the current experimental specification.
+The build also includes `social_design.py`, which defines the social scenarios and their counterbalancing.

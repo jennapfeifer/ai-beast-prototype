@@ -41,6 +41,14 @@ PRACTICE_COUNTS = [88]
 _CONDITION_IDS = tuple(CONDITIONS)
 _CONDITION_ORDERS = list(itertools.permutations(_CONDITION_IDS))
 
+# Participant-facing adviser identities are intentionally source-ambiguous.
+# Each participant sees one different name per experimental block. Across each
+# six-row counterbalance cycle, every name appears equally often in every
+# condition and every block position.
+ADVISER_NAMES = ("Jamie", "Alex", "Sam")
+_ADVISER_NAME_PERMS = list(itertools.permutations(ADVISER_NAMES))
+_NAME_PERM_BY_COUNTERBALANCE_ROW = (0, 1, 5, 3, 4, 2)
+
 
 def stable_seed(text: str) -> int:
     return int(hashlib.sha256(text.encode("utf-8")).hexdigest()[:16], 16) % (2 ** 32 - 1)
@@ -57,6 +65,20 @@ def signed_pct(value: float, truth: float) -> float:
 def balanced_condition_order(participant_index: int) -> List[str]:
     """Cycle through all six N/P/A block orders."""
     return list(_CONDITION_ORDERS[participant_index % len(_CONDITION_ORDERS)])
+
+
+
+
+def adviser_name_mapping(participant_index: int) -> Dict[str, str]:
+    """Assign distinct ambiguous adviser names to N/P/A for one participant.
+
+    The six mappings are paired with the six condition orders so that, over a
+    complete counterbalance cycle, name is balanced both across condition and
+    across block position.
+    """
+    row = participant_index % len(_CONDITION_ORDERS)
+    perm = _ADVISER_NAME_PERMS[_NAME_PERM_BY_COUNTERBALANCE_ROW[row]]
+    return dict(zip(_CONDITION_IDS, perm))
 
 
 def direction_map(participant_index: int, seed: int = STUDY_SEED) -> Dict[int, str]:
@@ -97,9 +119,9 @@ def advice_number(condition_id: str, truth: int, initial: int | None = None, dir
     raise ValueError("direction must be 'UP' or 'DOWN' for main-study trials")
 
 
-def build_schedule(participant_index: int, seed: int = STUDY_SEED) -> List[Dict]:
+def build_schedule(participant_index: int, seed: int = STUDY_SEED, start_global: int = 0) -> List[Dict]:
     schedule: List[Dict] = []
-    global_trial = 0
+    global_trial = start_global
     directions = direction_map(participant_index, seed)
     for cond_pos, cid in enumerate(balanced_condition_order(participant_index), start=1):
         variant = image_variant_for(participant_index, cid)
@@ -107,6 +129,8 @@ def build_schedule(participant_index: int, seed: int = STUDY_SEED) -> List[Dict]
             global_trial += 1
             schedule.append({
                 "global_trial": global_trial,
+                "task_type": "numerosity",
+                "block_id": f"numerosity:{cid}",
                 "condition_id": cid,
                 "condition_label": CONDITIONS[cid]["label"],
                 "adviser_style": CONDITIONS[cid]["style"],
@@ -116,15 +140,22 @@ def build_schedule(participant_index: int, seed: int = STUDY_SEED) -> List[Dict]
                 "true_count": truth,
                 "variant": variant,
                 "stimulus_id": f"N{truth}_V{variant}",
+                "scale_min": 1,
+                "scale_max": MAX_ESTIMATE,
+                "question_text": "How many dots were there?",
+                "rationale_prompt": "What mainly led you to that estimate?",
             })
     return schedule
 
 
 def practice_schedule() -> List[Dict]:
     return [{
-        "global_trial": -(i + 1), "condition_id": "PRACTICE", "condition_label": "practice",
+        "global_trial": -(i + 1), "task_type": "numerosity", "block_id": "numerosity:PRACTICE",
+        "condition_id": "PRACTICE", "condition_label": "practice",
         "adviser_style": "neutral", "direction": "CONTROL", "condition_order_position": 0,
         "trial_position": i + 1, "true_count": c, "variant": 0, "stimulus_id": f"N{c}_V0",
+        "scale_min": 1, "scale_max": MAX_ESTIMATE, "question_text": "How many dots were there?",
+        "rationale_prompt": "What mainly led you to that estimate?",
     } for i, c in enumerate(PRACTICE_COUNTS)]
 
 
@@ -145,3 +176,34 @@ if __name__ == "__main__":
         for truth in EXPERIMENT_COUNTS:
             assert len({next(r["direction"] for r in groups[cid] if r["true_count"] == truth) for cid in CONDITIONS}) == 1
     print("3-condition schedule check ok")
+
+BLOCK_ADVISER_NAMES = ("Jamie", "Alex", "Sam", "Taylor", "Morgan", "Casey")
+
+def adviser_name_mapping_for_blocks(participant_index: int, block_ids: List[str]) -> Dict[str, str]:
+    """Assign a different source-ambiguous name to each block.
+
+    A cyclic Latin-square assignment balances names across block positions over six
+    participant rows. The block schedule itself is independently counterbalanced.
+    """
+    names = list(BLOCK_ADVISER_NAMES)
+    shift = participant_index % len(names)
+    rotated = names[shift:] + names[:shift]
+    if len(block_ids) > len(rotated):
+        raise ValueError("Not enough adviser names for the requested number of blocks")
+    return {bid: rotated[i] for i, bid in enumerate(block_ids)}
+
+def balanced_trial_subset(participant_index: int, n: int, seed: int = STUDY_SEED) -> List[int]:
+    """Shared numerosity subset for shortened pilots, balanced by advice direction.
+
+    The same selected numerosities are used in N/P/A for a participant, preserving
+    matched numerical advice when a researcher runs fewer than 12 trials per block.
+    """
+    n=max(1,min(len(EXPERIMENT_COUNTS),int(n)))
+    directions=direction_map(participant_index,seed)
+    ups=[x for x in EXPERIMENT_COUNTS if directions[x]=='UP']
+    downs=[x for x in EXPERIMENT_COUNTS if directions[x]=='DOWN']
+    random.Random(stable_seed(f'subset-up|{seed}|{participant_index}')).shuffle(ups)
+    random.Random(stable_seed(f'subset-down|{seed}|{participant_index}')).shuffle(downs)
+    n_up=n//2 + (1 if n%2 and participant_index%2==0 else 0)
+    n_down=n-n_up
+    return ups[:n_up]+downs[:n_down]

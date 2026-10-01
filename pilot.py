@@ -20,18 +20,18 @@ def build_report(records,people):
     model_groups=defaultdict(list)
     for row in records:
         if not row.get('practice'):
-            grouped[row['condition_id']].append(row)
-            model_groups[(row['condition_id'],row.get('provider','unknown'),row.get('model','unknown'),
+            grouped[(row.get('task_type','numerosity'),row['condition_id'])].append(row)
+            model_groups[(row.get('task_type','numerosity'),row['condition_id'],row.get('provider','unknown'),row.get('model','unknown'),
                           row.get('reasoning','unknown'),row.get('adviser_mode','unknown'),row.get('prompt_version') or 'unknown',
                           row.get('retry_policy_version') or 'unknown',row.get('max_attempts') or 0,
                           row.get('total_budget_s') or 0,row.get('ui_version') or 'unknown',
                           row.get('stimulus_render_version') or 'unknown',row.get('advice_preview_target_ms') or 0,
                           row.get('advice_modality') or 'text')].append(row)
     model_conditions=[]
-    for (cid,provider,model,reasoning,mode,prompt_version,retry_policy,max_attempts,budget,ui_version,stimulus_version,preview_ms,advice_modality),rows in sorted(model_groups.items()):
+    for (task_type,cid,provider,model,reasoning,mode,prompt_version,retry_policy,max_attempts,budget,ui_version,stimulus_version,preview_ms,advice_modality),rows in sorted(model_groups.items()):
         timed=[r for r in rows if r.get('timing_complete')]
         live=[r for r in rows if r.get('live_model')]
-        model_conditions.append(dict(condition=cid,provider=provider,model=model,reasoning=reasoning,mode=mode,prompt_version=prompt_version,
+        model_conditions.append(dict(condition=f'{task_type}:{cid}',task_type=task_type,provider=provider,model=model,reasoning=reasoning,mode=mode,prompt_version=prompt_version,
             retry_policy_version=retry_policy,max_attempts=max_attempts or None,total_budget_s=budget or None,
             ui_version=ui_version,stimulus_render_version=stimulus_version,advice_preview_target_ms=preview_ms,advice_modality=advice_modality,
             trials=len(rows),live_messages=len(live),fallbacks=sum(bool(r.get('fallback')) for r in rows),
@@ -50,9 +50,9 @@ def build_report(records,people):
             wait_p50_ms=quantile([r.get('advice_wait_ms') for r in timed],.5),
             wait_p90_ms=quantile([r.get('advice_wait_ms') for r in timed],.9)))
     conditions=[]
-    for cid,rows in sorted(grouped.items()):
+    for (task_type,cid),rows in sorted(grouped.items()):
         valid=[r for r in rows if r.get('timing_complete')]
-        conditions.append(dict(condition=cid,trials=len(rows),timed_trials=len(valid),live_trials=sum(r.get('live_model',False) for r in rows),
+        conditions.append(dict(condition=f'{task_type}:{cid}',task_type=task_type,trials=len(rows),timed_trials=len(valid),live_trials=sum(r.get('live_model',False) for r in rows),
             fallback_trials=sum(r.get('fallback',False) for r in rows),
             history_mismatches=sum(r.get('history_rows')!=r.get('expected_history_rows') for r in rows),
             generation_p50_ms=quantile([r.get('generation_ms') for r in rows],.5),

@@ -36,7 +36,22 @@ def main() -> int:
     participant_text = '\n'.join(path.read_text() for path in participant_pages)
     for stale in ('named AI agent', 'several named AI agents', '104 images', '8 rounds'):
         assert stale not in participant_text
-    assert 'Jamie' in participant_text
+    assert 'Jamie' not in participant_text
+    assert 'AI adviser' not in participant_text
+
+    name_rows=[]
+    for participant in range(6):
+        order=design.balanced_condition_order(participant)
+        names=design.adviser_name_mapping(participant)
+        assert set(names.values()) == set(design.ADVISER_NAMES)
+        for pos,cid in enumerate(order, start=1):
+            name_rows.append((pos,cid,names[cid]))
+    for cid in design.CONDITIONS:
+        for name in design.ADVISER_NAMES:
+            assert sum(c==cid and n==name for _,c,n in name_rows)==2
+    for pos in (1,2,3):
+        for name in design.ADVISER_NAMES:
+            assert sum(p==pos and n==name for p,_,n in name_rows)==2
 
     subprocess.run([sys.executable, '-m', 'py_compile', 'design.py', 'app.py', 'pilot.py', 'adviser_flexible.py'], cwd=ROOT, check=True)
     if subprocess.run(['which', 'node'], capture_output=True).returncode == 0:
