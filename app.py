@@ -36,7 +36,7 @@ def _model_profiles_with_midrange_options():
 
 adviser.model_profiles = _model_profiles_with_midrange_options
 
-APP_VERSION = 'fieldwork-2.47-demo-adviser-introduction'
+APP_VERSION = 'fieldwork-2.48-three-condition-jamie'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -177,17 +177,17 @@ def require_admin():
 def consortium_demo_schedule(participant_index):
     """Six-trial demonstration: two neutral, then four adaptive persuasive trials.
 
-    This is deliberately separate from the full experiment schedule. The adaptive
-    block uses the same C5 history mechanism as the study, so its first trial has
-    no C5 history and later trials can use preceding adaptive responses.
+    This remains separate from the full three-condition experiment. Jamie is the
+    same displayed adviser throughout; the adaptive block can use earlier completed
+    adaptive responses after its first trial.
     """
     demo_spec=[
-        ('C3',64), ('C3',160),
-        ('C5',80), ('C5',192), ('C5',48), ('C5',128),
+        ('N',64,'UP'), ('N',160,'DOWN'),
+        ('A',80,'UP'), ('A',192,'DOWN'), ('A',48,'UP'), ('A',128,'DOWN'),
     ]
     rows=[]
-    per_condition={'C3':0,'C5':0}
-    for global_trial,(cid,truth) in enumerate(demo_spec,start=1):
+    per_condition={'N':0,'A':0}
+    for global_trial,(cid,truth,direction) in enumerate(demo_spec,start=1):
         per_condition[cid]+=1
         variant=design.image_variant_for(participant_index,cid)
         rows.append({
@@ -195,8 +195,8 @@ def consortium_demo_schedule(participant_index):
             'condition_id':cid,
             'condition_label':design.CONDITIONS[cid]['label'],
             'adviser_style':design.CONDITIONS[cid]['style'],
-            'direction':design.CONDITIONS[cid]['direction'],
-            'condition_order_position':1 if cid=='C3' else 2,
+            'direction':direction,
+            'condition_order_position':1 if cid=='N' else 2,
             'trial_position':per_condition[cid],
             'true_count':truth,
             'variant':variant,
@@ -227,17 +227,16 @@ def current(data):
     return (sched[data['cursor']] if data['cursor']<len(sched) else None),sched
 
 
-ADVISER_NAMES = ('Alex','Casey','Drew','Jamie','Morgan','Quinn','Riley','Taylor')
+ADVISER_NAME = 'Jamie'
 
 
 def assign_adviser_names():
-    names=list(ADVISER_NAMES)
-    secrets.SystemRandom().shuffle(names)
-    return dict(zip(design.CONDITIONS,names))
+    # Hold the displayed identity constant across all experimental conditions.
+    return {condition:ADVISER_NAME for condition in design.CONDITIONS}
 
 
 def adviser_name(data,condition):
-    return data['config'].get('adviser_names',{}).get(condition,'Practice adviser' if condition=='PRACTICE' else 'Adviser')
+    return ADVISER_NAME
 
 
 def assign_adviser_voices():
@@ -253,9 +252,9 @@ def adviser_voice_slot(data,condition):
     return 0
 
 CONDITION_AGENT_STYLE = {
-    'C1':'fixed', 'C2':'fixed',
-    'C3':'neutral', 'C4':'static', 'C5':'adaptive',
-    'C6':'neutral', 'C7':'static', 'C8':'adaptive',
+    'N':'neutral',
+    'P':'static',
+    'A':'adaptive',
 }
 
 def condition_agent_style(condition, fallback=None):
@@ -306,10 +305,10 @@ def start():
     if STUDY_MODE=='production' and not researcher and (mode!='live' or not STUDY_CONTACT or not ETHICS_DETAILS):
         return 'Production is not configured: live adviser, approved study information and contact details are required.',503
     conditions=[]
-    n=13
+    n=12
     if researcher:
         conditions=[x for x in request.form.getlist('conditions') if x in design.CONDITIONS]
-        try: n=integer(request.form.get('trials','13'),1,13)
+        try: n=integer(request.form.get('trials','12'),1,12)
         except ValueError as e: return str(e),400
     try:preview_ms=integer(request.form.get('advice_preview_ms',str(ADVICE_PREVIEW_MS)),0,5000) if researcher else ADVICE_PREVIEW_MS
     except ValueError:return 'Invalid advice display setting.',400
@@ -318,7 +317,7 @@ def start():
     if advice_modality not in {'text','voice_text'}:return 'Invalid advice modality.',400
     conf=dict(conditions=conditions,trials_per_block=n,skip_practice=researcher and request.form.get('skip_practice')=='1',
               adviser_protocol='raw_agent_v19',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names=assign_adviser_names(),adviser_voices=assign_adviser_voices(),
-              test_index=integer(request.form.get('test_index','0'),0,7) if researcher else 0,
+              test_index=integer(request.form.get('test_index','0'),0,5) if researcher else 0,
               adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
               model_profile_id=profile_id,model_profile=profile,
               ui_version=APP_VERSION,stimulus_render_version=STIMULUS_RENDER_VERSION,
@@ -366,7 +365,7 @@ def api_state():
                  adviser_name=adviser_name(data,trial['condition_id']),trial_in_block=trial['trial_position'],n_in_block=sum(r['condition_id']==trial['condition_id'] for r in sched),
                  overall=completed+1,completed=completed,overall_total=len(experimental),
                  image=url_for('stimulus',token=token),break_due=not practice and trial['trial_position']==1 and block>1,
-                 voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral',
+                 voice_tone='persuasive' if trial['condition_id'] in {'P','A'} else 'neutral',
                  voice_slot=adviser_voice_slot(data,trial['condition_id']),
                  ratings_due=ratings_due(trial),rating_window=RATING_EVERY,pending=None,researcher=None)
         if data['pending']:
@@ -391,7 +390,7 @@ def stimulus(token):
 def advice_payload(pending,data):
     trial,_=current(data)
     result=dict(adviser_name=adviser_name(data,trial['condition_id']),advice_text=pending['text'],advice_number=pending['advice'],latency_ms=pending['latency_ms'],
-                voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral',
+                voice_tone='persuasive' if trial['condition_id'] in {'P','A'} else 'neutral',
                 voice_slot=adviser_voice_slot(data,trial['condition_id']))
     if session.get('researcher') and data['config'].get('researcher'):
         result['researcher']={**pending['diagnostic'],'agent_voice':adviser_voice(data,trial['condition_id']),'voice_tone':result['voice_tone'],'voice_profile':_voice_profile(trial['condition_id'])}
@@ -401,22 +400,19 @@ def advice_payload(pending,data):
 def prepared_advice(con,data,trial,initial):
     """Resolve one trial's advice.
 
-    v2.23 deliberately removes the current first estimate from generated-agent
-    context so C3-C8 can be generated while the participant is still viewing/
-    estimating. C2's numerical recommendation still depends on the submitted
-    estimate, but its fixed sentence can be prefetched because the sentence
-    itself does not depend on that value.
+    The current first estimate is withheld from generated Jamie messages so N/P/A
+    can be prefetched while the participant is still viewing/estimating. The
+    numerical recommendation is already fixed by the trial's UP/DOWN schedule.
     """
     practice=trial['condition_id']=='PRACTICE'
     style=condition_agent_style(trial['condition_id'], trial.get('adviser_style'))
-    advice=design.clamp_int(initial*1.05) if practice else design.advice_number(trial['condition_id'],trial['true_count'],initial or 100)
+    advice=design.clamp_int(initial*1.05) if practice else design.advice_number(trial['condition_id'],trial['true_count'],initial,trial['direction'])
     protocol=data['config'].get('adviser_protocol')
     no_current_estimate=protocol in {'raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14','raw_agent_v15','raw_agent_v16','raw_agent_v17','raw_agent_v18','raw_agent_v19'}
     cached=data.get('prefetched')
     if cached and cached.get('token')==data.get('token'):
-        # Fixed messages are independent of the current estimate even when C2's
-        # recommendation number is not. Generated C3-C8 recommendations are
-        # fixed by the trial schedule, so the whole response can be reused.
+        # Main-study recommendation numbers are fixed by the scheduled UP/DOWN direction,
+        # so prefetched responses can be reused after the first estimate is submitted.
         if style=='fixed' or cached.get('advice')==advice:
             return advice,cached['message'],dict(cached['diagnostic'],prefetched=True,advice=advice,initial_context_available=False)
     rows=[] if practice else store.block_history(data['_pid'],trial['condition_id'],con)
@@ -424,9 +420,8 @@ def prepared_advice(con,data,trial,initial):
     generator=adviser.generate_offline_message if data['config']['adviser_mode']=='offline' else adviser.generate_message
     if protocol in {'flexible_v8','raw_agent_v9','raw_agent_v10','raw_agent_v11','raw_agent_v12','raw_agent_v13','raw_agent_v14','raw_agent_v15','raw_agent_v16','raw_agent_v17','raw_agent_v18','raw_agent_v19'} and data['config']['adviser_mode']=='live':
         generator=adviser_flexible.generate_message
-    # For v14 generated conditions, the model never receives the current first
-    # estimate. Fixed/practice controls remain scripted and may still use the
-    # submitted estimate for the numerical schedule outside the message text.
+    # Generated main-study conditions do not receive the current first estimate.
+    # Practice remains scripted and uses the submitted estimate only for its number.
     model_initial=None if (no_current_estimate and style!='fixed') else initial
     t=time.perf_counter()
     profile=data['config'].get('model_profile') or adviser.model_profiles()['server']
@@ -461,14 +456,14 @@ def prepared_advice(con,data,trial,initial):
 
 
 def _voice_profile(condition_id: str) -> str:
-    if condition_id in {'C4','C5','C7','C8'}:
+    if condition_id in {'P','A'}:
         return 'same_voice_persuasive_high_contrast'
     return 'same_voice_neutral_restrained'
 
 
 def _voice_instructions(condition_id: str) -> str:
     """Keep one speaker identity; manipulate only delivery tone."""
-    if condition_id in {'C4','C5','C7','C8'}:
+    if condition_id in {'P','A'}:
         return (
             'Keep exactly the same speaker identity and the same moderate speaking pace as every other trial. '
             'Use a clearly persuasive tone: noticeably warmer, more confident, socially engaged, encouraging, and slightly insistent. '
@@ -595,10 +590,9 @@ def api_voice():
 def api_prefetch():
     """Prepare agent text before the participant submits the first estimate.
 
-    For v2.21, generated C3-C8 agents do not receive the current estimate, so
+    For v2.21, generated N/P/A conditions do not receive the current estimate, so
     text generation can overlap the 5-second stimulus and the participant's
-    response time. Fixed C1/C2 sentences are also prefetched; C2's numerical
-    recommendation is resolved only after submission.
+    response time. All three main conditions have fixed numerical recommendations for each scheduled direction.
     """
     pid=require_session();body=request.get_json(silent=True) or {}
     with store.session_transaction(pid) as (con,data):
@@ -612,19 +606,18 @@ def api_prefetch():
             msg=existing['message']; diagnostic=existing['diagnostic']
             result=dict(adviser_name=adviser_name(data,trial['condition_id']),advice_text=msg['text'],
                         advice_number=existing.get('advice'),latency_ms=diagnostic.get('generation_ms',0),
-                        voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral',
+                        voice_tone='persuasive' if trial['condition_id'] in {'P','A'} else 'neutral',
                         voice_slot=adviser_voice_slot(data,trial['condition_id']))
             if session.get('researcher') and data['config'].get('researcher'):
                 result['researcher']={**diagnostic,'agent_voice':adviser_voice(data,trial['condition_id']),'voice_tone':result['voice_tone'],'voice_profile':_voice_profile(trial['condition_id'])}
             return jsonify(ok=True,prefetched=True,advice=result)
         data['_pid']=pid
-        # initial=None is intentional. C2 gets a placeholder numerical value for
-        # template resolution, but its text is independent of that value.
+        # initial=None is intentional: generated N/P/A messages do not receive the current first estimate.
         advice,msg,diagnostic=prepared_advice(con,data,trial,None)
         data['prefetched']=dict(token=data['token'],advice=advice,message=msg,diagnostic=diagnostic)
         result=dict(adviser_name=adviser_name(data,trial['condition_id']),advice_text=msg['text'],
-                    advice_number=(None if trial['condition_id']=='C2' else advice),latency_ms=diagnostic.get('generation_ms',0),
-                    voice_tone='persuasive' if trial['condition_id'] in {'C4','C5','C7','C8'} else 'neutral',
+                    advice_number=advice,latency_ms=diagnostic.get('generation_ms',0),
+                    voice_tone='persuasive' if trial['condition_id'] in {'P','A'} else 'neutral',
                     voice_slot=adviser_voice_slot(data,trial['condition_id']))
         if session.get('researcher') and data['config'].get('researcher'):
             result['researcher']={**diagnostic,'agent_voice':adviser_voice(data,trial['condition_id']),'voice_tone':result['voice_tone'],'voice_profile':_voice_profile(trial['condition_id'])}
@@ -735,10 +728,10 @@ def start_consortium_demo():
     if not profile or not adviser.has_api_key(profile['provider']):
         return 'GPT-6 Sol is not available. Configure OPENAI_API_KEY before starting the live consortium demo.',503
     conf=dict(
-        conditions=['C3','C5'],trials_per_block=None,skip_practice=True,
+        conditions=['N','A'],trials_per_block=None,skip_practice=True,
         adviser_protocol='raw_agent_v19',advice_preview_ms=4000,advice_modality='voice_text',
         rating_items='trust_only',
-        adviser_names={'C3':'Alex','C5':'Jamie'},
+        adviser_names={'N':'Jamie','A':'Jamie'},
         adviser_voices=assign_adviser_voices(),
         test_index=0,adviser_mode='live',is_test=True,researcher=False,
         model_profile_id='gpt_6_sol',model_profile=profile,
@@ -780,7 +773,7 @@ def consortium_demo_summary():
                 move_label='Moved partway toward the advice'
             else:
                 move_label='Moved strongly toward the advice'
-        adaptive=row.get('condition_id')=='C5'
+        adaptive=row.get('condition_id')=='A'
         history_available=adaptive_seen if adaptive else 0
         if adaptive: adaptive_seen+=1
         demo_rows.append(dict(

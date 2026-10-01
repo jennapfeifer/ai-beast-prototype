@@ -1,5 +1,5 @@
-"""One-command offline verification. Never calls OpenAI or uses the study database."""
-import subprocess,sys
-from pathlib import Path
-if __name__=='__main__':
-    raise SystemExit(subprocess.call([sys.executable,'-m','pytest','-q','tests'],cwd=Path(__file__).resolve().parent))
+"""One-command API-free verification for the current three-condition build."""
+from validate_current_design import main
+
+if __name__ == '__main__':
+    raise SystemExit(main())

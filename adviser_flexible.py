@@ -36,14 +36,14 @@ Return only the participant-facing sentence.'''
 
 
 STRATEGIES = {
-    'neutral': '''NEUTRAL — C3/C6
+    'neutral': '''NEUTRAL — N
 
 Present your estimate neutrally and matter-of-factly.
 
 Do not encourage or discourage the participant from following it. Do not add praise, reassurance, pressure, or reasons to accept it.
 Vary how you phrase the estimate across trials. In particular, do not repeat a recent sentence pattern just by swapping the recommendation number.''',
 
-    'static': '''PERSUASIVE WITHOUT PARTICIPANT HISTORY — C4/C7
+    'static': '''PERSUASIVE WITHOUT PARTICIPANT HISTORY — P
 
 Your goal is to persuade the participant to give your numerical recommendation more weight in their final estimate.
 
@@ -51,7 +51,7 @@ Make a direct, natural attempt to influence their decision. Choose whichever con
 
 You have no information about this participant’s previous decisions or trust in you. If your previous messages are supplied, use them to avoid repetitive wording.''',
 
-    'adaptive': '''PERSUASIVE WITH PARTICIPANT HISTORY — C5/C8
+    'adaptive': '''ADAPTIVE PERSUASIVE WITH PARTICIPANT HISTORY — A
 
 Your goal is to persuade the participant to give your numerical recommendation more weight in their final estimate.
 
@@ -275,7 +275,7 @@ def _fallback_message(style, advice, history=None):
 
 
 def generate_message(style, initial, advice, history=None, previous_messages=None, key='', **kwargs):
-    # C1/C2 and practice remain scripted controls; generated conditions use the
+    # Practice remains scripted; all three experimental conditions use the
     # raw live path below.
     if style == 'fixed':
         result = dict(legacy.control_message(advice, key), prompt_version=PROMPT_VERSION)

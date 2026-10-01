@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the 104 experimental dot arrays + 1 warm-up array.
+"""Generate deterministic dot arrays for the 36-trial experiment + 1 warm-up array.
 
 Experimental images use the same generator and seed key as the final simulation:
     stable_seed(f"stimulus|{STUDY_SEED}|N{truth}|V{variant}")
@@ -221,7 +221,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     n = 0
-    for truth in design.TRUE_COUNTS:
+    for truth in design.EXPERIMENT_COUNTS:
         for variant in range(1, design.N_VARIANTS + 1):
             seed = design.stable_seed(f"stimulus|{design.STUDY_SEED}|N{truth}|V{variant}")
             generate_dot_stimulus(

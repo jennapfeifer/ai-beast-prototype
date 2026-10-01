@@ -39,6 +39,6 @@ def ensure_stimuli():
     # Warm practice first because it is the first image a participant can request.
     for truth in design.PRACTICE_COUNTS:
         ensure_stimulus(f'N{truth}_V0',truth,0)
-    for truth in design.TRUE_COUNTS:
+    for truth in design.EXPERIMENT_COUNTS:
         for variant in range(1,design.N_VARIANTS+1):
             ensure_stimulus(f'N{truth}_V{variant}',truth,variant)
