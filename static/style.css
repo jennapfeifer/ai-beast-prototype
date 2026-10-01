@@ -321,3 +321,10 @@ html.task-root body.task-surface{position:relative}
 }
 .task-surface .advice-label-glyph{font-size:13px;line-height:1;flex-shrink:0}
 @media(max-width:600px){.task-surface .advice-marker-label{font-size:14px;padding:4px 6px}}
+
+/* v2.60 rationale + social judgment pilot */
+.social-scenario{max-width:860px;margin:0 auto 26px;padding:24px 28px;border:1px solid var(--line);border-radius:10px;background:#fff;line-height:1.55}
+.social-scenario p{font-size:21px;margin:10px 0 14px}.social-question{font-size:18px;font-weight:650;border-top:1px solid var(--line);padding-top:14px}
+.rationale-stage{max-width:760px;margin:0 auto}.rationale-stage h2{font-size:30px;line-height:1.25;margin:8px 0 8px}.rationale-stage textarea{width:100%;box-sizing:border-box;font:inherit;font-size:19px;line-height:1.45;padding:14px;border:1px solid var(--line);border-radius:8px;resize:vertical;min-height:110px;background:#fff}
+.rationale-stage textarea:focus{outline:2px solid #bac2cc;outline-offset:2px}.rationale-meta{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:12px}.rationale-meta span{color:var(--muted);font-size:14px}
+@media(max-width:700px){.social-scenario{padding:18px}.social-scenario p{font-size:18px}.rationale-stage h2{font-size:26px}}

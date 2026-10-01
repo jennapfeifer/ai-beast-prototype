@@ -150,7 +150,7 @@ function renderResearcher(extra){
 async function fetchJSON(path,body){const control=new AbortController(),timer=setTimeout(()=>control.abort(),CFG.request_timeout_ms||90000);try{const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':CFG.csrf},body:body===undefined?undefined:JSON.stringify(body),signal:control.signal});let result;try{result=await response.json();}catch{throw Error('Your session may have expired. Reload to resume.');}if(!response.ok)throw Object.assign(Error(result.error||`Request failed (${response.status}).`),{status:response.status});return result;}finally{clearTimeout(timer);}}
 async function recover(action,description){for(;;){try{return await action();}catch(error){phase('CONNECTION CHECK');stage.innerHTML=`<div class="recovery"><span class="stage-symbol">↻</span><h2>${esc(description)}</h2><p>${esc(error.message)}</p><p class="helper">Your saved responses are safe.</p><div class="button-row"><button class="button primary" id="retry">Try again</button><button class="button" id="resume">Reload &amp; resume</button></div></div>`;document.getElementById('resume').onclick=()=>location.reload();await new Promise(r=>document.getElementById('retry').onclick=r);}}}
 function beginAdvicePrefetch(){
-  if(CFG.prefetch_enabled===false||state?.pending||!state?.trial_token)return;
+  if(CFG.prefetch_enabled===false||state?.pending||!state?.trial_token||state?.adviser_style==='adaptive')return;
   const token=state.trial_token,started=performance.now(),metrics=timing;
   prefetchPromise=fetchJSON('/api/prefetch',{trial_token:token}).then(result=>{
     metrics.prefetch_request_ms=Math.round(performance.now()-started);
@@ -165,99 +165,83 @@ function beginAdvicePrefetch(){
     return result;
   }).catch(()=>null);
 }
+function taskLabel(task){return task==='social'?'Social judgments':'Dot estimates';}
 function renderProgress(){
   if(CFG.demo_mode){
     document.getElementById('round-title').textContent=`Adviser ${state.adviser_name||'Adviser'}`;
     document.getElementById('meta').textContent=`${state.completed} / ${state.overall_total}`;
   }else{
-    document.getElementById('round-title').textContent=state.practice?'Practice':`Round ${state.block} of ${state.n_blocks}`;
+    document.getElementById('round-title').textContent=state.practice?'Practice':`${taskLabel(state.task_type)} · Round ${state.block} of ${state.n_blocks}`;
     document.getElementById('meta').textContent=state.practice?'Practice':`${state.completed} / ${state.overall_total}`;
   }
   const percent=100*state.completed/Math.max(1,state.overall_total);document.getElementById('bar').style.width=percent+'%';document.querySelector('[role=progressbar]').setAttribute('aria-valuenow',String(Math.round(percent)));
 }
 async function checkpoint(warmup=false){
   phase('BREAK');
-  stage.innerHTML=`<div class="checkpoint-card"><h1>${warmup?'Practice complete':`Round ${state.block-1} complete`}</h1><p>Next: ${esc(state.adviser_name||'Adviser')}</p><p>Take a break if you like.</p><button class="button primary" id="continue-round">Start round ${state.block}</button></div>`;
+  stage.innerHTML=`<div class="checkpoint-card"><h1>${warmup?'Practice complete':`Round ${state.block-1} complete`}</h1><p>Next: <b>${esc(taskLabel(state.task_type))}</b> with ${esc(state.adviser_name||'Adviser')}</p><p>Take a break if you like.</p><button class="button primary" id="continue-round">Continue</button></div>`;
   const t=clock();await new Promise(r=>document.getElementById('continue-round').onclick=r);timing.break_ms=elapsed(t).wall;
 }
 function inputMarkup(prompt,button='Record estimate',prefill=''){return `<div class="answer-stage"><span class="eyebrow">YOUR ESTIMATE</span><h2>${prompt}</h2><p class="helper">Enter a whole number from 1 to ${CFG.max_estimate}.</p><form id="estimate-form"><div class="estimate-row"><label class="sr-only" for="estimate">Your estimate</label><input id="estimate" type="number" min="1" max="${CFG.max_estimate}" step="1" inputmode="numeric" autocomplete="off" required value="${prefill}"><button class="button primary" type="submit">${button} →</button></div><p class="error" id="estimate-error" role="alert"></p></form></div>`;}
 function waitEstimate(){return new Promise(resolve=>{const input=document.getElementById('estimate'),form=document.getElementById('estimate-form');input.focus();if(input.value)input.select();const t=clock();let submitted=false;form.onsubmit=event=>{event.preventDefault();if(submitted)return;const value=Number(input.value);if(!input.value.trim()||!Number.isInteger(value)||value<1||value>CFG.max_estimate){document.getElementById('estimate-error').textContent=`Enter a whole number from 1 to ${CFG.max_estimate}.`;return;}submitted=true;form.querySelector('button').disabled=true;resolve({estimate:value,...elapsed(t)});};});}
 function prepareStimulus(){
+  if(state?.task_type!=='numerosity')return Promise.resolve(null);
   const image=new Image(),started=performance.now(),metrics=timing;
   image.width=512;image.height=512;image.className='stimulus';image.id='stimulus';
   image.alt='A field of dots';image.fetchPriority='high';image.src=state.image;
   return image.decode().then(()=>{metrics.stimulus_fetch_ms=Math.round(performance.now()-started);return image;}).catch(()=>null);
 }
+function socialContextMarkup(){
+  return `<div class="social-scenario"><span class="eyebrow">SOCIAL SITUATION</span><p>${esc(state.scenario_text||'')}</p><div class="social-question">${esc(state.question_text||'')}</div></div>`;
+}
+async function renderJudgment(initial=null,advice=null){
+  const social=state.task_type==='social';
+  if(social){
+    stage.innerHTML=socialContextMarkup()+'<div id="judgment-ui"></div>';
+    return BEASTEstimate.render({stage:document.getElementById('judgment-ui'),initial,advice,
+      min:Number(state.scale_min??0),max:Number(state.scale_max??100),title:advice?'Choose your final judgment':'Choose your first judgment',
+      lowLabel:'0 · Not at all likely',highLabel:'100 · Extremely likely',clock,elapsed});
+  }
+  return BEASTEstimate.render({stage,initial,advice,min:Number(state.scale_min??1),max:Number(state.scale_max??CFG.max_estimate),
+    title:advice?'Enter your final estimate':'Enter your first estimate',lowLabel:String(state.scale_min??1),highLabel:String(state.scale_max??CFG.max_estimate),unit:'dots',clock,elapsed});
+}
 async function showStimulus(){
-  phase('LOOK AT THE DOTS');const start=clock();
-  const pending=stimulusPromise;stimulusPromise=null;
-  const image=await(pending||prepareStimulus());
-  if(!image)throw Error('The dot image could not load. Please try again.');
+  if(state.task_type==='social'){
+    phase('FIRST JUDGMENT');timing.stimulus_load_ms=0;timing.stimulus_visible_ms=0;
+    return await renderJudgment();
+  }
+  phase('LOOK AT THE DOTS');const start=clock();const pending=stimulusPromise;stimulusPromise=null;
+  const image=await(pending||prepareStimulus());if(!image)throw Error('The dot image could not load. Please try again.');
   stage.innerHTML='<div class="stimulus-stage"></div>';stage.firstElementChild.appendChild(image);
-  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-  timing.stimulus_load_ms=elapsed(start).wall;
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));timing.stimulus_load_ms=elapsed(start).wall;
   const bounds=image.getBoundingClientRect();timing.stimulus_render_width=bounds.width;timing.stimulus_render_height=bounds.height;
-  // Advice/text/voice prefetch starts before this function, so API latency overlaps viewing and estimation.
-if(CFG.stimulus_ms>0){const exposure=await visibleSleep(CFG.stimulus_ms);timing.stimulus_visible_ms=exposure.active;phase('FIRST ESTIMATE');return await initialEstimator();}
-const t=clock();stage.insertAdjacentHTML('beforeend','<button class="button primary" id="finish-viewing">Continue to estimate</button>');await new Promise(r=>document.getElementById('finish-viewing').onclick=r);timing.stimulus_visible_ms=elapsed(t).active;return await initialEstimator();}
-async function getAdvice(initial){
-  phase('ADVICE');
-  stage.innerHTML=`<div class="advice-stage"><div class="adviser-label"><span class="adviser-icon">⋮</span> ${esc(state.adviser_name||'Adviser')} advises</div><div class="composing"><i></i><i></i><i></i></div><h2>Preparing advice…</h2><p class="small muted" id="long-wait"></p></div>`;
-  const slow=setTimeout(()=>{const el=document.getElementById('long-wait');if(el)el.textContent='Still preparing your advice. Please keep this tab open.';},8000);
-  const t=clock();let result;
-  try{
-    const remainingStart=performance.now();
-    if(prefetchPromise)await prefetchPromise;
-    timing.prefetch_remaining_ms=Math.round(performance.now()-remainingStart);prefetchPromise=null;
-    result=await recover(()=>fetchJSON('/api/initial',{trial_token:state.trial_token,estimate:initial.estimate,rt_ms:initial.active,telemetry:timing}),'We couldn’t retrieve the advice.');
+  if(CFG.stimulus_ms>0){const exposure=await visibleSleep(CFG.stimulus_ms);timing.stimulus_visible_ms=exposure.active;phase('FIRST ESTIMATE');return await initialEstimator();}
+  const t=clock();stage.insertAdjacentHTML('beforeend','<button class="button primary" id="finish-viewing">Continue to estimate</button>');await new Promise(r=>document.getElementById('finish-viewing').onclick=r);timing.stimulus_visible_ms=elapsed(t).active;return await initialEstimator();
+}
+function initialEstimator(){phase(state.task_type==='social'?'FIRST JUDGMENT':'FIRST ESTIMATE');return renderJudgment();}
+async function askRationale(initial){
+  phase('YOUR REASON');
+  const label=state.task_type==='social'?'first judgment':'first estimate';
+  stage.innerHTML=(state.task_type==='social'?socialContextMarkup():'')+`<div class="rationale-stage"><span class="eyebrow">YOUR REASON</span><h2>${esc(state.rationale_prompt||'What mainly led you to that judgment?')}</h2><p class="helper">Your ${label} was <b>${initial.estimate}</b>. One short sentence is enough.</p><form id="rationale-form"><textarea id="rationale" maxlength="240" rows="3" required placeholder="For example: I mainly based it on…"></textarea><div class="rationale-meta"><span id="rationale-count">0 / 240</span><button class="button primary" type="submit">Continue →</button></div><p class="error" id="rationale-error" role="alert"></p></form></div>`;
+  const area=document.getElementById('rationale'),form=document.getElementById('rationale-form'),count=document.getElementById('rationale-count');area.focus();const t=clock();
+  area.oninput=()=>count.textContent=`${area.value.length} / 240`;
+  return new Promise(resolve=>{let submitted=false;form.onsubmit=e=>{e.preventDefault();if(submitted)return;const value=area.value.trim();if(!value){document.getElementById('rationale-error').textContent='Please give a short reason.';return;}submitted=true;form.querySelector('button').disabled=true;const eTime=elapsed(t);timing.rationale_ms=eTime.active;resolve({text:value,active:eTime.active,wall:eTime.wall});};});
+}
+async function getAdvice(initial,rationale){
+  phase('ADVICE');stage.innerHTML=`<div class="advice-stage"><div class="adviser-label"><span class="adviser-icon">⋮</span> ${esc(state.adviser_name||'Adviser')} advises</div><div class="composing"><i></i><i></i><i></i></div><h2>Preparing advice…</h2><p class="small muted" id="long-wait"></p></div>`;
+  const slow=setTimeout(()=>{const el=document.getElementById('long-wait');if(el)el.textContent='Still preparing your advice. Please keep this tab open.';},8000);const t=clock();let result;
+  try{const remainingStart=performance.now();if(prefetchPromise)await prefetchPromise;timing.prefetch_remaining_ms=Math.round(performance.now()-remainingStart);prefetchPromise=null;
+    result=await recover(()=>fetchJSON('/api/initial',{trial_token:state.trial_token,estimate:initial.estimate,rt_ms:initial.active,rationale:rationale.text,rationale_rt_ms:rationale.active,telemetry:timing}),'We couldn’t retrieve the advice.');
   }finally{clearTimeout(slow);}
-  // If prefetch/TTS failed or was not available (e.g. practice/resume), start it now.
-  if(CFG.advice_modality==='voice_text'&&!voicePreparationPromise){
-    const voiceStarted=performance.now();
-    voicePreparationPromise=prepareAgentVoice(result).then(prepared=>{timing.voice_prepare_ms=Math.round(performance.now()-voiceStarted);return prepared;});
-  }
-  const wait=elapsed(t).wall;if(wait<CFG.min_delay_ms)await sleep(CFG.min_delay_ms-wait);
-  timing.advice_wait_ms=elapsed(t).wall;renderResearcher(result.researcher);return result;
+  if(CFG.advice_modality==='voice_text'&&!voicePreparationPromise){const voiceStarted=performance.now();voicePreparationPromise=prepareAgentVoice(result).then(prepared=>{timing.voice_prepare_ms=Math.round(performance.now()-voiceStarted);return prepared;});}
+  const wait=elapsed(t).wall;if(wait<CFG.min_delay_ms)await sleep(CFG.min_delay_ms-wait);timing.advice_wait_ms=elapsed(t).wall;renderResearcher(result.researcher);return result;
 }
-
-function initialEstimator() {
-  phase('FIRST ESTIMATE');
-  return BEASTEstimate.render({stage,max:CFG.max_estimate,clock,elapsed});
-}
-async function showAdvice(initial,advice) {
-  let prepared=null;
-  if(CFG.advice_modality==='voice_text'){
-    prepared=voicePreparationPromise?await voicePreparationPromise:await prepareAgentVoice(advice);
-    voicePreparationPromise=null;
-  }
-
-  // Present the adviser message first, on its own, before the final number line.
-  phase('ADVICE');
-  stage.innerHTML=`<div class="advice-stage advice-preview-stage">
-    <div class="adviser-label"><span class="adviser-icon">⋮</span> ${esc(advice.adviser_name||state.adviser_name||'Adviser')} advises:</div>
-    <div class="advice-preview-quote">“${esc(advice.advice_text)}”</div>
-  </div>`;
-  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-
-  const previewStart=clock();
-  const playback=CFG.advice_modality==='voice_text'?await startPreparedVoice(prepared,advice):null;
-  if(playback?.voiceId)timing.voice_id=playback.voiceId;
-  if(playback?.voiceProfile)timing.voice_profile=playback.voiceProfile;
-  if(playback?.voiceBackend)timing.voice_backend_used=playback.voiceBackend;
-  if(playback?.deliveryRate)timing.voice_delivery_rate=playback.deliveryRate;
-  timing.voice_hold_ms=playback?.durationMs?Math.round(playback.durationMs):0;
-
-  const minimumPreview=Math.max(0,Number(CFG.advice_preview_ms)||0);
-  const hold=visibleSleep(minimumPreview);
-  if(playback?.ended) await Promise.all([hold,playback.ended]);
-  else await hold;
-  timing.advice_preview_ms=minimumPreview;
-  timing.advice_preview_wall_ms=elapsed(previewStart).wall;
-  stopCurrentVoice();
-
-  // After advice presentation, show the final scale. The advice sentence is not repeated.
-  phase('YOUR FINAL DECISION');
-  return await BEASTEstimate.render({stage,initial:Number(initial.estimate),advice,max:CFG.max_estimate,clock,elapsed});
+async function showAdvice(initial,advice){
+  let prepared=null;if(CFG.advice_modality==='voice_text'){prepared=voicePreparationPromise?await voicePreparationPromise:await prepareAgentVoice(advice);voicePreparationPromise=null;}
+  phase('ADVICE');stage.innerHTML=`<div class="advice-stage advice-preview-stage"><div class="adviser-label"><span class="adviser-icon">⋮</span> ${esc(advice.adviser_name||state.adviser_name||'Adviser')} advises:</div><div class="advice-preview-quote">“${esc(advice.advice_text)}”</div></div>`;
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const previewStart=clock();const playback=CFG.advice_modality==='voice_text'?await startPreparedVoice(prepared,advice):null;
+  if(playback?.voiceId)timing.voice_id=playback.voiceId;if(playback?.voiceProfile)timing.voice_profile=playback.voiceProfile;if(playback?.voiceBackend)timing.voice_backend_used=playback.voiceBackend;if(playback?.deliveryRate)timing.voice_delivery_rate=playback.deliveryRate;timing.voice_hold_ms=playback?.durationMs?Math.round(playback.durationMs):0;
+  const minimumPreview=Math.max(0,Number(CFG.advice_preview_ms)||0),hold=visibleSleep(minimumPreview);if(playback?.ended)await Promise.all([hold,playback.ended]);else await hold;timing.advice_preview_ms=minimumPreview;timing.advice_preview_wall_ms=elapsed(previewStart).wall;stopCurrentVoice();
+  phase('YOUR FINAL DECISION');return await renderJudgment(Number(initial.estimate),advice);
 }
 
 function scale(name,label,low,high){return `<fieldset class="scale"><legend>${esc(label)}</legend><div class="scale-options">${Array.from({length:7},(_,i)=>`<label><input type="radio" name="${name}" value="${i+1}" required><span>${i+1}</span></label>`).join('')}</div><div class="scale-anchors"><span>${low}</span><span>${high}</span></div></fieldset>`;}
@@ -287,23 +271,23 @@ async function run(){
     info={};renderResearcher(state.researcher);renderProgress();
     const start=clock();audioPlayed=false;voicePreparationPromise=null;prefetchPromise=null;
     timing={rating_ms:0,break_ms:0,resumed:state.pending?1:0,viewport_width:innerWidth,viewport_height:innerHeight,device_pixel_ratio:devicePixelRatio};
-    let initial,advice;
+    let initial,advice,rationale;
     if(state.pending){
       phase('WELCOME BACK');
       advice={adviser_name:state.adviser_name,advice_text:state.pending.text,advice_number:state.pending.advice,voice_tone:state.voice_tone,voice_slot:state.voice_slot};
       if(CFG.advice_modality==='voice_text')voicePreparationPromise=prepareAgentVoice(advice);
       stage.innerHTML=`<div class="checkpoint-card"><h2>Your last answer is saved.</h2><p>Continue with the advice for that trial.</p><button class="button primary" id="resume-advice">Continue →</button></div>`;
       await new Promise(r=>document.getElementById('resume-advice').onclick=r);
-      initial={estimate:state.pending.initial,active:state.pending.rt_initial,wall:0};
+      initial={estimate:state.pending.initial,active:state.pending.rt_initial,wall:0};rationale={text:state.pending.rationale||'',active:state.pending.rationale_rt_ms||0,wall:0};
     }else{
       if(state.break_due||finishedWarmup){await checkpoint(finishedWarmup);finishedWarmup=false;}
-      // Begin model generation before the dot image is even presented. Jamie messages
-      // do not receive the current first estimate, so this is experimentally safe.
+      // Neutral and persuasive messages may prefetch. Adaptive waits for the current rationale.
       beginAdvicePrefetch();
-      stimulusPromise=prepareStimulus();timing.fixation_ms=0;
-      initial=await recover(()=>showStimulus(),'We couldn’t load the dot image.');
+      stimulusPromise=state.task_type==='numerosity'?prepareStimulus():null;timing.fixation_ms=0;
+      initial=await recover(()=>showStimulus(),state.task_type==='numerosity'?'We couldn’t load the dot image.':'We couldn’t load the social situation.');
       timing.initial_active_ms=initial.active;timing.initial_wall_ms=initial.wall;
-      advice=await getAdvice(initial);
+      rationale=await askRationale(initial);
+      advice=await getAdvice(initial,rationale);
     }
     const final=await showAdvice(initial,advice);timing.final_active_ms=final.active;timing.final_wall_ms=final.wall;
     const checkin=await ratings();timing.total_wall_ms=elapsed(start).wall;timing.total_active_ms=elapsed(start).active;
