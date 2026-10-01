@@ -1,9 +1,10 @@
 {% extends "base.html" %}{% block body %}
 <main class="page narrow"><h1>Generate live review</h1>
-<p>Three synthetic participants: resistant, receptive, and changing. Each completes all 36 experimental trials. Messages come from the selected live adviser; all three conditions use the selected live adviser model.</p>
+<p>Three synthetic participants each complete all 36 experimental trials. Messages come from the selected live adviser; all three conditions use the selected live adviser model.</p>
 <p>This makes 108 generated-message requests before retries (up to 324 provider attempts with the default three-attempt policy). API charges apply. Keep this page open and do not run another pilot in this browser while it runs.</p>
 <label>Live model<select id="review-model">{% for key,p in profiles.items() %}<option value="{{key}}" {% if not p.available %}disabled{% endif %} {% if key==default_profile %}selected{% endif %}>{{p.label}} ({{p.model}}){% if not p.available %} — key missing{% endif %}</option>{% endfor %}</select></label>
-<p>First estimates are identical across profiles. Final responses follow a prescribed rule, not the message's persuasive impact. Trust is recorded every two trials; feeling is absent. This is an adviser audit, not evidence of human behaviour or human completion times.</p>
+<p><strong>Response-neutral audit:</strong> the computer is not assigned a resistant, receptive, or changing profile. Its final estimates vary deterministically from trial to trial using a condition-blind rule, and the same participant/numerosity pair gets the same latent response tendency in Neutral, Persuasive, and Adaptive. Trust ratings are generated independently. The simulator never reads the adviser wording when choosing the final estimate.</p>
+<p>This therefore tests message generation and adaptive grounding only. It cannot tell you whether persuasive wording actually changes advice-taking; that requires human participants.</p>
 <div class="button-row"><button class="button primary" id="review-start">Generate messages</button><button class="button" id="review-stop" disabled>Pause after this trial</button></div>
 <p id="review-status" role="status">Ready. Results are stored as TEST sessions.</p>
 <div class="button-row"><button class="button" id="review-csv" disabled>Download trial CSV for Excel</button><button class="button" id="review-json" disabled>Download full message audit</button></div>
