@@ -176,17 +176,6 @@ function renderProgress(){
   const percent=100*state.completed/Math.max(1,state.overall_total);document.getElementById('bar').style.width=percent+'%';document.querySelector('[role=progressbar]').setAttribute('aria-valuenow',String(Math.round(percent)));
 }
 async function checkpoint(warmup=false){
-  // In demo mode, introduce the new adviser after the two neutral trials.
-  // All other experiment modes retain their existing checkpoint behaviour.
-  if(CFG.demo_mode && state.block===2 && !warmup){
-    const name=esc(state.adviser_name||'Jamie');
-    phase('NEW ADVISER');
-    stage.innerHTML=`<div class="checkpoint-card demo-transition"><span class="eyebrow">NEW ADVISER</span><h1>Meet ${name}</h1><button class="button primary" id="continue-round">Continue →</button></div>`;
-    const t=clock();
-    await new Promise(r=>document.getElementById('continue-round').onclick=r);
-    timing.break_ms=elapsed(t).wall;
-    return;
-  }
   phase('BREAK');
   stage.innerHTML=`<div class="checkpoint-card"><h1>${warmup?'Practice complete':`Round ${state.block-1} complete`}</h1><p>Next: ${esc(state.adviser_name||'Adviser')}</p><p>Take a break if you like.</p><button class="button primary" id="continue-round">Start round ${state.block}</button></div>`;
   const t=clock();await new Promise(r=>document.getElementById('continue-round').onclick=r);timing.break_ms=elapsed(t).wall;
@@ -308,7 +297,7 @@ async function run(){
       initial={estimate:state.pending.initial,active:state.pending.rt_initial,wall:0};
     }else{
       if(state.break_due||finishedWarmup){await checkpoint(finishedWarmup);finishedWarmup=false;}
-      // Begin model generation before the dot image is even presented. v2.21 agents
+      // Begin model generation before the dot image is even presented. Jamie messages
       // do not receive the current first estimate, so this is experimentally safe.
       beginAdvicePrefetch();
       stimulusPromise=prepareStimulus();timing.fixation_ms=0;

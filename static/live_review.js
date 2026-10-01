@@ -22,7 +22,7 @@ async function generateReview(){
   while(reviewIndex<reviewProfiles.length&&!reviewPaused){
    const profile=reviewProfiles[reviewIndex];
    if(!reviewStarted){
-    const form=new URLSearchParams({csrf_token:REVIEW_CONFIG.csrf,consent:'yes',researcher_test:'1',adviser_mode:'live',model_profile:reviewModel,trials:'13',test_index:'0',advice_preview_ms:'0',external_id:`SIM_REVIEW_${profile}`});
+    const form=new URLSearchParams({csrf_token:REVIEW_CONFIG.csrf,consent:'yes',researcher_test:'1',adviser_mode:'live',model_profile:reviewModel,trials:'12',skip_practice:'1',test_index:'0',advice_preview_ms:'0',external_id:`SIM_REVIEW_${profile}`});
     await reviewRequest('/start',form,true);reviewStarted=true;reviewPid=null;
    }
    if(reviewPending){await reviewRequest('/api/final',reviewPending.payload);reviewRows.push(reviewPending.row);reviewPending=null;el('review-csv').disabled=el('review-json').disabled=false;}
@@ -34,8 +34,8 @@ async function generateReview(){
    reviewPid=details.pid;
    const position=reviewState.trial_in_block;
    const initial=rounded(details.true_count*([.88,1.08,.96,1.12][(details.true_count/8)%4|0]));
-   el('review-status').textContent=`${profile}: ${details.condition}, trial ${position}. ${reviewRows.length}/315 saved.`;
-   // Exercise the same prefetch path as the real task: generate the agent message BEFORE the current first estimate exists.
+   el('review-status').textContent=`${profile}: ${details.condition}, trial ${position}. ${reviewRows.length}/108 saved.`;
+   // Exercise the same prefetch path as the real task: generate the Jamie message BEFORE the current first estimate exists.
    await reviewRequest('/api/prefetch',{trial_token:reviewState.trial_token});
    const advice=await reviewRequest('/api/initial',{trial_token:reviewState.trial_token,estimate:initial,rt_ms:0});
    const response=profileResponse(profile,position,initial,advice.advice_number);
