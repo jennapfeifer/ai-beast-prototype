@@ -29,11 +29,12 @@ def test_schedule_is_three_matched_conditions():
             assert len(advice) == 1
 
 
-def test_full_offline_session_uses_jamie_and_adaptive_history(client):
+def test_full_offline_session_uses_distinct_names_and_adaptive_history(client):
     state = start(client, ['N', 'P', 'A'], trials=12, skip=False, mode='offline')
     seen = 0
     while not state['done']:
-        assert state['adviser_name'] == 'Jamie'
+        if not state['practice']:
+            assert state['adviser_name'] in design.ADVISER_NAMES
         finish_trial(client, state, initial=100, final=110)
         seen += 1
         state = client.get('/api/state').get_json()
@@ -57,4 +58,21 @@ def test_full_offline_session_uses_jamie_and_adaptive_history(client):
     assert all(d['history_rows'] == 0 for d in diagnostics if d.get('condition_id') in {'N', 'P'})
 
     text = client.get('/debrief').get_data(as_text=True)
-    assert 'Jamie was an AI-generated adviser identity' in text
+    assert 'The adviser identities you saw were AI-generated' in text
+
+
+def test_adviser_names_are_counterbalanced():
+    rows=[]
+    for participant in range(6):
+        order=design.balanced_condition_order(participant)
+        names=design.adviser_name_mapping(participant)
+        assert set(names)==set(design.CONDITIONS)
+        assert set(names.values())==set(design.ADVISER_NAMES)
+        for pos,cid in enumerate(order, start=1):
+            rows.append((pos,cid,names[cid]))
+    for cid in design.CONDITIONS:
+        for name in design.ADVISER_NAMES:
+            assert sum(c==cid and n==name for _,c,n in rows)==2
+    for pos in (1,2,3):
+        for name in design.ADVISER_NAMES:
+            assert sum(p==pos and n==name for p,_,n in rows)==2
