@@ -24,7 +24,7 @@ def post(client,url,json=None,data=None):
     token=csrf(client)
     if json is not None:return client.post(url,json=json,headers={'X-CSRF-Token':token})
     return client.post(url,data={'csrf_token':token,**(data or {})})
-def start(client,conditions=None,trials=13,skip=False,mode='offline'):
+def start(client,conditions=None,trials=12,skip=False,mode='offline'):
     if conditions is not None:
         assert post(client,'/researcher',data={'token':'researcher-test'}).status_code==200
     payload={'consent':'yes'}
