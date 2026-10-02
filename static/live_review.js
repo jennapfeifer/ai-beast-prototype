@@ -1,8 +1,9 @@
 'use strict';
 // Live adviser-generation audit for the CURRENT comparison pilot.
 // It runs 6 trials/condition in BOTH tasks (18 numerosity + 18 social per
-// synthetic participant). Responses and rationales are condition-blind: the
-// simulator never reads the adviser wording when choosing a final judgment.
+// synthetic participant). Responses are condition-blind. Social rationales are
+// supplied only on the two schedule-designated positions per block; dot rationales
+// remain part of every dot trial. The simulator never reads adviser wording.
 const reviewParticipants=[
  {id:'sim-1',seed:101,testIndex:0},
  {id:'sim-2',seed:307,testIndex:1},
@@ -111,17 +112,17 @@ async function generateReview(){
    reviewPid=details.pid;
    const position=reviewState.trial_in_block;
    const initial=syntheticInitial(participant,reviewState);
-   const rationale=syntheticRationale(participant,reviewState,initial);
+   const rationale=reviewState.rationale_required?syntheticRationale(participant,reviewState,initial):'';
    el('review-status').textContent=`${participant.id}: ${reviewState.task_type}, ${details.condition}, trial ${position}. ${reviewRows.length}/${expectedTotal} saved.`;
-   // Exercise normal prefetch behavior. N/P can prefetch; A deliberately waits
-   // for the current rationale and this call returns prefetched:false.
+   // Exercise normal prefetch behavior. Adaptive waits only on trials that
+   // actually request a participant rationale; otherwise it may prefetch too.
    await reviewRequest('/api/prefetch',{trial_token:reviewState.trial_token});
    const advice=await reviewRequest('/api/initial',{trial_token:reviewState.trial_token,estimate:initial,rt_ms:0,rationale,rationale_rt_ms:0,telemetry:{}});
    const response=simulatedResponse(participant,reviewState,initial,advice.advice_number);
    const ratings={trust:reviewState.ratings_due?response.trust:null,feeling:null};
    reviewPending={
     payload:{trial_token:reviewState.trial_token,estimate:response.final,rt_ms:0,...ratings,telemetry:{}},
-    row:{simulation_id:participant.id,simulation_seed:participant.seed,adviser_name:reviewState.adviser_name,pid:details.pid,participant_index:details.participant_index,round:reviewState.block,block_id:details.block_id,task_type:reviewState.task_type,condition:details.condition,trial:position,practice:reviewState.practice,scenario_id:details.scenario_id||'',true_count:details.true_count,question_text:reviewState.question_text||'',participant_rationale:rationale,initial_estimate:initial,advice_number:advice.advice_number,final_estimate:response.final,simulated_weight:response.weight,trust_rating:ratings.trust,advice_text:advice.advice_text,model_profile:reviewModel,...advice.researcher,simulation:true,response_generator:'condition_blind_current_comparison_v2'}
+    row:{simulation_id:participant.id,simulation_seed:participant.seed,adviser_name:reviewState.adviser_name,pid:details.pid,participant_index:details.participant_index,round:reviewState.block,block_id:details.block_id,task_type:reviewState.task_type,condition:details.condition,trial:position,practice:reviewState.practice,scenario_id:details.scenario_id||'',true_count:details.true_count,question_text:reviewState.question_text||'',rationale_required:reviewState.rationale_required,participant_rationale:rationale,initial_estimate:initial,advice_number:advice.advice_number,final_estimate:response.final,simulated_weight:response.weight,trust_rating:ratings.trust,advice_text:advice.advice_text,model_profile:reviewModel,...advice.researcher,simulation:true,response_generator:'condition_blind_grounded_social_v3'}
    };
    await reviewRequest('/api/final',reviewPending.payload);reviewRows.push(reviewPending.row);reviewPending=null;
    el('review-csv').disabled=el('review-json').disabled=false;
@@ -132,9 +133,9 @@ async function generateReview(){
 }
 function downloadReview(json){
  let content,type,name;
- if(json){content=JSON.stringify({simulation:true,response_generator:'condition_blind_current_comparison_v2',protocol:'dots_plus_social_6_per_condition',participants:reviewParticipants,model_profile:reviewModel,complete:reviewIndex===reviewParticipants.length,rows:reviewRows},null,2);type='application/json';name='BEAST-live-review.json';}
+ if(json){content=JSON.stringify({simulation:true,response_generator:'condition_blind_grounded_social_v3',protocol:'dots_plus_social_6_per_condition_sparse_social_rationale',participants:reviewParticipants,model_profile:reviewModel,complete:reviewIndex===reviewParticipants.length,rows:reviewRows},null,2);type='application/json';name='BEAST-live-review.json';}
  else{
-  const fields=['simulation_id','simulation_seed','adviser_name','pid','participant_index','round','block_id','task_type','condition','trial','practice','scenario_id','true_count','question_text','participant_rationale','initial_estimate','advice_number','final_estimate','simulated_weight','trust_rating','response_generator','advice_text','word_count','word_count_check','source','live_model','fallback','model_profile','provider','model','reasoning','request_timeout_s','prompt_version','initial_context_available','rationale_context_available','generation_ms','attempts','validation','grounding_record_check','adaptive_strategy','adaptive_summary','adaptive_summary_in_prompt','first_draft','displayed_draft','length_retry_used','length_retry_success','review_reasons','attempt_log'];
+  const fields=['simulation_id','simulation_seed','adviser_name','pid','participant_index','round','block_id','task_type','condition','trial','practice','scenario_id','true_count','question_text','rationale_required','participant_rationale','initial_estimate','advice_number','final_estimate','simulated_weight','trust_rating','response_generator','advice_text','word_count','word_count_check','source','live_model','fallback','model_profile','provider','model','reasoning','request_timeout_s','prompt_version','initial_context_available','rationale_context_available','argument_text','argument_direction','generation_ms','attempts','validation','grounding_record_check','adaptive_strategy','adaptive_summary','adaptive_summary_in_prompt','first_draft','displayed_draft','length_retry_used','length_retry_success','review_reasons','attempt_log'];
   const cell=value=>{let s=value==null?'':typeof value==='object'?JSON.stringify(value):String(value);if(/^[=+@-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';};
   content='\uFEFF'+[fields,...reviewRows.map(r=>fields.map(k=>r[k]))].map(row=>row.map(cell).join(',')).join('\r\n');type='text/csv;charset=utf-8';name='BEAST-live-review.csv';
  }

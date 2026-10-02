@@ -215,17 +215,19 @@ async function showStimulus(){
 function initialEstimator(){phase(state.task_type==='social'?'FIRST JUDGMENT':'FIRST ESTIMATE');return renderJudgment();}
 async function askRationale(initial){
   phase('YOUR REASON');
-  const label=state.task_type==='social'?'first judgment':'first estimate';
-  stage.innerHTML=(state.task_type==='social'?socialContextMarkup():'')+`<div class="rationale-stage"><span class="eyebrow">YOUR REASON</span><h2>${esc(state.rationale_prompt||'What mainly led you to that judgment?')}</h2><p class="helper">Your ${label} was <b>${initial.estimate}</b>. One short sentence is enough.</p><form id="rationale-form"><textarea id="rationale" maxlength="240" rows="3" required placeholder="For example: I mainly based it on…"></textarea><div class="rationale-meta"><span id="rationale-count">0 / 240</span><button class="button primary" type="submit">Continue →</button></div><p class="error" id="rationale-error" role="alert"></p></form></div>`;
+  const social=state.task_type==='social',label=social?'first judgment':'first estimate',maxChars=social?100:240;
+  const helper=social?'A few words is enough.':'One short sentence is enough.';
+  const placeholder=social?'For example: they were online but did not reply':'For example: I mainly based it on…';
+  stage.innerHTML=(social?socialContextMarkup():'')+`<div class="rationale-stage"><span class="eyebrow">YOUR REASON</span><h2>${esc(state.rationale_prompt||'What mainly influenced your judgment?')}</h2><p class="helper">Your ${label} was <b>${initial.estimate}</b>. ${helper}</p><form id="rationale-form"><textarea id="rationale" maxlength="${maxChars}" rows="2" required placeholder="${esc(placeholder)}"></textarea><div class="rationale-meta"><span id="rationale-count">0 / ${maxChars}</span><button class="button primary" type="submit">Continue →</button></div><p class="error" id="rationale-error" role="alert"></p></form></div>`;
   const area=document.getElementById('rationale'),form=document.getElementById('rationale-form'),count=document.getElementById('rationale-count');area.focus();const t=clock();
-  area.oninput=()=>count.textContent=`${area.value.length} / 240`;
+  area.oninput=()=>count.textContent=`${area.value.length} / ${maxChars}`;
   return new Promise(resolve=>{let submitted=false;form.onsubmit=e=>{e.preventDefault();if(submitted)return;const value=area.value.trim();if(!value){document.getElementById('rationale-error').textContent='Please give a short reason.';return;}submitted=true;form.querySelector('button').disabled=true;const eTime=elapsed(t);timing.rationale_ms=eTime.active;resolve({text:value,active:eTime.active,wall:eTime.wall});};});
 }
 async function getAdvice(initial,rationale){
   phase('ADVICE');stage.innerHTML=`<div class="advice-stage"><div class="adviser-label"><span class="adviser-icon">⋮</span> ${esc(state.adviser_name||'Adviser')} advises</div><div class="composing"><i></i><i></i><i></i></div><h2>Preparing advice…</h2><p class="small muted" id="long-wait"></p></div>`;
   const slow=setTimeout(()=>{const el=document.getElementById('long-wait');if(el)el.textContent='Still preparing your advice. Please keep this tab open.';},8000);const t=clock();let result;
   try{const remainingStart=performance.now();if(prefetchPromise)await prefetchPromise;timing.prefetch_remaining_ms=Math.round(performance.now()-remainingStart);prefetchPromise=null;
-    result=await recover(()=>fetchJSON('/api/initial',{trial_token:state.trial_token,estimate:initial.estimate,rt_ms:initial.active,rationale:rationale.text,rationale_rt_ms:rationale.active,telemetry:timing}),'We couldn’t retrieve the advice.');
+    result=await recover(()=>fetchJSON('/api/initial',{trial_token:state.trial_token,estimate:initial.estimate,rt_ms:initial.active,rationale:(rationale?.text||''),rationale_rt_ms:(rationale?.active||0),telemetry:timing}),'We couldn’t retrieve the advice.');
   }finally{clearTimeout(slow);}
   if(CFG.advice_modality==='voice_text'&&!voicePreparationPromise){const voiceStarted=performance.now();voicePreparationPromise=prepareAgentVoice(result).then(prepared=>{timing.voice_prepare_ms=Math.round(performance.now()-voiceStarted);return prepared;});}
   const wait=elapsed(t).wall;if(wait<CFG.min_delay_ms)await sleep(CFG.min_delay_ms-wait);timing.advice_wait_ms=elapsed(t).wall;renderResearcher(result.researcher);return result;
@@ -276,12 +278,13 @@ async function run(){
       initial={estimate:state.pending.initial,active:state.pending.rt_initial,wall:0};rationale={text:state.pending.rationale||'',active:state.pending.rationale_rt_ms||0,wall:0};
     }else{
       if(state.break_due||finishedWarmup){await checkpoint(finishedWarmup);finishedWarmup=false;}
-      // Neutral and persuasive messages may prefetch. Adaptive waits for the current rationale.
+      // Prefetch is allowed whenever this trial does not require participant-specific rationale input.
       beginAdvicePrefetch();
       stimulusPromise=state.task_type==='numerosity'?prepareStimulus():null;timing.fixation_ms=0;
       initial=await recover(()=>showStimulus(),state.task_type==='numerosity'?'We couldn’t load the dot image.':'We couldn’t load the social situation.');
       timing.initial_active_ms=initial.active;timing.initial_wall_ms=initial.wall;
-      rationale=await askRationale(initial);
+      rationale=state.rationale_required?await askRationale(initial):{text:'',active:0,wall:0};
+      if(!state.rationale_required)timing.rationale_ms=0;
       advice=await getAdvice(initial,rationale);
     }
     const final=await showAdvice(initial,advice);timing.final_active_ms=final.active;timing.final_wall_ms=final.wall;
