@@ -16,7 +16,7 @@ import re
 import time
 import adviser as legacy
 
-PROMPT_VERSION = 'agent-v26-rationale-social-comparison'
+PROMPT_VERSION = 'agent-v27-grounded-social-sparse-rationale'
 TARGET_MIN_WORDS = 14
 TARGET_MAX_WORDS = 20
 NEUTRAL_MIN_WORDS = 14

@@ -1,8 +1,8 @@
-"""Dependency-light structural checks for the rationale/social comparison build."""
+"""Dependency-light structural checks for the grounded social comparison build."""
 import design
 import social_design
-import adviser_flexible
 
+# Shortened dot comparison stays matched across N/P/A.
 for p in range(12):
     full=design.build_schedule(p)
     assert len(full)==36
@@ -17,24 +17,52 @@ for p in range(12):
         assert sum(r['direction']=='UP' for r in rows)==3
         assert sum(r['direction']=='DOWN' for r in rows)==3
 
-for p in range(6):
+# Social task: 18 unique items, balanced direction, exactly two rationale trials
+# per block, with the same early + late positions in N/P/A.
+for p in range(24):
     rows=social_design.build_schedule(p)
     assert len(rows)==18 and len({r['scenario_id'] for r in rows})==18
+    rationale_positions=None
     for cid in design.CONDITIONS:
         block=[r for r in rows if r['condition_id']==cid]
         assert len(block)==6
         assert sum(r['direction']=='UP' for r in block)==3
         assert sum(r['direction']=='DOWN' for r in block)==3
+        positions={r['trial_position'] for r in block if r['rationale_required']}
+        assert len(positions)==2
+        assert len(positions & {1,2,3})==1
+        assert len(positions & {4,5,6})==1
+        rationale_positions = positions if rationale_positions is None else rationale_positions
+        assert positions==rationale_positions
+        for r in block:
+            assert r['argument_low'] and r['argument_high']
+            expected=r['argument_high'] if r['advice_number']>50 else r['argument_low']
+            assert r['argument_text']==expected
+            assert r['argument_direction']==('high' if r['advice_number']>50 else 'low')
 
-rationale='They were online but did not reply.'
-scenario={'text':'A friend has not replied but posted in a group chat.','question':'How likely is deliberate avoidance?'}
-for style in ('neutral','static'):
-    system,user=adviser_flexible.build_prompt(style,None,30,[],task_type='social',current_rationale=rationale,scenario=scenario)
-    assert rationale not in user
-system,user=adviser_flexible.build_prompt('adaptive',None,30,[],task_type='social',current_rationale=rationale,scenario=scenario)
-assert rationale in user
-assert 'MUST make the message visibly responsive' in system
+# Controlled social messages: P and non-rationale A are identical; rationale A
+# adds only the participant-authored cue before the same grounded core argument.
+example=social_design.SCENARIOS[0]
+argument=social_design.selected_argument(example)
+p_text=social_design.advice_message('P',example['advice'],argument,'')
+a_plain=social_design.advice_message('A',example['advice'],argument,'')
+a_rationale=social_design.advice_message('A',example['advice'],argument,'they were online but did not reply')
+n_text=social_design.advice_message('N',example['advice'],argument,'they were online but did not reply')
+assert p_text==a_plain
+assert argument in p_text and argument in a_rationale
+assert 'they were online but did not reply' not in p_text
+assert 'they were online but did not reply' in a_rationale
+assert argument not in n_text
 
+# Scenario rotation still moves each six-item set through all three conditions.
+for scenario in social_design.SCENARIOS:
+    seen=[]
+    for p in range(3):
+        row=next(r for r in social_design.build_schedule(p) if r['scenario_id']==scenario['id'])
+        seen.append(row['condition_id'])
+    assert set(seen)==set(design.CONDITIONS)
+
+# Adviser names remain unique across the six combined blocks.
 for p in range(6):
     tasks=['numerosity','social'] if p%2==0 else ['social','numerosity']
     blocks=[]
@@ -44,4 +72,4 @@ for p in range(6):
     names=design.adviser_name_mapping_for_blocks(p,blocks)
     assert len(set(names.values()))==6
 
-print('PASS: rationale isolation, social counterbalancing, shortened dot matching, block names')
+print('PASS: grounded social arguments, sparse matched rationales, counterbalancing, shortened dot matching, block names')

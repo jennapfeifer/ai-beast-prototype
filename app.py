@@ -36,7 +36,7 @@ def _model_profiles_with_midrange_options():
 
 adviser.model_profiles = _model_profiles_with_midrange_options
 
-APP_VERSION = 'fieldwork-2.61-live-review-comparison'
+APP_VERSION = 'fieldwork-2.62-grounded-social-sparse-rationale'
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 ON_RENDER = os.getenv('RENDER', '').lower() in {'true','1'}
@@ -338,7 +338,7 @@ def start():
     advice_modality=(request.form.get('advice_modality',ADVICE_MODALITY) if researcher else 'voice_text').strip().lower()
     if advice_modality not in {'text','voice_text'}:return 'Invalid advice modality.',400
     conf=dict(conditions=conditions,trials_per_block=n,task_mode=task_mode,skip_practice=researcher and request.form.get('skip_practice')=='1',
-              adviser_protocol='rationale_social_v1',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names={},adviser_voices=assign_adviser_voices(),
+              adviser_protocol='grounded_social_sparse_rationale_v2',advice_preview_ms=preview_ms,advice_modality=advice_modality,rating_items='trust_only',adviser_names={},adviser_voices=assign_adviser_voices(),
               test_index=integer(request.form.get('test_index','0'),0,5) if researcher else 0,
               adviser_mode=mode,is_test=researcher or STUDY_MODE!='production' or mode!='live',researcher=researcher,
               model_profile_id=profile_id,model_profile=profile,
@@ -394,7 +394,8 @@ def api_state():
                  overall=completed+1,completed=completed,overall_total=len(experimental),
                  image=(url_for('stimulus',token=token) if task_type=='numerosity' else None),
                  scenario_text=trial.get('scenario_text'),question_text=trial.get('question_text'),
-                 rationale_prompt=trial.get('rationale_prompt') or ('What mainly led you to that estimate?' if task_type=='numerosity' else 'What mainly led you to that judgment?'),
+                 rationale_required=bool(trial.get('rationale_required', True)),
+                 rationale_prompt=trial.get('rationale_prompt') or ('What mainly led you to that estimate?' if task_type=='numerosity' else 'What mainly influenced your judgment?'),
                  scale_min=trial.get('scale_min',1),scale_max=trial.get('scale_max',design.MAX_ESTIMATE),
                  break_due=not practice and trial['trial_position']==1 and block>1,
                  voice_tone='persuasive' if trial['condition_id'] in {'P','A'} else 'neutral',
@@ -443,18 +444,35 @@ def prepared_advice(con,data,trial,initial,rationale=None):
         advice=design.advice_number(trial['condition_id'],trial['true_count'],initial,trial['direction'])
     protocol=data['config'].get('adviser_protocol')
     cached=data.get('prefetched')
-    # Adaptive messages are never reused from prefetch because current rationale is part of the manipulation.
-    if style!='adaptive' and cached and cached.get('token')==data.get('token') and cached.get('advice')==advice:
+    # Adaptive messages need the current rationale only on rationale-designated trials.
+    rationale_required=bool(trial.get('rationale_required', True))
+    cache_allowed=(style!='adaptive' or not rationale_required)
+    if cache_allowed and cached and cached.get('token')==data.get('token') and cached.get('advice')==advice:
         return advice,cached['message'],dict(cached['diagnostic'],prefetched=True,advice=advice,initial_context_available=False,
                                              rationale_context_available=False)
     rows=[] if practice else store.block_history(data['_pid'],trial['condition_id'],con,task_type=task_type)
-    history=rows if style=='adaptive' else []
+    # In the social task the adaptive manipulation is current-rationale responsiveness,
+    # not claims about prior response history. Numerosity retains the history logic.
+    history=rows if (style=='adaptive' and task_type!='social') else []
     profile=data['config'].get('model_profile') or adviser.model_profiles()['server']
     key=f"{data['participant_index']}|{trial['condition_id']}|{trial['trial_position']}"
     t=time.perf_counter()
     if practice:
         msg=adviser.control_message(advice,key)
         msg.update(live_model=False,history_route='practice',prompt_version='practice-control')
+    elif task_type=='social':
+        # Social arguments are researcher-specified. The model is not allowed to
+        # invent an explanation for an ambiguous scenario. P and A use the same
+        # scenario-grounded argument; A only adds a literal link to the current
+        # participant rationale on the two designated rationale trials.
+        text=social_design.advice_message(trial['condition_id'],advice,trial.get('argument_text',''),rationale if rationale_required else '')
+        msg=dict(text=text,source='grounded_social_argument_bank:'+trial['condition_id'],attempts=0,
+                 word_count=adviser.words(text),validation='researcher_specified_argument_bank',
+                 history_route='not_used_social',live_model=False,prompt_version='grounded-social-v2',
+                 attempt_log=[],model_response_received=False,review_required=False,review_reasons=[],
+                 grounding_record_check='researcher_argument_bank',adaptation_check=('literal_current_rationale_link' if trial['condition_id']=='A' and rationale else 'not_applicable'),
+                 persuasion_check='standardized_grounded_argument' if trial['condition_id'] in {'P','A'} else 'neutral_control',
+                 generation_status='grounded_social_argument_bank')
     elif data['config']['adviser_mode']=='offline':
         # Offline is a mechanical rehearsal. It deliberately does not pretend to validate LLM responsiveness.
         if style=='neutral': text=f'My estimate for this round is {advice}, simply offered as another judgment to consider.'
@@ -462,7 +480,7 @@ def prepared_advice(con,data,trial,initial,rationale=None):
         elif rationale:
             text=f'You based your judgment on that reason; please give {advice} more weight before deciding.'
         else: text=f'Please give {advice} more weight when choosing your final judgment for this round.'
-        msg=dict(text=text,source='offline_demo:'+style,attempts=0,word_count=adviser.words(text),validation='offline_rehearsal',
+        msg=dict(text=text,source='offline_rehearsal:'+style,attempts=0,word_count=adviser.words(text),validation='offline_rehearsal',
                  history_route='offline',live_model=False,prompt_version='offline-rationale-social-v1',attempt_log=[])
     else:
         scenario={'text':trial.get('scenario_text'),'question':trial.get('question_text')} if task_type=='social' else None
@@ -470,16 +488,19 @@ def prepared_advice(con,data,trial,initial,rationale=None):
             msg=adviser_flexible.generate_message(style=style,initial=None,advice=advice,history=history,
                 previous_messages=[r['advice_text'] for r in rows if r.get('advice_text')],key=key,
                 task_type=task_type,current_rationale=(rationale if style=='adaptive' else None),scenario=scenario)
-    diagnostic=dict(history_rows=len(history),expected_history_rows=trial['trial_position']-1 if style=='adaptive' else 0,
+    diagnostic=dict(history_rows=len(history),expected_history_rows=trial['trial_position']-1 if (style=='adaptive' and task_type!='social') else 0,
         history_positions=[r['trial_position'] for r in history],displayed_message=msg['text'],source=msg['source'],attempts=msg['attempts'],
         validation=msg['validation'],word_count=msg['word_count'],live_model=msg.get('live_model',False),
         history_route=msg.get('history_route'),generation_ms=round((time.perf_counter()-t)*1000),
         history_check=msg.get('history_check'),prompt_version=msg.get('prompt_version'),prompt_sha256=msg.get('prompt_sha256'),
         attempt_log=msg.get('attempt_log',[]),fallback=msg['source'].startswith('fallback:'),adviser_protocol=protocol or 'legacy_v7',
-        initial_context_available=False,rationale_context_available=bool(style=='adaptive' and rationale),
+        initial_context_available=False,rationale_context_available=bool(style=='adaptive' and rationale_required and rationale),
         task_type=task_type,block_id=trial.get('block_id'),scenario_id=trial.get('scenario_id'),
-        participant_rationale=(rationale if style=='adaptive' else None),prefetched=False,provider=profile['provider'],
-        model=profile['model'],reasoning=profile['reasoning'],request_timeout_s=profile['timeout'],advice=advice)
+        participant_rationale=(rationale if style=='adaptive' and rationale_required else None),prefetched=False,
+        rationale_required=rationale_required,argument_text=trial.get('argument_text'),argument_direction=trial.get('argument_direction'),
+        provider=msg.get('provider',('researcher_argument_bank' if task_type=='social' else profile['provider'])),
+        model=msg.get('model',('scripted_grounded_social' if task_type=='social' else profile['model'])),
+        reasoning=msg.get('reasoning',('none' if task_type=='social' else profile['reasoning'])),request_timeout_s=(0 if task_type=='social' else profile['timeout']),advice=advice)
     diagnostic.update(model_response_received=msg.get('model_response_received',False),
         trust_context_in_prompt=msg.get('trust_context_in_prompt',False),
         feeling_context_in_prompt=msg.get('feeling_context_in_prompt',False),
@@ -629,14 +650,14 @@ def api_voice():
 
 @app.post('/api/prefetch')
 def api_prefetch():
-    """Prefetch N/P messages. Adaptive waits for the participant's current rationale."""
+    """Prefetch when the current trial does not require participant-specific rationale input."""
     pid=require_session();body=request.get_json(silent=True) or {}
     with store.session_transaction(pid) as (con,data):
         trial,_=current(data)
         if trial is None or not data.get('token') or body.get('trial_token')!=data.get('token'):
             return jsonify(error='This trial is no longer current.'),409
         style=condition_agent_style(trial['condition_id'],trial.get('adviser_style'))
-        if data.get('pending') or trial['condition_id']=='PRACTICE' or style=='adaptive':
+        if data.get('pending') or trial['condition_id']=='PRACTICE' or (style=='adaptive' and bool(trial.get('rationale_required', True))):
             return jsonify(ok=True,prefetched=False)
         existing=data.get('prefetched')
         if existing and existing.get('token')==data.get('token'):
@@ -672,11 +693,16 @@ def api_initial():
             rt=milliseconds(body.get('rt_ms'))
             rationale_rt=milliseconds(body.get('rationale_rt_ms'))
         except ValueError as e:return jsonify(error=str(e)),400
+        rationale_required=bool(trial.get('rationale_required', True))
         rationale=str(body.get('rationale') or '').strip()
-        if not rationale:
+        if rationale_required and not rationale:
             return jsonify(error='Please give a short reason for your first judgment.'),400
-        if len(rationale)>240:
-            return jsonify(error='Please keep your reason to 240 characters or fewer.'),400
+        if not rationale_required:
+            rationale=''
+            rationale_rt=0
+        max_rationale_chars=100 if trial.get('task_type')=='social' else 240
+        if len(rationale)>max_rationale_chars:
+            return jsonify(error=f'Please keep your reason to {max_rationale_chars} characters or fewer.'),400
         if data['pending']:
             if data['pending']['initial']!=initial or data['pending'].get('rationale')!=rationale:
                 return jsonify(error='An initial answer is already recorded for this trial.'),409
@@ -756,7 +782,7 @@ def api_final():
             audio_played=bool(body.get('audio_played',False)),rating_items=data['config'].get('rating_items','trust_and_feeling'),
             condition_id=trial['condition_id'],block_id=trial.get('block_id'),task_type=task_type,scenario_id=trial.get('scenario_id'),
             trial_position=trial['trial_position'],global_trial=trial['global_trial'],practice=practice,is_test=data['config']['is_test'],
-            rationale_collected=bool(pending.get('rationale')),rationale_length=len(pending.get('rationale') or ''),
+            rationale_required=bool(trial.get('rationale_required', True)),rationale_collected=bool(pending.get('rationale')),rationale_length=len(pending.get('rationale') or ''),
             adviser_mode=data['config']['adviser_mode'],target_stimulus_ms=STIMULUS_MS if task_type=='numerosity' else 0,
             target_wait_ms=ADVISER_MIN_DELAY_MS,ratings_due=ratings_due(trial),
             timing_complete=all(k in timing for k in ['total_wall_ms','advice_wait_ms','rating_ms']))
@@ -870,7 +896,7 @@ def export_all_zip():
             rating_every=RATING_EVERY,prefill_final=PREFILL_FINAL,word_range=[adviser.ADVISER_MIN_WORDS,adviser.ADVISER_MAX_WORDS],
             retry_policy_version=adviser.RETRY_POLICY_VERSION,model_profiles=adviser.model_profiles(),
             word_tolerance=adviser.ADVISER_WORD_TOLERANCE,
-            conditions=design.CONDITIONS,social_scenarios=len(social_design.SCENARIOS),rationale_max_chars=240,limits=['Offline rehearsals do not validate live model behaviour.',
+            conditions=design.CONDITIONS,social_scenarios=len(social_design.SCENARIOS),social_rationales_per_block=2,rationale_max_chars={'social':100,'numerosity':240},limits=['Offline rehearsals do not validate live model behaviour.',
             'Timing is browser instrumentation, not an eye-tracker trigger.',
             'Mechanical validity does not certify persuasive content or historical claims.']),indent=2))
     memory.seek(0)
