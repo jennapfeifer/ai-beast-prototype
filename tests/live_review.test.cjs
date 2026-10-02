@@ -14,7 +14,7 @@ function setup(fail=false){
    const task=trial<18?'numerosity':'social',local=trial%18,block=Math.floor(local/6)+1,pos=local%6+1,cond=['N','P','A'][block-1];
    const trueCount=task==='numerosity'?dotCounts[pos-1]:null;
    const scenarioId=task==='social'?socialIds[pos-1]:null;
-   return {trial_token:`${session}:${trial}`,trial_in_block:pos,block:Math.floor(trial/6)+1,practice:false,ratings_due:pos%2===0,adviser_name:['Jamie','Alex','Sam','Taylor','Morgan','Casey'][Math.floor(trial/6)],task_type:task,scale_min:task==='social'?0:1,scale_max:task==='social'?100:400,question_text:task==='social'?'How likely is deliberate rejection?':'How many dots were there?',researcher:{mode:'live',pid:String(session),block_id:`${task}:${cond}`,task_type:task,scenario_id:scenarioId,true_count:trueCount,participant_index:session-1,condition:cond}};
+   return {trial_token:`${session}:${trial}`,trial_in_block:pos,block:Math.floor(trial/6)+1,practice:false,ratings_due:pos%2===0,rationale_required:task==='numerosity'||pos===2||pos===5,adviser_name:['Jamie','Alex','Sam','Taylor','Morgan','Casey'][Math.floor(trial/6)],task_type:task,scale_min:task==='social'?0:1,scale_max:task==='social'?100:400,question_text:task==='social'?'How likely is deliberate rejection?':'How many dots were there?',researcher:{mode:'live',pid:String(session),block_id:`${task}:${cond}`,task_type:task,scenario_id:scenarioId,true_count:trueCount,participant_index:session-1,condition:cond}};
   }
   if(path==='/api/prefetch'){prefetches++;return {ok:true,prefetched:true};}
   if(path==='/api/initial'){initialBodies.push(body);return {advice_number:body.estimate<50?70:30,advice_text:'Actual mock model message',researcher:{live_model:true,initial_context_available:false,rationale_context_available:true}};}
@@ -26,13 +26,19 @@ function setup(fail=false){
  };
  return {c,starts,initialBodies,count:()=>saved,prefetches:()=>prefetches,rows:()=>vm.runInContext('reviewRows',c)};
 }
-test('current dots + social comparison exports 108 trials with rationales',async()=>{
+test('current dots + social comparison exports 108 trials with sparse social rationales',async()=>{
  const t=setup();await t.c.generateReview();assert.equal(t.count(),108);assert.equal(t.rows().length,108);
  assert.equal(t.starts.length,3);for(let i=0;i<t.starts.length;i++){const s=t.starts[i];assert.equal(s.get('researcher_test'),'1');assert.equal(s.get('adviser_mode'),'live');assert.equal(s.get('task_mode'),'both');assert.equal(s.get('trials'),'6');assert.equal(s.get('test_index'),String(i));}
  assert.equal(new Set(t.rows().map(r=>r.simulation_id)).size,3);assert.equal(t.prefetches(),108);
  assert.equal(t.rows().filter(r=>r.task_type==='numerosity').length,54);assert.equal(t.rows().filter(r=>r.task_type==='social').length,54);
- assert.ok(t.rows().every(r=>r.response_generator==='condition_blind_current_comparison_v2'));
- assert.ok(t.initialBodies.every(b=>typeof b.rationale==='string'&&b.rationale.length>0&&b.rationale.length<=240));
+ assert.ok(t.rows().every(r=>r.response_generator==='condition_blind_grounded_social_v3'));
+ assert.equal(t.initialBodies.filter(b=>b.rationale.length>0).length,72);
+ assert.equal(t.initialBodies.filter(b=>b.rationale==='').length,36);
+ assert.ok(t.initialBodies.filter(b=>b.rationale.length>0).every(b=>b.rationale.length<=240));
+ const socialRows=t.rows().filter(r=>r.task_type==='social');
+ assert.equal(socialRows.filter(r=>r.rationale_required).length,18);
+ assert.equal(socialRows.filter(r=>r.participant_rationale).length,18);
+ assert.ok(socialRows.filter(r=>r.participant_rationale).every(r=>r.participant_rationale.length<=100));
 });
 test('same participant and repeated dot numerosity has same simulated weight across conditions',async()=>{
  const t=setup();await t.c.generateReview();
