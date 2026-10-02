@@ -6,7 +6,7 @@
 {% if task_mode in ['numerosity','both'] %}<h3>Dot estimates{% if task_mode=='both' %} · {{numerosity_trials}} trials{% endif %}</h3><ol>
 <li>Look at the dots{% if stimulus_seconds %} for {{'%g'|format(stimulus_seconds)}} seconds{% endif %}.</li><li>Give your first estimate.</li><li>Briefly say what mainly led you to that estimate.</li><li>{% if advice_modality=='voice_text' %}Read and listen to{% else %}Read{% endif %} the adviser’s recommendation.</li><li>Choose your final estimate.</li></ol>{% endif %}
 {% if task_mode in ['social','both'] %}<h3>Social judgments{% if task_mode=='both' %} · {{social_trials}} trials{% endif %}</h3><ol>
-<li>Read a short social situation.</li><li>Judge the likelihood on a 0–100 scale.</li><li>Briefly say what mainly led you to that judgment.</li><li>{% if advice_modality=='voice_text' %}Read and listen to{% else %}Read{% endif %} the adviser’s recommendation.</li><li>Choose your final judgment.</li></ol>{% endif %}
-<p class="helper">One short sentence is enough for the reason. There is no reward for agreeing with the adviser.</p>
+<li>Read a short social situation.</li><li>Judge the likelihood on a 0–100 scale.</li><li>On some trials, briefly say what mainly influenced that judgment.</li><li>{% if advice_modality=='voice_text' %}Read and listen to{% else %}Read{% endif %} the adviser’s recommendation.</li><li>Choose your final judgment.</li></ol>{% endif %}
+<p class="helper">When a reason is requested, a few words are enough. There is no reward for agreeing with the adviser.</p>
 {% if ratings %}<p>Every {{rating_every}} trials, rate how much you trusted that round’s adviser.</p>{% endif %}<p>You can rest between rounds. Timed displays pause if you leave this tab.</p></section>
 <a class="button primary" href="/task">{% if practice %}Start practice{% else %}Start{% endif %}</a></main>{% endblock %}
